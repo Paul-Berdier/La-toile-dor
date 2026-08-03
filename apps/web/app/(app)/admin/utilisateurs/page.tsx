@@ -57,6 +57,9 @@ export default async function AdminUtilisateursPage() {
                 <p className="font-mono-toile text-[0.65rem] text-ink-faint">
                   {user.roles.map((r) => r.role.name).join(" · ") || "—"}
                 </p>
+                {user.village && (
+                  <p className="text-[0.65rem] text-ink-faint">Village : {user.village}</p>
+                )}
               </td>
               <td className="px-4 py-3 text-xs text-ink-muted">
                 {user.discordAccount

@@ -28,6 +28,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   }
   items.push({ href: "/classement", label: "Classement", glyph: "位" });
   if (
+    current.permissions.has(PERMISSIONS.INVITE_CREATE) ||
+    current.permissions.has(PERMISSIONS.INVITE_MANAGE)
+  ) {
+    items.push({ href: "/invitations", label: "Invitations", glyph: "糸" });
+  }
+  if (
     current.permissions.has(PERMISSIONS.USER_MANAGE) ||
     current.permissions.has(PERMISSIONS.INVITE_MANAGE) ||
     current.permissions.has(PERMISSIONS.SETTINGS_MANAGE)

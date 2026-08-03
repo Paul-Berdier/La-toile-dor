@@ -6,6 +6,7 @@ export interface CreateInvitationInput {
   createdById: string;
   roleId?: string;
   factionId?: string;
+  groupId?: string;
   expiresInHours: number;
   requireApproval: boolean;
   restrictedDiscordId?: string;
@@ -26,6 +27,7 @@ export async function createInvitation(
       createdById: input.createdById,
       roleId: input.roleId ?? null,
       factionId: input.factionId ?? null,
+      groupId: input.groupId ?? null,
       expiresAt: new Date(Date.now() + input.expiresInHours * 3600 * 1000),
       requireApproval: input.requireApproval,
       restrictedDiscordId: input.restrictedDiscordId ?? null,

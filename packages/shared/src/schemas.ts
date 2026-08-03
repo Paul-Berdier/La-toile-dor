@@ -140,6 +140,7 @@ export const scoreAdjustSchema = z.object({
 export const invitationCreateSchema = z.object({
   roleSlug: z.enum(["super_admin", "moderator", "faction_leader", "faction_member"]),
   factionId: z.string().cuid().optional(),
+  groupId: z.string().cuid().optional(),
   expiresInHours: z.number().int().min(1).max(24 * 30).default(72),
   requireApproval: z.boolean().default(true),
   restrictedDiscordId: z

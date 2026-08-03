@@ -21,6 +21,8 @@ function redirectTo(req: NextRequest, path: string): NextResponse {
   // Les cookies du flux OAuth sont à usage unique
   res.cookies.delete("toile_oauth_state");
   res.cookies.delete("toile_invite");
+  res.cookies.delete("toile_rp_title");
+  res.cookies.delete("toile_village");
   return res;
 }
 
@@ -130,9 +132,15 @@ export async function GET(req: NextRequest) {
       return redirectTo(req, "/connexion?erreur=acces");
     }
 
+    // Fiche RP saisie sur la page d'invitation : le titre devient le nom affiché
+    const rpTitle = req.cookies.get("toile_rp_title")?.value?.slice(0, 60).trim() || null;
+    const village = req.cookies.get("toile_village")?.value?.slice(0, 60).trim() || null;
+
     const user = await prisma.user.create({
       data: {
-        displayName: discordUser.global_name ?? discordUser.username,
+        displayName: rpTitle ?? discordUser.global_name ?? discordUser.username,
+        rpTitle,
+        village,
         status: invitation.requireApproval ? "PENDING" : "ACTIVE",
         approvedAt: invitation.requireApproval ? null : new Date(),
         discordAccount: {
@@ -156,6 +164,11 @@ export async function GET(req: NextRequest) {
       return redirectTo(req, "/connexion?erreur=acces");
     }
 
+    const invitedRole = invitation.roleId
+      ? await prisma.role.findUnique({ where: { id: invitation.roleId } })
+      : null;
+    const isLeaderRole = invitedRole?.slug === "faction_leader";
+
     if (invitation.roleId) {
       await prisma.userRole.create({ data: { userId: user.id, roleId: invitation.roleId } });
     }
@@ -164,11 +177,14 @@ export async function GET(req: NextRequest) {
         data: {
           factionId: invitation.factionId,
           userId: user.id,
-          isLeader: invitation.roleId
-            ? (await prisma.role.findUnique({ where: { id: invitation.roleId } }))?.slug ===
-              "faction_leader"
-            : false,
+          isLeader: isLeaderRole,
         },
+      });
+    }
+    // Groupe pré-assigné par l'inviteur (chef de groupe ou modération)
+    if (invitation.groupId) {
+      await prisma.groupMember.create({
+        data: { groupId: invitation.groupId, userId: user.id, isLeader: isLeaderRole },
       });
     }
 

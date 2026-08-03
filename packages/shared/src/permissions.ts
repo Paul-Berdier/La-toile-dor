@@ -20,6 +20,11 @@ export const PERMISSIONS = {
   LEADERBOARD_VIEW: "leaderboard.view",
   // Groupes (au sein de sa faction)
   GROUP_MANAGE: "group.manage",
+  // Invitations
+  // invite.create : tendre un fil selon sa position dans la hiérarchie
+  // (modérateur → chefs/agents ; chef → agents de ses groupes).
+  // invite.manage : voir et révoquer TOUTES les invitations (Tisseur d'Or).
+  INVITE_CREATE: "invite.create",
   // Administration
   INVITE_MANAGE: "invite.manage",
   FACTION_MANAGE: "faction.manage",
@@ -47,6 +52,7 @@ const P = PERMISSIONS;
 export const DEFAULT_ROLE_PERMISSIONS: Record<RoleSlug, PermissionKey[]> = {
   super_admin: Object.values(P),
   moderator: [
+    P.INVITE_CREATE,
     P.MISSION_CREATE,
     P.MISSION_UPDATE,
     P.MISSION_CANCEL,
@@ -60,6 +66,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleSlug, PermissionKey[]> = {
     P.AUDIT_READ, // journaux liés aux missions
   ],
   faction_leader: [
+    P.INVITE_CREATE,
     P.MISSION_CLAIM,
     P.MISSION_REPORT_SUBMIT,
     P.GROUP_MANAGE,

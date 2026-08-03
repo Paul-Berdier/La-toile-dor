@@ -25,6 +25,9 @@ enum UserStatus {
 model User {
   id            String     @id @default(cuid())
   displayName   String
+  // Fiche RP enregistrée à l'invitation : titre (pseudo RP) et village/pays
+  rpTitle       String?
+  village       String?
   status        UserStatus @default(PENDING)
   createdAt     DateTime   @default(now())
   lastLoginAt   DateTime?
@@ -107,9 +110,10 @@ model Invitation {
   expiresAt DateTime
   revokedAt DateTime?
 
-  // Rôle et faction pré-assignés à l'utilisateur qui consommera l'invitation
+  // Rôle, faction et groupe pré-assignés à l'utilisateur qui consommera l'invitation
   roleId    String?
   factionId String?
+  groupId   String?
   // Approbation manuelle exigée après l'OAuth Discord
   requireApproval Boolean @default(true)
   // Restriction facultative à un identifiant Discord précis
@@ -122,8 +126,10 @@ model Invitation {
   usedAt      DateTime?
   role        Role?    @relation(fields: [roleId], references: [id])
   faction     Faction? @relation(fields: [factionId], references: [id])
+  group       Group?   @relation(fields: [groupId], references: [id])
 
   @@index([status, expiresAt])
+  @@index([createdById])
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -219,6 +225,7 @@ model Group {
   assignments MissionAssignment[]
   scores      MissionScore[]
   missionsAssigned Mission[] @relation("MissionAssignedGroup")
+  invitations Invitation[]
 
   @@unique([factionId, name])
 }

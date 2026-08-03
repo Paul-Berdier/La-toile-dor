@@ -24,6 +24,7 @@ const PERMISSION_DEFS: [string, string][] = [
   ["mission.claim", "Réclamer une mission"],
   ["mission.report.submit", "Soumettre un rapport de mission"],
   ["claim.review", "Accepter ou refuser une revendication"],
+  ["invite.create", "Tendre un fil selon sa position dans la hiérarchie"],
   ["points.adjust", "Modifier les points"],
   ["leaderboard.view", "Consulter le classement"],
   ["group.manage", "Gérer les groupes de sa faction"],
@@ -41,6 +42,7 @@ const ROLE_PERMS: Record<string, { name: string; perms: string[] | "all" }> = {
   moderator: {
     name: "Modérateur",
     perms: [
+      "invite.create",
       "mission.create", "mission.update", "mission.cancel", "mission.move",
       "mission.assign", "mission.view.all", "mission.view.confidential",
       "claim.review", "points.adjust", "leaderboard.view", "audit.read",
@@ -48,7 +50,7 @@ const ROLE_PERMS: Record<string, { name: string; perms: string[] | "all" }> = {
   },
   faction_leader: {
     name: "Chef de faction",
-    perms: ["mission.claim", "mission.report.submit", "group.manage", "leaderboard.view"],
+    perms: ["invite.create", "mission.claim", "mission.report.submit", "group.manage", "leaderboard.view"],
   },
   faction_member: { name: "Membre de faction", perms: ["leaderboard.view"] },
 };
@@ -408,28 +410,36 @@ async function main() {
     }
   }
 
-  // Invitation super_admin initiale si aucune invitation n'existe
+  // Invitations super_admin initiales si aucune invitation n'existe :
+  // une pour le codeur, une pour le streamer qui incarne « Le Tisseur d'Or ».
   const inviteCount = await prisma.invitation.count();
   if (inviteCount === 0) {
     const pepper = process.env.INVITE_TOKEN_PEPPER;
     if (!pepper) {
-      console.warn("⚠ INVITE_TOKEN_PEPPER absent — invitation initiale non créée.");
+      console.warn("⚠ INVITE_TOKEN_PEPPER absent — invitations initiales non créées.");
     } else {
       const superAdminRole = await prisma.role.findUniqueOrThrow({ where: { slug: "super_admin" } });
-      const token = randomBytes(32).toString("base64url");
-      await prisma.invitation.create({
-        data: {
-          tokenHash: createHash("sha256").update(`${token}${pepper}`).digest("hex"),
-          createdById: system.id,
-          roleId: superAdminRole.id,
-          expiresAt: new Date(now + 7 * day),
-          requireApproval: false,
-          note: "Invitation initiale du super administrateur (seed)",
-        },
-      });
+      const initial = [
+        { note: "Invitation initiale — le codeur (seed)", label: "CODEUR" },
+        { note: "Invitation initiale — Le Tisseur d'Or (seed)", label: "LE TISSEUR D'OR" },
+      ];
       console.log("\n════════════════════════════════════════════════════════");
-      console.log("  INVITATION SUPER ADMIN (affichée une seule fois) :");
-      console.log(`  ${process.env.APP_URL ?? "http://localhost:3000"}/invitation/${token}`);
+      console.log("  INVITATIONS SUPER ADMIN (affichées une seule fois) :");
+      for (const inv of initial) {
+        const token = randomBytes(32).toString("base64url");
+        await prisma.invitation.create({
+          data: {
+            tokenHash: createHash("sha256").update(`${token}${pepper}`).digest("hex"),
+            createdById: system.id,
+            roleId: superAdminRole.id,
+            expiresAt: new Date(now + 7 * day),
+            requireApproval: false,
+            note: inv.note,
+          },
+        });
+        console.log(`  ${inv.label} :`);
+        console.log(`  ${process.env.APP_URL ?? "http://localhost:3000"}/invitation/${token}\n`);
+      }
       console.log("════════════════════════════════════════════════════════\n");
     }
   }

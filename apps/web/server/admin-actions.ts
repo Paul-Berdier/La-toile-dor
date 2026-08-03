@@ -114,21 +114,79 @@ export async function setUserRoleAction(input: {
 
 // ── Invitations ──────────────────────────────────────────────
 
+/**
+ * Hiérarchie d'invitation de la Toile :
+ * - Tisseur d'Or / super administrateurs : peuvent tendre n'importe quel fil ;
+ * - Modérateurs : peuvent inviter chefs de groupe et agents ;
+ * - Chefs de groupe : peuvent inviter des agents, uniquement dans les
+ *   groupes qu'ils dirigent.
+ * Les règles sont appliquées CÔTÉ SERVEUR, quel que soit le formulaire.
+ */
+const INVITE_TIERS: Record<string, string[]> = {
+  super_admin: ["super_admin", "moderator", "faction_leader", "faction_member"],
+  moderator: ["faction_leader", "faction_member"],
+  faction_leader: ["faction_member"],
+};
+
 export async function createInvitationAction(raw: unknown): Promise<Result> {
-  const actor = await guard(PERMISSIONS.INVITE_MANAGE);
-  if (!actor) return { ok: false, error: "Permission refusée." };
+  const current = await requireUser();
+  const canManage = current.permissions.has(PERMISSIONS.INVITE_MANAGE);
+  if (!canManage && !current.permissions.has(PERMISSIONS.INVITE_CREATE)) {
+    return { ok: false, error: "Permission refusée." };
+  }
 
   const parsed = invitationCreateSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, error: "Paramètres invalides." };
   const data = parsed.data;
 
+  // Rôles détenus par l'inviteur → rôles qu'il peut accorder
+  const actorRoles = await prisma.userRole.findMany({
+    where: { userId: current.session.userId },
+    include: { role: { select: { slug: true } } },
+  });
+  const slugs = new Set(actorRoles.map((r) => r.role.slug));
+  const allowedTargets = new Set<string>(
+    [...slugs].flatMap((slug) => INVITE_TIERS[slug] ?? []),
+  );
+  if (!allowedTargets.has(data.roleSlug)) {
+    return { ok: false, error: "La Toile ne vous autorise pas à tendre ce fil-là." };
+  }
+
+  let factionId = data.factionId;
+  let groupId = data.groupId;
+
+  const isModOrAbove = slugs.has("super_admin") || slugs.has("moderator");
+  if (!isModOrAbove) {
+    // Chef de groupe : le fil ne peut mener que vers un de SES groupes
+    if (!groupId) {
+      return { ok: false, error: "Choisissez le groupe que rejoindra votre agent." };
+    }
+    const led = await prisma.groupMember.findUnique({
+      where: { groupId_userId: { groupId, userId: current.session.userId } },
+      include: { group: true },
+    });
+    if (!led?.isLeader || !led.group.isActive) {
+      return { ok: false, error: "Vous ne dirigez pas ce groupe." };
+    }
+    factionId = led.group.factionId;
+  } else if (groupId) {
+    // Cohérence groupe/faction pour la modération
+    const group = await prisma.group.findUnique({ where: { id: groupId } });
+    if (!group || !group.isActive) return { ok: false, error: "Groupe introuvable." };
+    if (factionId && group.factionId !== factionId) {
+      return { ok: false, error: "Ce groupe n'appartient pas à cette faction." };
+    }
+    factionId = group.factionId;
+  }
+
   const role = await prisma.role.findUnique({ where: { slug: data.roleSlug } });
   if (!role) return { ok: false, error: "Rôle inconnu." };
 
   const { token } = await createInvitation({
-    createdById: actor.userId,
+    createdById: current.session.userId,
     roleId: role.id,
-    factionId: data.factionId,
+    factionId,
+    groupId,
     expiresInHours: data.expiresInHours,
     requireApproval: data.requireApproval,
     restrictedDiscordId: data.restrictedDiscordId,
@@ -137,32 +195,47 @@ export async function createInvitationAction(raw: unknown): Promise<Result> {
 
   const meta = await requestMeta();
   await audit({
-    actorId: actor.userId,
+    actorId: current.session.userId,
     action: "invite.created",
     resourceType: "invitation",
-    newValues: { roleSlug: data.roleSlug, expiresInHours: data.expiresInHours },
+    newValues: {
+      roleSlug: data.roleSlug,
+      factionId: factionId ?? null,
+      groupId: groupId ?? null,
+      expiresInHours: data.expiresInHours,
+    },
     ...meta,
   });
 
-  revalidatePath("/admin/invitations");
+  revalidatePath("/invitations");
   // Le jeton clair n'est montré qu'UNE fois, ici, au créateur.
   return { ok: true, inviteUrl: `${process.env.APP_URL ?? ""}/invitation/${token}` };
 }
 
 export async function revokeInvitationAction(invitationId: string): Promise<Result> {
-  const actor = await guard(PERMISSIONS.INVITE_MANAGE);
-  if (!actor) return { ok: false, error: "Permission refusée." };
+  const current = await requireUser();
+  const canManage = current.permissions.has(PERMISSIONS.INVITE_MANAGE);
+  if (!canManage && !current.permissions.has(PERMISSIONS.INVITE_CREATE)) {
+    return { ok: false, error: "Permission refusée." };
+  }
+
+  // Sans invite.manage, on ne peut rompre que ses propres fils
+  const invitation = await prisma.invitation.findUnique({ where: { id: invitationId } });
+  if (!invitation) return { ok: false, error: "Invitation introuvable." };
+  if (!canManage && invitation.createdById !== current.session.userId) {
+    return { ok: false, error: "Vous ne pouvez rompre que vos propres fils." };
+  }
 
   await revokeInvitation(invitationId);
   const meta = await requestMeta();
   await audit({
-    actorId: actor.userId,
+    actorId: current.session.userId,
     action: "invite.revoked",
     resourceType: "invitation",
     resourceId: invitationId,
     ...meta,
   });
-  revalidatePath("/admin/invitations");
+  revalidatePath("/invitations");
   return { ok: true };
 }
 

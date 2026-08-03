@@ -1,5 +1,7 @@
 import type { NextConfig } from "next";
 
+const isDev = process.env.NODE_ENV !== "production";
+
 const securityHeaders = [
   { key: "X-Frame-Options", value: "DENY" },
   { key: "X-Content-Type-Options", value: "nosniff" },
@@ -13,8 +15,10 @@ const securityHeaders = [
     key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
-      // Next.js exige inline styles ; scripts inline limités au runtime Next
-      "script-src 'self' 'unsafe-inline'",
+      // Next.js exige inline styles ; scripts inline limités au runtime Next.
+      // 'unsafe-eval' est réservé au runtime de DÉVELOPPEMENT (HMR/React dev) —
+      // jamais présent en production.
+      `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: https://cdn.discordapp.com",
       "font-src 'self'",

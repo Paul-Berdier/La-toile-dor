@@ -5,14 +5,40 @@ import { useRouter } from "next/navigation";
 import { createInvitationAction, revokeInvitationAction } from "@/server/admin-actions";
 import { Button } from "@/components/ui/button";
 
+export interface FactionOption {
+  id: string;
+  name: string;
+  groups: { id: string; name: string }[];
+}
+
+const ROLE_LABELS: Record<string, string> = {
+  super_admin: "Super administrateur",
+  moderator: "Modérateur",
+  faction_leader: "Chef de groupe / faction",
+  faction_member: "Agent",
+};
+
+/**
+ * Formulaire « Tendre un nouveau fil ».
+ * - `allowedRoles` : rôles que l'inviteur a le droit d'accorder (recalculé
+ *   côté serveur de toute façon) ;
+ * - `factions` : factions + groupes sélectionnables (modération) ;
+ * - `leaderGroups` : si non nul, l'inviteur est un chef — seul le choix
+ *   parmi SES groupes est proposé.
+ */
 export function InvitationForm({
+  allowedRoles,
   factions,
+  leaderGroups,
 }: {
-  factions: { id: string; name: string }[];
+  allowedRoles: string[];
+  factions: FactionOption[];
+  leaderGroups: { id: string; name: string; factionName: string }[] | null;
 }) {
   const router = useRouter();
-  const [roleSlug, setRoleSlug] = useState("faction_member");
+  const [roleSlug, setRoleSlug] = useState(allowedRoles[allowedRoles.length - 1] ?? "faction_member");
   const [factionId, setFactionId] = useState("");
+  const [groupId, setGroupId] = useState(leaderGroups?.[0]?.id ?? "");
   const [hours, setHours] = useState(72);
   const [requireApproval, setRequireApproval] = useState(true);
   const [restrictedDiscordId, setRestrictedDiscordId] = useState("");
@@ -22,11 +48,15 @@ export function InvitationForm({
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
+  const selectedFaction = factions.find((f) => f.id === factionId);
+  const roleNeedsFaction = roleSlug === "faction_leader" || roleSlug === "faction_member";
+
   const submit = () => {
     startTransition(async () => {
       const res = await createInvitationAction({
         roleSlug,
-        factionId: factionId || undefined,
+        factionId: !leaderGroups && roleNeedsFaction && factionId ? factionId : undefined,
+        groupId: roleNeedsFaction && groupId ? groupId : undefined,
         expiresInHours: hours,
         requireApproval,
         restrictedDiscordId: restrictedDiscordId || undefined,
@@ -48,9 +78,12 @@ export function InvitationForm({
 
   return (
     <div className="border border-border-gold bg-raised p-4">
-      <h2 className="mb-3 font-display text-sm tracking-widest text-gold uppercase">
+      <h2 className="mb-1 font-display text-sm tracking-widest text-gold uppercase">
         Tendre un nouveau fil
       </h2>
+      <p className="mb-3 text-xs text-ink-faint">
+        L&rsquo;invité déclinera son titre RP et son village avant de lier son compte Discord.
+      </p>
 
       {inviteUrl ? (
         <div className="space-y-3">
@@ -82,21 +115,59 @@ export function InvitationForm({
           <div>
             <label htmlFor="inv-role" className={label}>Rôle accordé</label>
             <select id="inv-role" value={roleSlug} onChange={(e) => setRoleSlug(e.target.value)} className={input}>
-              <option value="faction_member">Membre de faction</option>
-              <option value="faction_leader">Chef de faction</option>
-              <option value="moderator">Modérateur</option>
-              <option value="super_admin">Super administrateur</option>
-            </select>
-          </div>
-          <div>
-            <label htmlFor="inv-faction" className={label}>Faction (facultatif)</label>
-            <select id="inv-faction" value={factionId} onChange={(e) => setFactionId(e.target.value)} className={input}>
-              <option value="">—</option>
-              {factions.map((faction) => (
-                <option key={faction.id} value={faction.id}>{faction.name}</option>
+              {allowedRoles.map((slug) => (
+                <option key={slug} value={slug}>{ROLE_LABELS[slug] ?? slug}</option>
               ))}
             </select>
           </div>
+
+          {leaderGroups ? (
+            <div>
+              <label htmlFor="inv-group" className={label}>Groupe rejoint</label>
+              <select id="inv-group" value={groupId} onChange={(e) => setGroupId(e.target.value)} className={input}>
+                {leaderGroups.map((group) => (
+                  <option key={group.id} value={group.id}>
+                    {group.factionName} — {group.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            roleNeedsFaction && (
+              <>
+                <div>
+                  <label htmlFor="inv-faction" className={label}>Faction / organisation</label>
+                  <select
+                    id="inv-faction"
+                    value={factionId}
+                    onChange={(e) => { setFactionId(e.target.value); setGroupId(""); }}
+                    className={input}
+                  >
+                    <option value="">—</option>
+                    {factions.map((faction) => (
+                      <option key={faction.id} value={faction.id}>{faction.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="inv-group" className={label}>Groupe (facultatif)</label>
+                  <select
+                    id="inv-group"
+                    value={groupId}
+                    onChange={(e) => setGroupId(e.target.value)}
+                    className={input}
+                    disabled={!selectedFaction}
+                  >
+                    <option value="">—</option>
+                    {selectedFaction?.groups.map((group) => (
+                      <option key={group.id} value={group.id}>{group.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )
+          )}
+
           <div>
             <label htmlFor="inv-hours" className={label}>Validité (heures)</label>
             <input id="inv-hours" type="number" min={1} max={720} value={hours}

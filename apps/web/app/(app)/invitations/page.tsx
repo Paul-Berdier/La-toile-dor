@@ -1,0 +1,171 @@
+import { redirect } from "next/navigation";
+import { prisma } from "@toile/database";
+import { PERMISSIONS } from "@toile/shared";
+import { requireUser } from "@/lib/session";
+import {
+  InvitationForm,
+  RevokeInvitationButton,
+  type FactionOption,
+} from "@/components/admin/invitation-form";
+
+export const dynamic = "force-dynamic";
+
+const STATUS_FR: Record<string, { label: string; style: string }> = {
+  ACTIVE: { label: "Active", style: "text-success" },
+  USED: { label: "Utilisée", style: "text-ink-faint" },
+  REVOKED: { label: "Révoquée", style: "text-blood-bright" },
+  EXPIRED: { label: "Expirée", style: "text-copper" },
+};
+
+const INVITE_TIERS: Record<string, string[]> = {
+  super_admin: ["super_admin", "moderator", "faction_leader", "faction_member"],
+  moderator: ["faction_leader", "faction_member"],
+  faction_leader: ["faction_member"],
+};
+
+export default async function InvitationsPage() {
+  const current = await requireUser();
+  const canManage = current.permissions.has(PERMISSIONS.INVITE_MANAGE);
+  if (!canManage && !current.permissions.has(PERMISSIONS.INVITE_CREATE)) {
+    redirect("/missions");
+  }
+
+  const userRoles = await prisma.userRole.findMany({
+    where: { userId: current.session.userId },
+    include: { role: { select: { slug: true } } },
+  });
+  const slugs = new Set(userRoles.map((r) => r.role.slug));
+  const allowedRoles = [
+    ...new Set([...slugs].flatMap((slug) => INVITE_TIERS[slug] ?? [])),
+  ];
+  const isModOrAbove = slugs.has("super_admin") || slugs.has("moderator");
+
+  // Chefs « purs » : seuls leurs groupes sont proposés
+  let leaderGroups: { id: string; name: string; factionName: string }[] | null = null;
+  let factions: FactionOption[] = [];
+  if (isModOrAbove) {
+    factions = (
+      await prisma.faction.findMany({
+        where: { isActive: true },
+        include: { groups: { where: { isActive: true }, select: { id: true, name: true } } },
+        orderBy: { name: "asc" },
+      })
+    ).map((faction) => ({ id: faction.id, name: faction.name, groups: faction.groups }));
+  } else {
+    const led = await prisma.groupMember.findMany({
+      where: { userId: current.session.userId, isLeader: true, group: { isActive: true } },
+      include: { group: { include: { faction: { select: { name: true } } } } },
+    });
+    leaderGroups = led.map((membership) => ({
+      id: membership.groupId,
+      name: membership.group.name,
+      factionName: membership.group.faction.name,
+    }));
+  }
+
+  const invitations = await prisma.invitation.findMany({
+    // Sans invite.manage, chacun ne voit que les fils qu'il a tendus
+    where: canManage ? {} : { createdById: current.session.userId },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+    include: {
+      createdBy: { select: { displayName: true } },
+      usedBy: { select: { displayName: true } },
+      role: { select: { name: true } },
+      faction: { select: { name: true } },
+      group: { select: { name: true } },
+    },
+  });
+
+  return (
+    <main className="mx-auto max-w-5xl px-4 py-6 lg:px-6">
+      <h1 className="font-display text-xl tracking-[0.15em] text-ink uppercase">
+        Fils d&rsquo;invitation
+      </h1>
+      <p className="mt-1 mb-6 text-xs text-ink-faint">
+        {canManage
+          ? "Le Tisseur voit tous les fils tendus sur la Toile."
+          : isModOrAbove
+            ? "Vous pouvez tendre un fil vers un chef de groupe ou un agent."
+            : "Vous pouvez tendre un fil vers un agent, pour l'un de vos groupes."}
+      </p>
+
+      <div className="space-y-6">
+        <InvitationForm
+          allowedRoles={allowedRoles}
+          factions={factions}
+          leaderGroups={leaderGroups}
+        />
+
+        <div className="overflow-x-auto border border-border-default bg-raised">
+          <table className="w-full min-w-[48rem] text-left text-sm">
+            <caption className="sr-only">Invitations émises</caption>
+            <thead>
+              <tr className="border-b border-border-gold font-mono-toile text-[0.65rem] uppercase tracking-wider text-ink-faint">
+                <th scope="col" className="px-4 py-3">Créée</th>
+                <th scope="col" className="px-4 py-3">Rôle / affectation</th>
+                <th scope="col" className="px-4 py-3">Expire</th>
+                <th scope="col" className="px-4 py-3">Statut</th>
+                <th scope="col" className="px-4 py-3">Utilisée par</th>
+                <th scope="col" className="px-4 py-3"><span className="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {invitations.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-xs text-ink-faint italic">
+                    Aucun fil tendu pour l&rsquo;instant.
+                  </td>
+                </tr>
+              )}
+              {invitations.map((invitation) => {
+                const effective =
+                  invitation.status === "ACTIVE" && invitation.expiresAt < new Date()
+                    ? "EXPIRED"
+                    : invitation.status;
+                const status = STATUS_FR[effective]!;
+                return (
+                  <tr key={invitation.id} className="border-b border-border-default hover:bg-hover-bg">
+                    <td className="px-4 py-2.5 text-xs text-ink-muted">
+                      {invitation.createdAt.toLocaleString("fr-FR")}
+                      {canManage && (
+                        <p className="text-[0.65rem] text-ink-faint">
+                          par {invitation.createdBy.displayName}
+                        </p>
+                      )}
+                      {invitation.note && (
+                        <p className="text-[0.65rem] text-ink-faint italic">{invitation.note}</p>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-ink-muted">
+                      {invitation.role?.name ?? "—"}
+                      {(invitation.faction || invitation.group) && (
+                        <p className="text-[0.65rem] text-ink-faint">
+                          {[invitation.faction?.name, invitation.group?.name]
+                            .filter(Boolean)
+                            .join(" — ")}
+                        </p>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-ink-muted">
+                      {invitation.expiresAt.toLocaleString("fr-FR")}
+                    </td>
+                    <td className={`px-4 py-2.5 text-xs ${status.style}`}>{status.label}</td>
+                    <td className="px-4 py-2.5 text-xs text-ink-muted">
+                      {invitation.usedBy?.displayName ?? "—"}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      {effective === "ACTIVE" && (
+                        <RevokeInvitationButton invitationId={invitation.id} />
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  );
+}
