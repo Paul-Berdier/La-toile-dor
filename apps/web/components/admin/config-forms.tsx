@@ -40,9 +40,12 @@ function Feedback({ message }: { message: { ok: boolean; text: string } | null }
 
 // ── Temps RP ─────────────────────────────────────────────────
 
-export function RpTimeForm({ current }: { current: { realMsPerRpMonth: number; realEpochIso: string; rpEpochYear: number } }) {
+export function RpTimeForm({ current }: { current: { realMsPerRpMonth: number; rpMonthsPerYear: number; realEpochIso: string; rpEpochYear: number } }) {
   const [hoursPerMonth, setHoursPerMonth] = useState(current.realMsPerRpMonth / 3_600_000);
+  const [monthsPerYear, setMonthsPerYear] = useState(current.rpMonthsPerYear ?? 7);
   const { run, message, isPending } = useAction();
+
+  const weeksPerRpYear = (monthsPerYear * hoursPerMonth) / 168;
 
   return (
     <div>
@@ -58,8 +61,21 @@ export function RpTimeForm({ current }: { current: { realMsPerRpMonth: number; r
             className={`${input} mt-1 block w-32`}
           />
         </label>
+        <label className="text-xs text-ink-faint">
+          Mois RP dans une année RP
+          <input
+            type="number"
+            min={1}
+            max={24}
+            step={1}
+            value={monthsPerYear}
+            onChange={(e) => setMonthsPerYear(Number(e.target.value) || 7)}
+            className={`${input} mt-1 block w-32`}
+          />
+        </label>
         <p className="pb-2 text-xs text-ink-muted">
-          ⇒ 1 semaine réelle ≈ {(168 / hoursPerMonth / 12).toFixed(1).replace(".", ",")} année(s) RP
+          ⇒ 1 année RP = {weeksPerRpYear.toFixed(1).replace(".", ",")} semaine(s) réelle(s)
+          {Math.abs(weeksPerRpYear - 1) < 0.01 ? " (règle du serveur : 1 semaine = 1 an)" : ""}
         </p>
         <Button
           size="sm"
@@ -70,6 +86,7 @@ export function RpTimeForm({ current }: { current: { realMsPerRpMonth: number; r
               () =>
                 updateRpTimeAction({
                   realMsPerRpMonth: Math.round(hoursPerMonth * 3_600_000),
+                  rpMonthsPerYear: Math.round(monthsPerYear),
                   realEpochIso: current.realEpochIso,
                   rpEpochYear: current.rpEpochYear,
                 }),

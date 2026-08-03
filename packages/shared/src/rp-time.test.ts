@@ -11,18 +11,22 @@ import {
 
 const DAY = 24 * 3600 * 1000;
 
-describe("conversions temps RP (1 jour réel = 1 mois RP)", () => {
+describe("conversions temps RP (1 jour réel = 1 mois RP ; 1 semaine réelle = 1 année RP)", () => {
   it("1 jour réel → 1 mois RP", () => {
     expect(realToRpDuration(DAY)).toEqual({ years: 0, months: 1, weeks: 0 });
   });
 
-  it("7 jours réels → 7 mois RP ; 12 jours → 1 an", () => {
-    expect(realToRpDuration(7 * DAY).months).toBe(7);
-    expect(realToRpDuration(12 * DAY)).toEqual({ years: 1, months: 0, weeks: 0 });
+  it("1 semaine réelle (7 jours) → exactement 1 année RP (année de 7 mois)", () => {
+    expect(realToRpDuration(7 * DAY)).toEqual({ years: 1, months: 0, weeks: 0 });
   });
 
-  it("aller-retour durée RP → ms → RP", () => {
+  it("12 jours réels → 1 an et 5 mois RP", () => {
+    expect(realToRpDuration(12 * DAY)).toEqual({ years: 1, months: 5, weeks: 0 });
+  });
+
+  it("aller-retour durée RP → ms → RP (1 an RP = 7 jours réels)", () => {
     const ms = rpToRealMs({ years: 1, months: 2 });
+    expect(ms).toBe(9 * DAY);
     expect(realToRpDuration(ms)).toEqual({ years: 1, months: 2, weeks: 0 });
   });
 
@@ -37,10 +41,15 @@ describe("conversions temps RP (1 jour réel = 1 mois RP)", () => {
     expect(realToRpDuration(DAY, config).months).toBe(2);
   });
 
-  it("date réelle → date RP absolue", () => {
+  it("date réelle → date RP absolue (année de 7 mois)", () => {
     const { year, month } = realDateToRp(new Date("2026-01-13T00:00:00Z"));
-    expect(year).toBe(2); // 12 mois écoulés depuis l'époque
-    expect(month).toBe(1);
+    expect(year).toBe(2); // 12 mois écoulés = 1 an (7 mois) + 5 mois
+    expect(month).toBe(6);
+  });
+
+  it("nombre de mois par année RP configurable", () => {
+    const config = { ...DEFAULT_RP_TIME_CONFIG, rpMonthsPerYear: 12 };
+    expect(realToRpDuration(7 * DAY, config)).toEqual({ years: 0, months: 7, weeks: 0 });
   });
 });
 

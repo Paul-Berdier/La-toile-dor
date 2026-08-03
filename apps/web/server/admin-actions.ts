@@ -170,6 +170,7 @@ export async function revokeInvitationAction(invitationId: string): Promise<Resu
 
 export async function updateRpTimeAction(input: {
   realMsPerRpMonth: number;
+  rpMonthsPerYear: number;
   realEpochIso: string;
   rpEpochYear: number;
 }): Promise<Result> {
@@ -177,6 +178,9 @@ export async function updateRpTimeAction(input: {
   if (!actor) return { ok: false, error: "Permission refusée." };
   if (input.realMsPerRpMonth < 60_000) {
     return { ok: false, error: "Le ratio minimal est d'une minute réelle par mois RP." };
+  }
+  if (!Number.isInteger(input.rpMonthsPerYear) || input.rpMonthsPerYear < 1 || input.rpMonthsPerYear > 24) {
+    return { ok: false, error: "L'année RP doit compter entre 1 et 24 mois." };
   }
 
   await prisma.appSetting.upsert({

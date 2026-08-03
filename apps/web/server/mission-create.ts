@@ -6,6 +6,7 @@ import { audit } from "@toile/auth";
 import { PERMISSIONS, missionCreateSchema, rpToRealMs } from "@toile/shared";
 import { requireUser, requestMeta } from "@/lib/session";
 import { enqueueNotifications, factionLeaderIds } from "@/server/notifications";
+import { getRpTimeConfig } from "@/server/rp-config";
 
 export interface CreateMissionResult {
   ok: boolean;
@@ -43,7 +44,7 @@ export async function createMissionAction(raw: unknown): Promise<CreateMissionRe
       return { ok: false, error: "La date d'expiration doit être dans le futur." };
     }
   } else if (data.rpDuration) {
-    const ms = rpToRealMs(data.rpDuration);
+    const ms = rpToRealMs(data.rpDuration, await getRpTimeConfig());
     if (ms > 0) expiresAt = new Date(Date.now() + ms);
   }
 

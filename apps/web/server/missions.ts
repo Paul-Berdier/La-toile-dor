@@ -14,6 +14,7 @@ import {
 } from "@toile/shared";
 import type { CurrentUser } from "@/lib/session";
 import { maskValue } from "@/lib/streamer";
+import { getRpTimeConfig } from "@/server/rp-config";
 
 /** Carte Kanban : la vue sérialisée + méta d'affichage non confidentielles. */
 export interface BoardCard {
@@ -122,7 +123,7 @@ export async function getBoard(
   filters: MissionFilters,
   streamer: boolean,
 ): Promise<BoardData> {
-  const ctx = await getAccessContext(current);
+  const [ctx, rpConfig] = await Promise.all([getAccessContext(current), getRpTimeConfig()]);
   const now = new Date();
 
   const where: Prisma.MissionWhereInput = {
@@ -147,7 +148,7 @@ export async function getBoard(
     if (!column) continue;
 
     const level = viewLevelFor(ctx, mission);
-    const timeRemaining = computeTimeRemaining(mission, now);
+    const timeRemaining = computeTimeRemaining(mission, now, rpConfig);
     const view = serializeMission(mission, level, {
       timeRemaining,
       claimCount: mission._count.claims,
@@ -218,8 +219,9 @@ export async function getMissionDetail(current: CurrentUser, missionId: string) 
   if (!ctx.isModerator && ["DRAFT", "ARCHIVED"].includes(mission.status)) return null;
 
   const level = viewLevelFor(ctx, mission);
+  const rpConfig = await getRpTimeConfig();
   const view = serializeMission(mission, level, {
-    timeRemaining: computeTimeRemaining(mission, new Date()),
+    timeRemaining: computeTimeRemaining(mission, new Date(), rpConfig),
     claimCount: mission.claims.filter((c) => c.status === "PENDING").length,
   });
 

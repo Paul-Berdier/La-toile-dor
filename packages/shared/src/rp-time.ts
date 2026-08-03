@@ -1,8 +1,10 @@
 /**
  * Service central de temps RP.
  *
- * Règle du serveur : 1 jour réel ≈ 1 mois RP, 1 semaine réelle ≈ 1 année RP.
- * Le ratio est configurable via AppSetting("rp_time") — ne dupliquez jamais
+ * Règles du serveur : 1 jour réel = 1 mois RP ET 1 semaine réelle = 1 année RP.
+ * Ces deux règles imposent une année RP de 7 mois (7 jours = 7 mois = 1 an) —
+ * c'est voulu par le serveur, ne pas « corriger » vers 12.
+ * Tout est configurable via AppSetting("rp_time") — ne dupliquez jamais
  * cette règle dans un composant : passez par ce module.
  *
  * Les dates d'expiration sont TOUJOURS stockées en temps réel UTC ;
@@ -12,6 +14,8 @@
 export interface RpTimeConfig {
   /** Millisecondes réelles représentant un mois RP (défaut : 1 jour réel). */
   realMsPerRpMonth: number;
+  /** Mois RP dans une année RP (défaut : 7 — ainsi 1 semaine réelle = 1 an RP). */
+  rpMonthsPerYear: number;
   /** Époque RP : date réelle correspondant à rpEpochLabel. */
   realEpochIso: string;
   /** Année RP à l'époque (pour l'affichage de dates RP absolues). */
@@ -20,11 +24,10 @@ export interface RpTimeConfig {
 
 export const DEFAULT_RP_TIME_CONFIG: RpTimeConfig = {
   realMsPerRpMonth: 24 * 60 * 60 * 1000, // 1 jour réel = 1 mois RP
+  rpMonthsPerYear: 7, // 1 semaine réelle (7 jours) = 1 année RP
   realEpochIso: "2026-01-01T00:00:00.000Z",
   rpEpochYear: 1,
 };
-
-const RP_MONTHS_PER_YEAR = 12;
 
 export interface RpDuration {
   years: number;
@@ -37,9 +40,10 @@ export function realToRpDuration(
   realMs: number,
   config: RpTimeConfig = DEFAULT_RP_TIME_CONFIG,
 ): RpDuration {
+  const monthsPerYear = config.rpMonthsPerYear ?? 7;
   const totalMonths = realMs / config.realMsPerRpMonth;
-  const years = Math.floor(totalMonths / RP_MONTHS_PER_YEAR);
-  const months = Math.floor(totalMonths % RP_MONTHS_PER_YEAR);
+  const years = Math.floor(totalMonths / monthsPerYear);
+  const months = Math.floor(totalMonths % monthsPerYear);
   // ~4,345 semaines par mois ; on garde une granularité simple : 4 semaines/mois
   const weeks = Math.floor((totalMonths - Math.floor(totalMonths)) * 4);
   return { years, months, weeks };
@@ -51,7 +55,7 @@ export function rpToRealMs(
   config: RpTimeConfig = DEFAULT_RP_TIME_CONFIG,
 ): number {
   const months =
-    (rp.years ?? 0) * RP_MONTHS_PER_YEAR + (rp.months ?? 0) + (rp.weeks ?? 0) / 4;
+    (rp.years ?? 0) * (config.rpMonthsPerYear ?? 7) + (rp.months ?? 0) + (rp.weeks ?? 0) / 4;
   return Math.round(months * config.realMsPerRpMonth);
 }
 
@@ -60,11 +64,12 @@ export function realDateToRp(
   date: Date,
   config: RpTimeConfig = DEFAULT_RP_TIME_CONFIG,
 ): { year: number; month: number } {
+  const monthsPerYear = config.rpMonthsPerYear ?? 7;
   const elapsed = date.getTime() - new Date(config.realEpochIso).getTime();
   const totalMonths = Math.floor(elapsed / config.realMsPerRpMonth);
   return {
-    year: config.rpEpochYear + Math.floor(totalMonths / RP_MONTHS_PER_YEAR),
-    month: ((totalMonths % RP_MONTHS_PER_YEAR) + RP_MONTHS_PER_YEAR) % RP_MONTHS_PER_YEAR + 1,
+    year: config.rpEpochYear + Math.floor(totalMonths / monthsPerYear),
+    month: ((totalMonths % monthsPerYear) + monthsPerYear) % monthsPerYear + 1,
   };
 }
 

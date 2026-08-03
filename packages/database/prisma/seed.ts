@@ -129,17 +129,16 @@ async function main() {
   }
 
   // Paramètres applicatifs
+  const rpTimeValue = {
+    realMsPerRpMonth: 86_400_000, // 1 jour réel = 1 mois RP
+    rpMonthsPerYear: 7, // 1 semaine réelle = 1 année RP (année RP de 7 mois)
+    realEpochIso: "2026-01-01T00:00:00.000Z",
+    rpEpochYear: 1,
+  };
   await prisma.appSetting.upsert({
     where: { key: "rp_time" },
-    update: {},
-    create: {
-      key: "rp_time",
-      value: {
-        realMsPerRpMonth: 86_400_000,
-        realEpochIso: "2026-01-01T00:00:00.000Z",
-        rpEpochYear: 1,
-      },
-    },
+    update: { value: rpTimeValue },
+    create: { key: "rp_time", value: rpTimeValue },
   });
 
   // Utilisateur système (auteur des données de démonstration)
