@@ -222,6 +222,7 @@ model Faction {
   assignments  MissionAssignment[]
   scores       MissionScore[]
   missionsAssigned Mission[] @relation("MissionAssignedFaction")
+  targetMissions   Mission[] @relation("MissionTargetFaction")
 }
 
 model FactionMember {
@@ -389,9 +390,11 @@ model Mission {
   confidentialDescription String?
   primaryObjective        String?
   secondaryObjectives     Json? // [{label, secret: bool, points}]
-  targetIdentity          String?
+  targetIdentity          String? // chefs des groupes attribués + modération
+  // Réservée aux chefs des groupes attribués et à la modération.
+  targetFactionId         String?
   location                String?
-  clientName              String? // commanditaire
+  clientName              String? // commanditaire — modération uniquement
   constraints             String?
   prohibitions            String?
   evidence                String? // preuves à rapporter
@@ -423,6 +426,7 @@ model Mission {
   creator             User     @relation("MissionCreator", fields: [creatorId], references: [id])
   responsibleModerator User?   @relation("MissionModerator", fields: [responsibleModeratorId], references: [id])
   targetLevel         PlayerLevel? @relation("MissionTargetLevel", fields: [targetLevelId], references: [id])
+  targetFaction       Faction? @relation("MissionTargetFaction", fields: [targetFactionId], references: [id], onDelete: SetNull)
   minRecommendedLevel PlayerLevel? @relation("MissionMinLevel", fields: [minRecommendedLevelId], references: [id])
   assignedFaction     Faction? @relation("MissionAssignedFaction", fields: [assignedFactionId], references: [id])
   assignedGroup       Group?   @relation("MissionAssignedGroup", fields: [assignedGroupId], references: [id])
@@ -441,6 +445,7 @@ model Mission {
   @@index([status, expiresAt])
   @@index([assignedGroupId])
   @@index([assignedFactionId])
+  @@index([targetFactionId])
   @@index([publishedAt])
 }
 

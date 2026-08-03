@@ -15,7 +15,7 @@ export default async function ModifierMissionPage({
   await requireUserWith(PERMISSIONS.MISSION_UPDATE);
   const { id } = await params;
 
-  const [mission, levels] = await Promise.all([
+  const [mission, levels, factions] = await Promise.all([
     prisma.mission.findUnique({
       where: { id },
       include: {
@@ -27,6 +27,10 @@ export default async function ModifierMissionPage({
     prisma.playerLevel.findMany({
       orderBy: { order: "asc" },
       select: { slug: true, label: true },
+    }),
+    prisma.faction.findMany({
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, isActive: true },
     }),
   ]);
 
@@ -44,6 +48,7 @@ export default async function ModifierMissionPage({
       ? mission.secondaryObjectives
       : [],
     targetIdentity: mission.targetIdentity ?? "",
+    targetFactionId: mission.targetFactionId ?? "",
     location: mission.location ?? "",
     clientName: mission.clientName ?? "",
     constraints: mission.constraints ?? "",
@@ -86,6 +91,7 @@ export default async function ModifierMissionPage({
       </p>
       <CreateWizard
         levels={levels}
+        factions={factions}
         mode="edit"
         missionId={mission.id}
         currentStatus={mission.status}

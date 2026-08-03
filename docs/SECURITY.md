@@ -74,12 +74,19 @@ confidentialité du RP.
 
 ## 5. Confidentialité par construction
 
-Les réponses passent par des sérialiseurs à trois niveaux
-(`packages/shared/src/mission-views.ts`) : `public` / `assigned` /
+Les réponses passent par des sérialiseurs à quatre niveaux
+(`packages/shared/src/mission-views.ts`) : `public` / `assigned` / `leader` /
 `moderator`. **Un champ confidentiel n'existe pas dans le DTO d'un niveau
 inférieur** — il n'est ni masqué en CSS, ni vidé, il n'est jamais envoyé.
 Vérifié par tests unitaires (clés absentes) et e2e (aucun secret dans le DOM
 ni dans aucune réponse réseau, sur build de production).
+
+- `public` : aucune donnée du dossier scellé, y compris pour un chef candidat ;
+- `assigned` : briefing opérationnel, mais aucune clé `targetIdentity`,
+  `targetFactionId` ou `clientName` ;
+- `leader` : noms des cibles et faction des cibles après attribution de l'un
+  des groupes effectivement dirigés par l'utilisateur ;
+- `moderator` : vue complète, incluant seule le commanditaire (`clientName`).
 
 ⚠ **Le mode développement de React/Next streame des données de débogage
 (valeurs des promesses awaitées) vers le navigateur.** Les garanties de

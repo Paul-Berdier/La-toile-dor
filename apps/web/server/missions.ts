@@ -13,6 +13,7 @@ import {
   PERMISSIONS,
   canViewAssignmentRoster,
   toPublicRosterAgent,
+  resolveMissionViewLevel,
 } from "@toile/shared";
 import type { CurrentUser } from "@/lib/session";
 import { maskValue } from "@/lib/streamer";
@@ -159,14 +160,17 @@ export function viewLevelFor(
     assignments?: { groupId: string; active: boolean }[];
   },
 ): MissionViewLevel {
-  if (ctx.isModerator) return "moderator";
   const assignedGroupIds = (mission.assignments ?? [])
     .filter((a) => a.active)
     .map((a) => a.groupId);
-  if (assignedGroupIds.some((groupId) => ctx.groupIds.has(groupId))) return "assigned";
-  if (mission.assignedGroupId && ctx.groupIds.has(mission.assignedGroupId)) return "assigned";
-  if (ctx.participantMissionIds.has(mission.id)) return "assigned";
-  return "public";
+  return resolveMissionViewLevel({
+    isModerator: ctx.isModerator,
+    viewerGroupIds: ctx.groupIds,
+    viewerLedGroupIds: new Set(ctx.ledGroups.map((group) => group.id)),
+    isExplicitParticipant: ctx.participantMissionIds.has(mission.id),
+    assignedGroupIds,
+    legacyAssignedGroupId: mission.assignedGroupId,
+  });
 }
 
 /** Vrai si l'utilisateur peut voir les détails confidentiels de la mission. */
@@ -186,6 +190,7 @@ const missionInclude = {
   assignedFaction: { select: { name: true } },
   assignedGroup: { select: { name: true, factionId: true } },
   targetLevel: { select: { label: true, slug: true } },
+  targetFaction: { select: { name: true } },
   assignments: {
     where: { active: true },
     include: {

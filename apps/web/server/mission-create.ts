@@ -55,14 +55,24 @@ export async function createMissionAction(raw: unknown): Promise<CreateMissionRe
     if (ms > 0) expiresAt = new Date(Date.now() + ms);
   }
 
-  const [targetLevel, minLevel] = await Promise.all([
+  const [targetLevel, minLevel, targetFaction] = await Promise.all([
     data.targetLevelSlug
       ? prisma.playerLevel.findUnique({ where: { slug: data.targetLevelSlug } })
       : null,
     data.minRecommendedLevelSlug
       ? prisma.playerLevel.findUnique({ where: { slug: data.minRecommendedLevelSlug } })
       : null,
+    data.targetFactionId
+      ? prisma.faction.findFirst({ where: { id: data.targetFactionId, isActive: true } })
+      : null,
   ]);
+  if (data.targetFactionId && !targetFaction) {
+    return {
+      ok: false,
+      error: "La faction de la cible est inconnue ou inactive.",
+      fieldErrors: { targetFactionId: ["Faction de cible invalide."] },
+    };
+  }
 
   const code = await nextMissionCode(data.rank);
   const mission = await prisma.mission.create({
@@ -78,6 +88,7 @@ export async function createMissionAction(raw: unknown): Promise<CreateMissionRe
       primaryObjective: data.primaryObjective ?? null,
       secondaryObjectives: data.secondaryObjectives,
       targetIdentity: data.targetIdentity ?? null,
+      targetFactionId: targetFaction?.id ?? null,
       location: data.location ?? null,
       clientName: data.clientName ?? null,
       constraints: data.constraints ?? null,
@@ -178,14 +189,27 @@ export async function updateMissionAction(input: {
     if (ms > 0) expiresAt = new Date(Date.now() + ms);
   }
 
-  const [targetLevel, minLevel] = await Promise.all([
+  const [targetLevel, minLevel, targetFaction] = await Promise.all([
     data.targetLevelSlug
       ? prisma.playerLevel.findUnique({ where: { slug: data.targetLevelSlug } })
       : null,
     data.minRecommendedLevelSlug
       ? prisma.playerLevel.findUnique({ where: { slug: data.minRecommendedLevelSlug } })
       : null,
+    data.targetFactionId
+      ? prisma.faction.findUnique({ where: { id: data.targetFactionId } })
+      : null,
   ]);
+  if (
+    data.targetFactionId &&
+    (!targetFaction || (!targetFaction.isActive && targetFaction.id !== existing.targetFactionId))
+  ) {
+    return {
+      ok: false,
+      error: "La faction de la cible est inconnue ou inactive.",
+      fieldErrors: { targetFactionId: ["Faction de cible invalide."] },
+    };
+  }
 
   const publishDraft = existing.status === "DRAFT" && data.publish;
   const nextStatus = publishDraft ? "AVAILABLE" : existing.status;
@@ -206,6 +230,7 @@ export async function updateMissionAction(input: {
           primaryObjective: data.primaryObjective ?? null,
           secondaryObjectives: data.secondaryObjectives,
           targetIdentity: data.targetIdentity ?? null,
+          targetFactionId: targetFaction?.id ?? null,
           location: data.location ?? null,
           clientName: data.clientName ?? null,
           constraints: data.constraints ?? null,

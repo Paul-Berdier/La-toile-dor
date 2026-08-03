@@ -31,7 +31,7 @@ docs/           conception, sécurité, identité, groupes, attributions, déplo
 ## Décisions structurantes
 
 1. **Confidentialité par construction** — les sérialiseurs
-   `public/assigned/moderator` (packages/shared) sont l'unique chemin de
+   `public/assigned/leader/moderator` (packages/shared) sont l'unique chemin de
    sortie d'une mission ; un champ confidentiel n'existe pas dans un DTO de
    niveau inférieur. Testé unitairement et en e2e sur build de production.
 2. **File de notifications en PostgreSQL, pas de Redis** — volumétrie d'un

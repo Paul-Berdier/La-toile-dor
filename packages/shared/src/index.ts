@@ -8,3 +8,4 @@ export * from "./identity";
 export * from "./eligibility";
 export * from "./reward-sharing";
 export * from "./assignment-visibility";
+export * from "./mission-access";

@@ -10,10 +10,12 @@ import { loginAs, prisma } from "./helpers";
 const runId = Date.now().toString(36).toUpperCase();
 const TITLE = `Contrat e2e ${runId}`;
 const TARGET = `Cible-e2e-${runId}`;
+const CLIENT = `Commanditaire-e2e-${runId}`;
 
 test.describe.configure({ mode: "serial" });
 
 let missionUrl = "";
+let targetFactionName = "";
 
 test("le modérateur tisse et publie un contrat", async ({ context, page }) => {
   await loginAs(context, "demo-mod");
@@ -31,8 +33,19 @@ test("le modérateur tisse et publie un contrat", async ({ context, page }) => {
   await page.getByRole("button", { name: "Suivant →" }).click();
   // 04 — confidentiel
   await page.getByLabel("Briefing confidentiel").fill("Briefing confidentiel e2e.");
-  await page.getByLabel("Identité de la cible").fill(TARGET);
+  await page.getByLabel("Nom(s) de la ou des cibles").fill(TARGET);
+  const chiefMembership = await prisma.groupMember.findFirstOrThrow({
+    where: { userId: "demo-chief-2", isLeader: true },
+    select: { group: { select: { factionId: true } } },
+  });
+  const targetFaction = await prisma.faction.findFirstOrThrow({
+    where: { isActive: true, id: { not: chiefMembership.group.factionId ?? undefined } },
+    orderBy: { name: "asc" },
+  });
+  targetFactionName = targetFaction.name;
+  await page.getByLabel("Faction de la ou des cibles").selectOption(targetFaction.id);
   await page.getByLabel("Localisation").fill("Lieu-e2e");
+  await page.getByLabel("Commanditaire").fill(CLIENT);
   await page.getByRole("button", { name: "Suivant →" }).click();
   // 05 — niveaux
   await page.getByRole("button", { name: "Suivant →" }).click();
@@ -69,6 +82,8 @@ test("le chef revendique le contrat avec sa cellule", async ({ context, page }) 
   await expect(page.getByText("Dossier scellé").first()).toBeVisible();
   const html = await page.content();
   expect(html).not.toContain(TARGET);
+  expect(html).not.toContain(targetFactionName);
+  expect(html).not.toContain(CLIENT);
 
   const agents = page.getByRole("group", { name: /Agents engagés/ }).getByRole("checkbox");
   const agentCount = await agents.count();
@@ -97,11 +112,37 @@ test("le modérateur examine la revendication et attribue", async ({ context, pa
   expect(participants).toBeGreaterThan(0);
 });
 
-test("le groupe attribué voit désormais le dossier complet", async ({ context, page }) => {
+test("le chef accepté voit les cibles et leur faction, jamais le commanditaire", async ({ context, page }) => {
   await loginAs(context, "demo-chief-2");
   await page.goto(missionUrl);
   await expect(page.getByText(TARGET)).toBeVisible();
+  await expect(page.getByText(targetFactionName, { exact: true })).toBeVisible();
   await expect(page.getByText("Briefing confidentiel e2e.")).toBeVisible();
+  await expect(page.getByText(CLIENT)).toHaveCount(0);
+});
+
+test("un agent engagé voit le briefing mais pas les cibles, leur faction ou le commanditaire", async ({
+  context,
+  page,
+}) => {
+  const mission = await prisma.mission.findFirstOrThrow({ where: { publicTitle: TITLE } });
+  const participant = await prisma.missionParticipant.findFirstOrThrow({
+    where: { missionId: mission.id, userId: { startsWith: "demo-member-" } },
+    select: { userId: true },
+  });
+  await loginAs(context, participant.userId);
+  await page.goto(missionUrl);
+  await expect(page.getByText("Briefing confidentiel e2e.")).toBeVisible();
+  const html = await page.content();
+  expect(html).not.toContain(TARGET);
+  expect(html).not.toContain(targetFactionName);
+  expect(html).not.toContain(CLIENT);
+});
+
+test("la modération voit aussi le commanditaire", async ({ context, page }) => {
+  await loginAs(context, "demo-mod");
+  await page.goto(missionUrl);
+  await expect(page.getByText(CLIENT)).toBeVisible();
 });
 
 test("le chef reçoit l'écho in-app de l'acceptation (mode sans bot)", async ({

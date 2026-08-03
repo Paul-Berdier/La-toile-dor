@@ -36,7 +36,7 @@ const STEP_FIELDS: (keyof MissionCreateInput)[][] = [
   ["publicTitle", "internalTitle"],
   ["category", "rank"],
   ["publicSummary"],
-  ["confidentialDescription", "primaryObjective", "targetIdentity", "location", "clientName", "constraints", "prohibitions", "evidence"],
+  ["confidentialDescription", "primaryObjective", "targetIdentity", "targetFactionId", "location", "clientName", "constraints", "prohibitions", "evidence"],
   ["targetLevelSlug", "minRecommendedLevelSlug", "groupSizeMin", "groupSizeMax"],
   ["rewardRyoMin", "rewardRyoMax", "basePoints"],
   ["expiresAt", "rpDuration"],
@@ -47,6 +47,7 @@ const STEP_FIELDS: (keyof MissionCreateInput)[][] = [
 
 interface MissionWizardProps {
   levels: { slug: string; label: string }[];
+  factions: { id: string; name: string; isActive: boolean }[];
   mode?: "create" | "edit";
   missionId?: string;
   currentStatus?: string;
@@ -55,6 +56,7 @@ interface MissionWizardProps {
 
 export function CreateWizard({
   levels,
+  factions,
   mode = "create",
   missionId,
   currentStatus,
@@ -71,6 +73,7 @@ export function CreateWizard({
       publicTitle: "",
       category: "COLLECTE_INFORMATIONS",
       rank: "D",
+      targetFactionId: "",
       secondaryObjectives: [],
       rewardRyoMin: RANK_DEFAULTS.D.rewardRyoMin,
       rewardRyoMax: RANK_DEFAULTS.D.rewardRyoMax,
@@ -280,8 +283,22 @@ export function CreateWizard({
             </fieldset>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <label htmlFor="targetIdentity" className={label}>Identité de la cible</label>
-                <input id="targetIdentity" {...register("targetIdentity")} className={input} />
+                <label htmlFor="targetIdentity" className={label}>Nom(s) de la ou des cibles</label>
+                <textarea id="targetIdentity" rows={2} {...register("targetIdentity")} className={input} />
+              </div>
+              <div>
+                <label htmlFor="targetFactionId" className={label}>Faction de la ou des cibles</label>
+                <select id="targetFactionId" {...register("targetFactionId")} className={input}>
+                  <option value="">— Aucune / inconnue —</option>
+                  {factions.map((faction) => (
+                    <option key={faction.id} value={faction.id} disabled={!faction.isActive}>
+                      {faction.name}{faction.isActive ? "" : " — inactive"}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-ink-faint">
+                  Visible uniquement par les chefs des groupes acceptés et la modération.
+                </p>
               </div>
               <div>
                 <label htmlFor="location" className={label}>Localisation</label>
@@ -290,6 +307,7 @@ export function CreateWizard({
               <div>
                 <label htmlFor="clientName" className={label}>Commanditaire</label>
                 <input id="clientName" {...register("clientName")} className={input} />
+                <p className="mt-1 text-xs text-ink-faint">Visible uniquement par la modération.</p>
               </div>
               <div>
                 <label htmlFor="evidence" className={label}>Preuves à rapporter</label>
@@ -459,7 +477,8 @@ export function CreateWizard({
                 {([
                   ["visitor", "Visiteur"],
                   ["leader", "Chef (avant attribution)"],
-                  ["assigned", "Groupe attribué"],
+                  ["assigned", "Agent attribué"],
+                  ["acceptedLeader", "Chef attribué"],
                   ["moderator", "Modérateur"],
                 ] as const).map(([value, text]) => (
                   <Tabs.Trigger
@@ -487,21 +506,33 @@ export function CreateWizard({
                 <PreviewRow label="Récompense" value={formatRyoRange(values.rewardRyoMin || 0, values.rewardRyoMax || 0)} />
                 <PreviewRow label="Effectif" value={`${values.groupSizeMin} à ${values.groupSizeMax}`} />
                 <p className="mt-2 text-xs text-blood-bright">
-                  Cible, lieu, commanditaire, briefing : jamais transmis à ce niveau.
+                  Cibles, faction des cibles, lieu, commanditaire et briefing : jamais transmis à ce niveau.
                 </p>
               </Tabs.Content>
               <Tabs.Content value="assigned" className="space-y-1 p-4 text-sm">
                 <PreviewRow label="Briefing" value={values.confidentialDescription || "—"} />
                 <PreviewRow label="Objectif" value={values.primaryObjective || "—"} />
-                <PreviewRow label="Cible" value={values.targetIdentity || "—"} />
                 <PreviewRow label="Lieu" value={values.location || "—"} />
-                <PreviewRow label="Commanditaire" value={values.clientName || "—"} />
                 <PreviewRow
                   label="Objectifs secondaires"
                   value={`${(values.secondaryObjectives ?? []).filter((o) => !o.secret).length} visibles / ${(values.secondaryObjectives ?? []).length} au total (les « secrets » restent voilés)`}
                 />
+                <p className="mt-2 text-xs text-blood-bright">
+                  Noms et faction des cibles, commanditaire : non transmis aux agents.
+                </p>
+              </Tabs.Content>
+              <Tabs.Content value="acceptedLeader" className="space-y-1 p-4 text-sm">
+                <PreviewRow label="Cible(s)" value={values.targetIdentity || "—"} />
+                <PreviewRow
+                  label="Faction de la cible"
+                  value={factions.find((faction) => faction.id === values.targetFactionId)?.name ?? "—"}
+                />
+                <p className="mt-2 text-xs text-blood-bright">
+                  Le commanditaire reste réservé à la modération.
+                </p>
               </Tabs.Content>
               <Tabs.Content value="moderator" className="space-y-1 p-4 text-sm">
+                <PreviewRow label="Commanditaire" value={values.clientName || "—"} />
                 <PreviewRow label="Titre interne" value={values.internalTitle || "—"} />
                 <PreviewRow label="Notes" value={values.moderatorNotes || "—"} />
                 <PreviewRow label="Éligibilité" value={values.eligibilityMode} />

@@ -58,6 +58,7 @@ export const missionCreateSchema = z
     primaryObjective: z.string().max(2000).optional(),
     secondaryObjectives: z.array(secondaryObjectiveSchema).max(20).default([]),
     targetIdentity: z.string().max(500).optional(),
+    targetFactionId: z.union([z.string().cuid(), z.literal("")]).optional(),
     location: z.string().max(500).optional(),
     clientName: z.string().max(300).optional(),
     constraints: z.string().max(3000).optional(),

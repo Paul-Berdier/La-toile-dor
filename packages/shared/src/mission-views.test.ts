@@ -3,23 +3,23 @@ import {
   serializeMission,
   toPublicView,
   toAssignedView,
+  toLeaderView,
   toModeratorView,
   type MissionRecord,
 } from "./mission-views";
 import { computeTimeRemaining } from "./rp-time";
 
-const CONFIDENTIAL_KEYS = [
+const ASSIGNED_KEYS = [
   "confidentialDescription",
   "primaryObjective",
-  "targetIdentity",
   "location",
-  "clientName",
   "constraints",
   "prohibitions",
   "evidence",
 ] as const;
 
-const MODERATOR_KEYS = ["internalTitle", "moderatorNotes"] as const;
+const LEADER_KEYS = ["targetIdentity", "targetFactionId"] as const;
+const MODERATOR_KEYS = ["clientName", "internalTitle", "moderatorNotes"] as const;
 
 function mission(overrides: Partial<MissionRecord> = {}): MissionRecord {
   return {
@@ -34,6 +34,7 @@ function mission(overrides: Partial<MissionRecord> = {}): MissionRecord {
     rewardRyoMax: 2000,
     basePoints: 300,
     targetLevelId: "lvl-kage",
+    targetFactionId: "faction-cible",
     minRecommendedLevelId: "lvl-jonin",
     groupSizeMin: 2,
     groupSizeMax: 4,
@@ -74,7 +75,12 @@ const ctx = {
 describe("vue publique (chef avant attribution)", () => {
   it("n'expose AUCUNE clé confidentielle, même vide", () => {
     const view = toPublicView(mission(), ctx) as unknown as Record<string, unknown>;
-    for (const key of [...CONFIDENTIAL_KEYS, ...MODERATOR_KEYS, "secondaryObjectives"]) {
+    for (const key of [
+      ...ASSIGNED_KEYS,
+      ...LEADER_KEYS,
+      ...MODERATOR_KEYS,
+      "secondaryObjectives",
+    ]) {
       expect(view, `la clé ${key} ne doit pas exister`).not.toHaveProperty(key);
     }
     expect(JSON.stringify(view)).not.toContain("SECRET");
@@ -97,6 +103,7 @@ describe("vue publique (chef avant attribution)", () => {
         mission({
           confidentialDescription: null,
           targetIdentity: null,
+          targetFactionId: null,
           location: null,
           clientName: null,
         }),
@@ -107,11 +114,10 @@ describe("vue publique (chef avant attribution)", () => {
 });
 
 describe("vue attribuée (groupe en mission)", () => {
-  it("révèle le dossier mais JAMAIS les notes de modération", () => {
+  it("révèle le dossier opérationnel sans cible, faction cible ni commanditaire", () => {
     const view = toAssignedView(mission(), ctx) as unknown as Record<string, unknown>;
-    expect(view.targetIdentity).toBe("SECRET cible");
     expect(view.location).toBe("SECRET lieu");
-    for (const key of MODERATOR_KEYS) {
+    for (const key of [...LEADER_KEYS, ...MODERATOR_KEYS]) {
       expect(view, `la clé ${key} ne doit pas exister`).not.toHaveProperty(key);
     }
   });
@@ -124,11 +130,25 @@ describe("vue attribuée (groupe en mission)", () => {
   });
 });
 
+describe("vue chef d'un groupe attribué", () => {
+  it("révèle les cibles et leur faction, mais jamais le commanditaire", () => {
+    const view = toLeaderView(mission(), ctx) as unknown as Record<string, unknown>;
+    expect(view.targetIdentity).toBe("SECRET cible");
+    expect(view.targetFactionId).toBe("faction-cible");
+    for (const key of MODERATOR_KEYS) {
+      expect(view, `la clé ${key} ne doit pas exister`).not.toHaveProperty(key);
+    }
+  });
+});
+
 describe("vue modérateur", () => {
   it("contient tout, y compris les objectifs secrets et les notes", () => {
     const view = toModeratorView(mission(), ctx);
     expect(view.internalTitle).toBe("SECRET interne");
     expect(view.moderatorNotes).toBe("SECRET notes");
+    expect(view.targetIdentity).toBe("SECRET cible");
+    expect(view.targetFactionId).toBe("faction-cible");
+    expect(view.clientName).toBe("SECRET commanditaire");
     expect(view.secondaryObjectives).toHaveLength(2);
   });
 });
@@ -137,6 +157,7 @@ describe("serializeMission", () => {
   it("route vers le bon niveau", () => {
     expect(serializeMission(mission(), "public", ctx).level).toBe("public");
     expect(serializeMission(mission(), "assigned", ctx).level).toBe("assigned");
+    expect(serializeMission(mission(), "leader", ctx).level).toBe("leader");
     expect(serializeMission(mission(), "moderator", ctx).level).toBe("moderator");
   });
 });

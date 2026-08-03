@@ -35,7 +35,7 @@ export default async function MissionDetailPage({
 
   const { mission, view, level, ctx } = detail;
   const streamer = await isStreamerMode();
-  const confidentialAccess = level === "assigned" || level === "moderator";
+  const confidentialAccess = level !== "public";
   const visibleAssignments = mission.assignments.filter((assignment) =>
     canViewAssignmentRoster({
       isModerator: ctx.isModerator,
@@ -205,11 +205,18 @@ export default async function MissionDetailPage({
                   </div>
                 )}
                 <div className="grid gap-x-8 sm:grid-cols-2">
-                  {view.targetIdentity && (
-                    <Field label="Cible">{mask("CIBLE", view.targetIdentity)}</Field>
+                  {"targetIdentity" in view && view.targetIdentity && (
+                    <Field label="Cible(s)">{mask("CIBLE", view.targetIdentity)}</Field>
                   )}
+                  {"targetFactionId" in view &&
+                    view.targetFactionId &&
+                    mission.targetFaction && (
+                      <Field label="Faction de la cible">
+                        {mask("FCT", mission.targetFaction.name)}
+                      </Field>
+                    )}
                   {view.location && <Field label="Lieu">{mask("LIEU", view.location)}</Field>}
-                  {view.clientName && (
+                  {"clientName" in view && view.clientName && (
                     <Field label="Commanditaire">{mask("CMD", view.clientName)}</Field>
                   )}
                   {view.evidence && <Field label="Preuves à rapporter">{mask("PRV", view.evidence)}</Field>}

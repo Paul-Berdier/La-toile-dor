@@ -77,6 +77,20 @@ Ont accès aux détails confidentiels :
 - un membre de l'un des groupes attribués activement ;
 - un participant explicite à la mission.
 
+Cet accès général au briefing ne donne pas les mêmes champs à tous :
+
+- avant acceptation, un chef candidat reste en vue `public` et ne reçoit ni le
+  nom des cibles, ni leur faction, ni le commanditaire ;
+- un agent ou membre d'un groupe attribué reçoit la vue `assigned`, sans ces
+  trois champs ;
+- le chef d'un groupe attribué reçoit la vue `leader` : noms de la ou des
+  cibles et faction cible, mais aucun commanditaire ;
+- seule la modération reçoit `clientName`, le commanditaire.
+
+`Mission.targetFactionId` désigne la faction RP de la cible. Elle est distincte
+de `assignedFactionId`, qui reste une colonne historique liée au groupe
+participant.
+
 Le partage d'une faction n'accorde aucune visibilité supplémentaire, même sur
 le résumé d'attribution. Les candidats non retenus restent au niveau public.
 

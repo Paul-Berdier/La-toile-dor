@@ -6,13 +6,14 @@
  * un masquage CSS ou un champ vidé côté client.
  *
  * - PublicMissionView   : chef de groupe AVANT attribution (et cartes Kanban)
- * - AssignedMissionView : groupe attribué + participants explicites
- * - ModeratorMissionView: modérateurs et super administrateurs
+ * - AssignedMissionView : agents et membres d'un groupe attribué
+ * - LeaderMissionView   : chef d'un groupe attribué (cibles + faction cible)
+ * - ModeratorMissionView: modérateurs et super administrateurs (+ commanditaire)
  */
 
 import type { TimeRemaining } from "./rp-time";
 
-export type MissionViewLevel = "public" | "assigned" | "moderator";
+export type MissionViewLevel = "public" | "assigned" | "leader" | "moderator";
 
 // ── Formes d'entrée minimales (compatibles avec le modèle Prisma) ──
 
@@ -28,6 +29,7 @@ export interface MissionRecord {
   rewardRyoMax: number;
   basePoints: number;
   targetLevelId: string | null;
+  targetFactionId: string | null;
   minRecommendedLevelId: string | null;
   groupSizeMin: number;
   groupSizeMax: number;
@@ -91,9 +93,7 @@ export interface AssignedMissionView
   primaryObjective: string | null;
   /** Les objectifs secondaires marqués `secret` sont exclus pour ce niveau */
   secondaryObjectives: { label: string; points?: number }[];
-  targetIdentity: string | null;
   location: string | null;
-  clientName: string | null;
   constraints: string | null;
   prohibitions: string | null;
   evidence: string | null;
@@ -102,9 +102,19 @@ export interface AssignedMissionView
   assignedAt: string | null;
 }
 
+export interface LeaderMissionView extends Omit<AssignedMissionView, "level"> {
+  level: "leader";
+  /** Noms de la ou des cibles, révélés uniquement après attribution. */
+  targetIdentity: string | null;
+  /** Faction RP de la cible, jamais la faction du groupe assigné. */
+  targetFactionId: string | null;
+}
+
 export interface ModeratorMissionView
-  extends Omit<AssignedMissionView, "level" | "secondaryObjectives"> {
+  extends Omit<LeaderMissionView, "level" | "secondaryObjectives"> {
   level: "moderator";
+  /** Le commanditaire est strictement réservé à la modération. */
+  clientName: string | null;
   internalTitle: string | null;
   moderatorNotes: string | null;
   eligibilityMode: string;
@@ -122,6 +132,7 @@ export interface ModeratorMissionView
 export type MissionView =
   | PublicMissionView
   | AssignedMissionView
+  | LeaderMissionView
   | ModeratorMissionView;
 
 interface SerializeContext {
@@ -161,7 +172,11 @@ export function toPublicView(m: MissionRecord, ctx: SerializeContext): PublicMis
     timeRemaining: ctx.timeRemaining,
     claimCount: ctx.claimCount,
     hasConfidential: Boolean(
-      m.confidentialDescription || m.targetIdentity || m.location || m.clientName,
+      m.confidentialDescription ||
+        m.targetIdentity ||
+        m.targetFactionId ||
+        m.location ||
+        m.clientName,
     ),
   };
 }
@@ -179,9 +194,7 @@ export function toAssignedView(m: MissionRecord, ctx: SerializeContext): Assigne
     secondaryObjectives: parseSecondaryObjectives(m.secondaryObjectives)
       .filter((o) => !o.secret)
       .map(({ label, points }) => ({ label, points })),
-    targetIdentity: m.targetIdentity,
     location: m.location,
-    clientName: m.clientName,
     constraints: m.constraints,
     prohibitions: m.prohibitions,
     evidence: m.evidence,
@@ -191,11 +204,22 @@ export function toAssignedView(m: MissionRecord, ctx: SerializeContext): Assigne
   };
 }
 
-export function toModeratorView(m: MissionRecord, ctx: SerializeContext): ModeratorMissionView {
+export function toLeaderView(m: MissionRecord, ctx: SerializeContext): LeaderMissionView {
   const assigned = toAssignedView(m, ctx);
   return {
     ...assigned,
+    level: "leader",
+    targetIdentity: m.targetIdentity,
+    targetFactionId: m.targetFactionId,
+  };
+}
+
+export function toModeratorView(m: MissionRecord, ctx: SerializeContext): ModeratorMissionView {
+  const leader = toLeaderView(m, ctx);
+  return {
+    ...leader,
     level: "moderator",
+    clientName: m.clientName,
     internalTitle: m.internalTitle,
     moderatorNotes: m.moderatorNotes,
     eligibilityMode: m.eligibilityMode,
@@ -219,6 +243,8 @@ export function serializeMission(
   switch (level) {
     case "moderator":
       return toModeratorView(m, ctx);
+    case "leader":
+      return toLeaderView(m, ctx);
     case "assigned":
       return toAssignedView(m, ctx);
     default:
