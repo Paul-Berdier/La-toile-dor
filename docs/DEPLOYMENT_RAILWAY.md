@@ -24,7 +24,7 @@ expiration automatique côté web, contrôle des rôles à la connexion.
 
 1. **+ New** → **GitHub Repo** → sélectionner le dépôt.
 2. Settings du service :
-   - **Config-as-code file** : `railway.json` (racine) — build Dockerfile
+   - **Config-as-code file** : `/railway.json` (chemin absolu depuis la racine) — build Dockerfile
      `apps/web/Dockerfile`, healthcheck `/connexion`.
    - **Root Directory** : `/` (le Dockerfile a besoin du monorepo entier).
 3. **Networking** → **Generate Domain** → noter l'URL publique
@@ -33,7 +33,7 @@ expiration automatique côté web, contrôle des rôles à la connexion.
 ## 4. Service bot
 
 1. **+ New** → **GitHub Repo** → même dépôt (second service).
-2. **Config-as-code file** : `apps/bot/railway.json` (Dockerfile
+2. **Config-as-code file** : `/apps/bot/railway.json` (chemin absolu ; Dockerfile
    `apps/bot/Dockerfile`). Root Directory `/`.
 3. Aucun domaine public nécessaire (le bot sort vers Discord).
 

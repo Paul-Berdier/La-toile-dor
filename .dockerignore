@@ -1,0 +1,28 @@
+# Local secrets must never enter a Docker build context.
+.env
+.env.*
+
+# Dependencies and generated build artifacts are recreated in the image.
+node_modules
+**/node_modules
+.next
+**/.next
+dist
+**/dist
+build
+**/build
+out
+**/out
+coverage
+playwright-report
+test-results
+packages/database/generated
+*.tsbuildinfo
+
+# Repository and editor metadata.
+.git
+.gitignore
+.idea
+.vscode
+.claude
+*.log
