@@ -14,6 +14,11 @@ COPY packages/ui/package.json packages/ui/
 COPY packages/config/package.json packages/config/
 RUN npm ci --no-audit --no-fund
 
+# Dépendances réellement nécessaires à l'exécution. Prisma est volontairement
+# une dépendance de production car les migrations tournent au démarrage.
+FROM deps AS runtime-deps
+RUN npm prune --omit=dev
+
 # ── Build ──
 FROM base AS build
 COPY --from=deps /app/node_modules ./node_modules
@@ -29,14 +34,16 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN addgroup -S toile && adduser -S toile -G toile
 
+# Le CLI Prisma charge plusieurs dépendances transitives (@prisma/config,
+# effect, c12, etc.) qui ne font pas partie du traçage standalone de Next.
+COPY --from=runtime-deps --chown=toile:toile /app/node_modules ./node_modules
+
 # Sortie standalone de Next (inclut les node_modules tracés)
 COPY --from=build --chown=toile:toile /app/apps/web/.next/standalone ./
 COPY --from=build --chown=toile:toile /app/apps/web/.next/static ./apps/web/.next/static
 # Client Prisma généré (moteur natif) + schéma pour les migrations
 COPY --from=build --chown=toile:toile /app/packages/database/generated ./packages/database/generated
 COPY --from=build --chown=toile:toile /app/packages/database/prisma ./packages/database/prisma
-COPY --from=build /app/node_modules/prisma ./node_modules/prisma
-COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
 
 USER toile
 EXPOSE 3000
