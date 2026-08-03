@@ -1,0 +1,92 @@
+/* ═══════════════════════════════════════════════════════════════
+   LA TOILE D'OR — tokens du design system « Réseau d'Obsidienne »
+   Source unique de vérité : aucune couleur importante ne doit être
+   écrite en dur dans un composant.
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Fonds (noir obsidienne → anthracite) ── */
+  --toile-bg: #0b0a08;            /* fond de page, obsidienne */
+  --toile-bg-raised: #14120d;     /* panneaux, colonnes */
+  --toile-bg-elevated: #1c1812;   /* cartes, modales */
+  --toile-bg-hover: #241f16;      /* survol */
+  --toile-bg-wood: #1a140c;       /* panneaux « bois sombre » */
+
+  /* ── Or (valeur, réseau, interactions, priorité) ── */
+  --toile-gold: #b8963e;          /* or vieilli — accent principal */
+  --toile-gold-bright: #d8b45a;   /* survol, focus, éléments actifs */
+  --toile-gold-dim: #6e5a26;      /* fils, bordures discrètes */
+  --toile-gold-faint: #362c14;    /* trames de toile en arrière-plan */
+
+  /* ── Cuivre (états secondaires) ── */
+  --toile-copper: #8c5a2b;
+
+  /* ── Ivoire parchemin (texte, dossiers ouverts) ── */
+  --toile-ink: #e8dcc0;           /* texte principal sur fond sombre */
+  --toile-ink-muted: #a89f8a;     /* texte secondaire */
+  --toile-ink-faint: #8d8776;     /* légendes, méta (contraste AA sur fonds sombres) */
+  --toile-parchment: #ece1c4;     /* fond des dossiers ouverts */
+  --toile-parchment-deep: #dccfa9;
+  --toile-parchment-text: #241e12;/* encre noire sur parchemin */
+
+  /* ── Rouge sang (RARE : sceaux, rang S/SS, échecs, alertes) ── */
+  --toile-blood: #6e1423;
+  --toile-blood-bright: #94202f;
+
+  /* ── Gris fumée ── */
+  --toile-smoke: #7a7568;
+
+  /* ── Couleurs sémantiques ── */
+  --toile-success: #5a7a4a;       /* accompli — vert mousse discret */
+  --toile-warning: #a67c2e;       /* avertissement — ambre terreux */
+  --toile-danger: var(--toile-blood-bright);
+  --toile-info: var(--toile-copper);
+
+  /* ── Rangs de mission ── */
+  --toile-rank-d: #7a7568;        /* gris fumée */
+  --toile-rank-c: #8c5a2b;        /* bronze */
+  --toile-rank-b: #9aa0a6;        /* argent sombre */
+  --toile-rank-a: #b8963e;        /* or */
+  --toile-rank-s: #94202f;        /* rouge sombre (+ or en liseré) */
+  --toile-rank-ss: #d8b45a;       /* or animé sur noir profond + sceau rouge */
+
+  /* ── Bordures ── */
+  --toile-border: #2b2519;        /* séparations discrètes */
+  --toile-border-gold: #55461f;   /* encadrements or */
+  --toile-border-strong: var(--toile-gold-dim);
+
+  /* ── Ombres ── */
+  --toile-shadow-card: 0 2px 8px rgba(0, 0, 0, 0.5);
+  --toile-shadow-modal: 0 8px 40px rgba(0, 0, 0, 0.75);
+  --toile-shadow-gold: 0 0 12px rgba(184, 150, 62, 0.18);
+
+  /* ── Rayons (angles droits dominants — pas de cartes « pilule ») ── */
+  --toile-radius-none: 0;
+  --toile-radius-sm: 2px;
+  --toile-radius-md: 4px;
+
+  /* ── Espacements ── */
+  --toile-space-1: 0.25rem;
+  --toile-space-2: 0.5rem;
+  --toile-space-3: 0.75rem;
+  --toile-space-4: 1rem;
+  --toile-space-6: 1.5rem;
+  --toile-space-8: 2rem;
+  --toile-space-12: 3rem;
+
+  /* ── Largeurs de contenu ── */
+  --toile-content-narrow: 42rem;
+  --toile-content-default: 72rem;
+  --toile-content-wide: 96rem;
+
+  /* ── Typographies (chargées via next/font) ── */
+  --toile-font-display: var(--font-cinzel), "Cinzel", serif;
+  --toile-font-body: var(--font-inter), "Inter", system-ui, sans-serif;
+  --toile-font-mono: var(--font-jetbrains), "JetBrains Mono", monospace;
+
+  /* ── Animations ── */
+  --toile-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --toile-duration-fast: 120ms;
+  --toile-duration: 200ms;
+  --toile-duration-slow: 420ms;
+}

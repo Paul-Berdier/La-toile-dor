@@ -1,0 +1,669 @@
+// La Toile d'Or — schéma de données
+// Toutes les données de mission sont fictives et limitées au cadre du jeu de rôle.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Comptes, sessions, invitations
+// ─────────────────────────────────────────────────────────────
+
+enum UserStatus {
+  PENDING // invitation consommée, en attente d'approbation manuelle
+  ACTIVE
+  SUSPENDED // rôle Discord critique perdu, réactivable
+  REVOKED
+}
+
+model User {
+  id            String     @id @default(cuid())
+  displayName   String
+  status        UserStatus @default(PENDING)
+  createdAt     DateTime   @default(now())
+  lastLoginAt   DateTime?
+  approvedById  String?
+  approvedAt    DateTime?
+  revokedAt     DateTime?
+  revokedReason String?
+  // Préférence de confidentialité : démarrer en mode Streamer
+  streamerModeDefault Boolean @default(false)
+  // Niveau RP du personnage (configurable dans l'administration)
+  playerLevelId String?
+
+  playerLevel        PlayerLevel?    @relation("UserLevel", fields: [playerLevelId], references: [id])
+  discordAccount     DiscordAccount?
+  sessions           Session[]
+  roles              UserRole[]
+  factionMemberships FactionMember[]
+  groupMemberships   GroupMember[]
+  invitationsCreated Invitation[]            @relation("InvitationCreator")
+  invitationUsed     Invitation?             @relation("InvitationUser")
+  missionsCreated    Mission[]               @relation("MissionCreator")
+  missionsModerated  Mission[]               @relation("MissionModerator")
+  claims             MissionClaim[]          @relation("ClaimLeader")
+  participations     MissionParticipant[]
+  notificationPrefs  NotificationPreference[]
+  notifications      NotificationDelivery[]
+  auditLogs          AuditLog[]
+
+  @@index([status])
+}
+
+model DiscordAccount {
+  id         String   @id @default(cuid())
+  userId     String   @unique
+  discordId  String   @unique
+  username   String
+  globalName String?
+  avatarHash String?
+  // Rôles Discord observés lors de la dernière synchronisation (ids)
+  guildRoles String[] @default([])
+  syncedAt   DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Session {
+  id         String    @id @default(cuid())
+  // Hash SHA-256 du jeton de session — le jeton clair ne vit que dans le cookie HttpOnly
+  tokenHash  String    @unique
+  // Identifiant court non sensible, affiché dans le filigrane
+  shortId    String
+  userId     String
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime
+  lastSeenAt DateTime  @default(now())
+  revokedAt  DateTime?
+  ipTrunc    String? // IP tronquée (jamais l'adresse complète)
+  userAgent  String? // réduit à famille navigateur/OS
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+enum InvitationStatus {
+  ACTIVE
+  USED
+  REVOKED
+  EXPIRED
+}
+
+model Invitation {
+  id        String           @id @default(cuid())
+  // Hash SHA-256(token + INVITE_TOKEN_PEPPER) — jamais le jeton clair
+  tokenHash String           @unique
+  status    InvitationStatus @default(ACTIVE)
+  note      String?
+  createdAt DateTime         @default(now())
+  expiresAt DateTime
+  revokedAt DateTime?
+
+  // Rôle et faction pré-assignés à l'utilisateur qui consommera l'invitation
+  roleId    String?
+  factionId String?
+  // Approbation manuelle exigée après l'OAuth Discord
+  requireApproval Boolean @default(true)
+  // Restriction facultative à un identifiant Discord précis
+  restrictedDiscordId String?
+
+  createdById String
+  createdBy   User    @relation("InvitationCreator", fields: [createdById], references: [id])
+  usedById    String? @unique
+  usedBy      User?   @relation("InvitationUser", fields: [usedById], references: [id])
+  usedAt      DateTime?
+  role        Role?    @relation(fields: [roleId], references: [id])
+  faction     Faction? @relation(fields: [factionId], references: [id])
+
+  @@index([status, expiresAt])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Rôles et permissions (RBAC extensible, contrôlé côté serveur)
+// ─────────────────────────────────────────────────────────────
+
+model Role {
+  id       String  @id @default(cuid())
+  slug     String  @unique // super_admin, moderator, faction_leader, faction_member
+  name     String
+  isSystem Boolean @default(false)
+
+  permissions RolePermission[]
+  users       UserRole[]
+  invitations Invitation[]
+}
+
+model Permission {
+  id          String @id @default(cuid())
+  key         String @unique // ex: mission.create, mission.view.confidential
+  description String
+
+  roles RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model UserRole {
+  userId     String
+  roleId     String
+  assignedAt DateTime @default(now())
+  assignedById String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Factions et groupes
+// ─────────────────────────────────────────────────────────────
+
+model Faction {
+  id          String  @id @default(cuid())
+  slug        String  @unique
+  name        String
+  description String?
+  // Couleur d'accent sémantique (référence de token, pas une valeur arbitraire)
+  colorToken  String  @default("gold")
+  isActive    Boolean @default(true)
+  createdAt   DateTime @default(now())
+
+  members      FactionMember[]
+  groups       Group[]
+  invitations  Invitation[]
+  assignments  MissionAssignment[]
+  scores       MissionScore[]
+  missionsAssigned Mission[] @relation("MissionAssignedFaction")
+}
+
+model FactionMember {
+  factionId String
+  userId    String
+  isLeader  Boolean  @default(false)
+  joinedAt  DateTime @default(now())
+
+  faction Faction @relation(fields: [factionId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([factionId, userId])
+  @@index([userId])
+}
+
+model Group {
+  id        String   @id @default(cuid())
+  factionId String
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  faction     Faction             @relation(fields: [factionId], references: [id], onDelete: Cascade)
+  members     GroupMember[]
+  claims      MissionClaim[]
+  assignments MissionAssignment[]
+  scores      MissionScore[]
+  missionsAssigned Mission[] @relation("MissionAssignedGroup")
+
+  @@unique([factionId, name])
+}
+
+model GroupMember {
+  groupId  String
+  userId   String
+  isLeader Boolean  @default(false)
+  joinedAt DateTime @default(now())
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, userId])
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Configuration RP : niveaux de joueurs et rangs de mission
+// ─────────────────────────────────────────────────────────────
+
+model PlayerLevel {
+  id    String @id @default(cuid())
+  slug  String @unique // genin_apprenti, genin_simple, ...
+  label String // libellé configurable dans l'administration
+  order Int    @unique // hiérarchie croissante
+
+  missionsTarget Mission[] @relation("MissionTargetLevel")
+  missionsMin    Mission[] @relation("MissionMinLevel")
+  ranksMin       RankConfig[]
+  users          User[]       @relation("UserLevel")
+}
+
+enum MissionRank {
+  D
+  C
+  B
+  A
+  S
+  SS
+}
+
+model RankConfig {
+  rank                 MissionRank @id
+  symbol               String
+  colorToken           String // référence de token du design system
+  dangerLevel          Int // 1..6
+  rewardRyoMin         Int
+  rewardRyoMax         Int
+  defaultPoints        Int
+  minLevelId           String?
+  recommendedGroupSize Int
+
+  minLevel PlayerLevel? @relation(fields: [minLevelId], references: [id])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Missions
+// ─────────────────────────────────────────────────────────────
+
+enum MissionCategory {
+  COLLECTE_INFORMATIONS
+  SURVEILLANCE_ESPIONNAGE
+  ELIMINATION
+  ENLEVEMENT
+  INTERROGATOIRE
+  PROTECTION
+  ESCORTE
+  SABOTAGE
+  MERCENARIAT
+  SPECIALE
+}
+
+enum MissionStatus {
+  DRAFT
+  AVAILABLE
+  CLAIM_PENDING
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  CANCELLED
+  EXPIRED
+  ARCHIVED
+}
+
+// Politique d'application des critères d'éligibilité
+enum EligibilityMode {
+  RECOMMENDATION
+  WARNING
+  STRICT
+  MANUAL_REVIEW
+}
+
+model Mission {
+  id     String          @id @default(cuid())
+  code   String          @unique // ex: TO-A-0042
+  status MissionStatus   @default(DRAFT)
+  rank   MissionRank
+  category MissionCategory
+
+  // ── Données publiques (visibles avant attribution selon MissionVisibility)
+  publicTitle          String
+  publicSummary        String?
+  rewardRyoMin         Int
+  rewardRyoMax         Int
+  basePoints           Int
+  targetLevelId        String?
+  minRecommendedLevelId String?
+  groupSizeMin         Int    @default(1)
+  groupSizeMax         Int    @default(4)
+
+  // ── Données confidentielles (groupe attribué + modérateurs uniquement)
+  confidentialDescription String?
+  primaryObjective        String?
+  secondaryObjectives     Json? // [{label, secret: bool, points}]
+  targetIdentity          String?
+  location                String?
+  clientName              String? // commanditaire
+  constraints             String?
+  prohibitions            String?
+  evidence                String? // preuves à rapporter
+
+  // ── Données réservées aux modérateurs
+  internalTitle   String?
+  moderatorNotes  String?
+  eligibilityMode EligibilityMode @default(WARNING)
+
+  // ── Délais (temps réel UTC ; conversion RP via le service central)
+  createdAt          DateTime  @default(now())
+  publishedAt        DateTime?
+  expiresAt          DateTime? // null = sans limite de temps
+  // Suspension temporaire du délai : on mémorise le temps restant
+  timerSuspendedAt   DateTime?
+  timerRemainingMs   BigInt?
+
+  // ── Attribution et résolution
+  assignedFactionId String?
+  assignedGroupId   String?
+  assignedAt        DateTime?
+  resolvedAt        DateTime?
+  failureReason     String?
+  cancellationReason String?
+
+  creatorId             String
+  responsibleModeratorId String?
+
+  creator             User     @relation("MissionCreator", fields: [creatorId], references: [id])
+  responsibleModerator User?   @relation("MissionModerator", fields: [responsibleModeratorId], references: [id])
+  targetLevel         PlayerLevel? @relation("MissionTargetLevel", fields: [targetLevelId], references: [id])
+  minRecommendedLevel PlayerLevel? @relation("MissionMinLevel", fields: [minRecommendedLevelId], references: [id])
+  assignedFaction     Faction? @relation("MissionAssignedFaction", fields: [assignedFactionId], references: [id])
+  assignedGroup       Group?   @relation("MissionAssignedGroup", fields: [assignedGroupId], references: [id])
+
+  visibility    MissionVisibility?
+  claims        MissionClaim[]
+  assignments   MissionAssignment[]
+  participants  MissionParticipant[]
+  attachments   MissionAttachment[]
+  statusHistory MissionStatusHistory[]
+  reports       MissionReport[]
+  scores        MissionScore[]
+  notifications NotificationDelivery[]
+
+  @@index([status, rank])
+  @@index([status, expiresAt])
+  @@index([assignedGroupId])
+  @@index([assignedFactionId])
+  @@index([publishedAt])
+}
+
+// Ce que les chefs de faction voient AVANT attribution.
+// Le rang, la récompense, le temps restant et les tailles de groupe sont toujours publics.
+model MissionVisibility {
+  missionId       String  @id
+  showCategory    Boolean @default(true)
+  showTargetLevel Boolean @default(true)
+  showSummary     Boolean @default(true)
+
+  mission Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+}
+
+enum ClaimStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  INFO_REQUESTED
+  WITHDRAWN
+}
+
+model MissionClaim {
+  id        String      @id @default(cuid())
+  missionId String
+  groupId   String
+  leaderId  String
+  message   String?
+  status    ClaimStatus @default(PENDING)
+  createdAt DateTime    @default(now())
+  resolvedAt DateTime?
+  moderatorId String?
+  moderatorNote String?
+  // Avertissements d'éligibilité calculés au moment de la revendication
+  warnings  Json?
+
+  mission Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  group   Group   @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  leader  User    @relation("ClaimLeader", fields: [leaderId], references: [id])
+
+  // Empêche les revendications dupliquées d'un même groupe sur une mission
+  @@unique([missionId, groupId])
+  @@index([status])
+  @@index([missionId, status])
+}
+
+model MissionAssignment {
+  id           String    @id @default(cuid())
+  missionId    String
+  factionId    String
+  groupId      String
+  assignedById String
+  assignedAt   DateTime  @default(now())
+  active       Boolean   @default(true)
+  releasedAt   DateTime?
+  releasedReason String?
+
+  mission Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  faction Faction @relation(fields: [factionId], references: [id])
+  group   Group   @relation(fields: [groupId], references: [id])
+
+  @@index([missionId, active])
+  @@index([groupId, active])
+}
+
+model MissionParticipant {
+  missionId String
+  userId    String
+  addedById String
+  addedAt   DateTime @default(now())
+  note      String?
+
+  mission Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([missionId, userId])
+  @@index([userId])
+}
+
+model MissionAttachment {
+  id           String   @id @default(cuid())
+  missionId    String
+  fileName     String
+  mimeType     String
+  sizeBytes    Int
+  // Clé de stockage opaque — jamais d'URL directe publique
+  storageKey   String   @unique
+  confidential Boolean  @default(true)
+  uploadedById String
+  createdAt    DateTime @default(now())
+
+  mission Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+
+  @@index([missionId])
+}
+
+model MissionStatusHistory {
+  id          String        @id @default(cuid())
+  missionId   String
+  fromStatus  MissionStatus
+  toStatus    MissionStatus
+  changedById String
+  reason      String?
+  createdAt   DateTime      @default(now())
+
+  mission Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+
+  @@index([missionId, createdAt])
+}
+
+model MissionReport {
+  id          String    @id @default(cuid())
+  missionId   String
+  authorId    String
+  content     String
+  submittedAt DateTime  @default(now())
+  isFinal     Boolean   @default(false)
+
+  mission Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+
+  @@index([missionId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Points et classement
+// ─────────────────────────────────────────────────────────────
+
+model LeaderboardSeason {
+  id       String   @id @default(cuid())
+  name     String
+  startsAt DateTime
+  endsAt   DateTime?
+  isActive Boolean  @default(false)
+
+  scores MissionScore[]
+}
+
+enum ScoreReason {
+  MISSION_COMPLETED
+  MISSION_FAILED
+  SPEED_BONUS
+  STEALTH_BONUS
+  SECONDARY_OBJECTIVES
+  REPORT_QUALITY
+  ADMIN_PENALTY
+  ABANDON
+  RP_VIOLATION
+  MANUAL_ADJUSTMENT
+}
+
+// Registre : chaque attribution de points est une ligne immuable et justifiée
+model MissionScore {
+  id          String      @id @default(cuid())
+  missionId   String?
+  seasonId    String?
+  factionId   String
+  groupId     String?
+  points      Int // positif ou négatif
+  reason      ScoreReason
+  justification String?
+  createdById String
+  createdAt   DateTime    @default(now())
+
+  mission Mission?           @relation(fields: [missionId], references: [id], onDelete: SetNull)
+  season  LeaderboardSeason? @relation(fields: [seasonId], references: [id])
+  faction Faction            @relation(fields: [factionId], references: [id])
+  group   Group?             @relation(fields: [groupId], references: [id])
+
+  @@index([factionId, seasonId])
+  @@index([groupId, seasonId])
+  @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Notifications Discord
+// ─────────────────────────────────────────────────────────────
+
+enum NotificationEvent {
+  MISSION_AVAILABLE
+  CLAIM_ACCEPTED
+  CLAIM_REJECTED
+  CLAIM_INFO_REQUESTED
+  MISSION_UPDATED
+  MISSION_STATUS_CHANGED
+  MISSION_DEADLINE_SOON
+  MISSION_EXPIRED
+  MISSION_CANCELLED
+  NEW_CLAIM
+  CLAIM_WITHDRAWN
+  FINAL_REPORT_SUBMITTED
+  SYNC_ISSUE
+  ACCESS_DENIED_ALERT
+}
+
+enum NotificationFrequency {
+  IMMEDIATE
+  DIGEST_HOURLY
+  DIGEST_DAILY
+}
+
+model NotificationPreference {
+  id        String                @id @default(cuid())
+  userId    String
+  event     NotificationEvent
+  enabled   Boolean               @default(true)
+  frequency NotificationFrequency @default(IMMEDIATE)
+  // Filtres facultatifs : rangs et catégories qui intéressent l'utilisateur
+  rankFilter     MissionRank[]     @default([])
+  categoryFilter MissionCategory[] @default([])
+  // Période silencieuse (heures locales 0-23), désactivation temporaire
+  quietHourStart Int?
+  quietHourEnd   Int?
+  mutedUntil     DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, event])
+}
+
+enum DeliveryStatus {
+  PENDING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+// File de notifications : le web écrit, le bot consomme. Historique conservé.
+model NotificationDelivery {
+  id            String            @id @default(cuid())
+  userId        String
+  event         NotificationEvent
+  payload       Json // contenu non confidentiel prêt à l'envoi en DM
+  missionId     String?
+  status        DeliveryStatus    @default(PENDING)
+  attempts      Int               @default(0)
+  nextAttemptAt DateTime          @default(now())
+  sentAt        DateTime?
+  lastError     String?
+  // Clé de regroupement pour éviter le spam (digest)
+  batchKey      String?
+  createdAt     DateTime          @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mission Mission? @relation(fields: [missionId], references: [id], onDelete: SetNull)
+
+  @@index([status, nextAttemptAt])
+  @@index([userId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Audit et configuration
+// ─────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  actorId      String?
+  action       String // ex: mission.status_changed, invite.used, auth.login_failed
+  resourceType String?
+  resourceId   String?
+  createdAt    DateTime @default(now())
+  ipHash       String? // hash tronqué, jamais l'IP complète
+  userAgent    String? // réduit
+  oldValues    Json?
+  newValues    Json?
+  reason       String?
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([action, createdAt])
+  @@index([actorId, createdAt])
+  @@index([resourceType, resourceId])
+}
+
+// Paramètres applicatifs configurables (ratio temps RP, verrous, libellés…)
+model AppSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+  updatedById String?
+}

@@ -1,0 +1,27 @@
+{
+  "name": "la-toile-dor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "La Toile d'Or — réseau clandestin de contrats pour serveur RP shinobi (contenu 100% fictif)",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=apps/web",
+    "dev:bot": "npm run dev --workspace=apps/bot",
+    "build": "npm run build --workspace=packages/database && npm run build --workspace=apps/web",
+    "build:bot": "npm run build --workspace=apps/bot",
+    "db:generate": "npm run generate --workspace=packages/database",
+    "db:migrate": "npm run migrate:dev --workspace=packages/database",
+    "db:deploy": "npm run migrate:deploy --workspace=packages/database",
+    "db:seed": "npm run seed --workspace=packages/database",
+    "test": "npm run test --workspaces --if-present",
+    "test:e2e": "npm run test:e2e --workspace=apps/web",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

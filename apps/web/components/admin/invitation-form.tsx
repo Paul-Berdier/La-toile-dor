@@ -1,0 +1,152 @@
+"use client";
+
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { createInvitationAction, revokeInvitationAction } from "@/server/admin-actions";
+import { Button } from "@/components/ui/button";
+
+export function InvitationForm({
+  factions,
+}: {
+  factions: { id: string; name: string }[];
+}) {
+  const router = useRouter();
+  const [roleSlug, setRoleSlug] = useState("faction_member");
+  const [factionId, setFactionId] = useState("");
+  const [hours, setHours] = useState(72);
+  const [requireApproval, setRequireApproval] = useState(true);
+  const [restrictedDiscordId, setRestrictedDiscordId] = useState("");
+  const [note, setNote] = useState("");
+  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  const submit = () => {
+    startTransition(async () => {
+      const res = await createInvitationAction({
+        roleSlug,
+        factionId: factionId || undefined,
+        expiresInHours: hours,
+        requireApproval,
+        restrictedDiscordId: restrictedDiscordId || undefined,
+        note: note || undefined,
+      });
+      if (!res.ok) {
+        setError(res.error ?? "Échec de la création.");
+      } else {
+        setError(null);
+        setInviteUrl(res.inviteUrl ?? null);
+        router.refresh();
+      }
+    });
+  };
+
+  const input =
+    "w-full border border-border-default bg-elevated px-3 py-2 text-sm text-ink focus:border-gold";
+  const label = "mb-1 block text-xs uppercase tracking-wider text-ink-faint";
+
+  return (
+    <div className="border border-border-gold bg-raised p-4">
+      <h2 className="mb-3 font-display text-sm tracking-widest text-gold uppercase">
+        Tendre un nouveau fil
+      </h2>
+
+      {inviteUrl ? (
+        <div className="space-y-3">
+          <p className="border border-warning/50 bg-warning/10 px-3 py-2 text-xs text-warning">
+            Ce lien n&rsquo;apparaîtra qu&rsquo;UNE seule fois. Copiez-le maintenant et
+            transmettez-le par un canal sûr.
+          </p>
+          <code className="block overflow-x-auto border border-border-default bg-elevated p-3 font-mono-toile text-xs text-gold">
+            {inviteUrl}
+          </code>
+          <div className="flex gap-2">
+            <Button
+              variant="gold"
+              size="sm"
+              onClick={async () => {
+                await navigator.clipboard.writeText(inviteUrl);
+                setCopied(true);
+              }}
+            >
+              {copied ? "Copié ✓" : "Copier le lien"}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => { setInviteUrl(null); setCopied(false); }}>
+              Fermer
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label htmlFor="inv-role" className={label}>Rôle accordé</label>
+            <select id="inv-role" value={roleSlug} onChange={(e) => setRoleSlug(e.target.value)} className={input}>
+              <option value="faction_member">Membre de faction</option>
+              <option value="faction_leader">Chef de faction</option>
+              <option value="moderator">Modérateur</option>
+              <option value="super_admin">Super administrateur</option>
+            </select>
+          </div>
+          <div>
+            <label htmlFor="inv-faction" className={label}>Faction (facultatif)</label>
+            <select id="inv-faction" value={factionId} onChange={(e) => setFactionId(e.target.value)} className={input}>
+              <option value="">—</option>
+              {factions.map((faction) => (
+                <option key={faction.id} value={faction.id}>{faction.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="inv-hours" className={label}>Validité (heures)</label>
+            <input id="inv-hours" type="number" min={1} max={720} value={hours}
+              onChange={(e) => setHours(Number(e.target.value) || 72)} className={input} />
+          </div>
+          <div>
+            <label htmlFor="inv-discord" className={label}>Restreindre à un ID Discord</label>
+            <input id="inv-discord" value={restrictedDiscordId}
+              onChange={(e) => setRestrictedDiscordId(e.target.value)}
+              placeholder="Facultatif" className={input} />
+          </div>
+          <div className="sm:col-span-2">
+            <label htmlFor="inv-note" className={label}>Note interne</label>
+            <input id="inv-note" value={note} onChange={(e) => setNote(e.target.value)}
+              maxLength={500} className={input} />
+          </div>
+          <label className="flex items-center gap-2 text-sm text-ink-muted sm:col-span-2">
+            <input type="checkbox" checked={requireApproval}
+              onChange={(e) => setRequireApproval(e.target.checked)}
+              className="accent-[var(--toile-gold)]" />
+            Exiger une approbation manuelle après la connexion Discord
+          </label>
+          {error && <p className="text-xs text-blood-bright sm:col-span-2">{error}</p>}
+          <div className="sm:col-span-2">
+            <Button variant="gold" onClick={submit} disabled={isPending}>
+              {isPending ? "Tissage…" : "Générer l'invitation"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function RevokeInvitationButton({ invitationId }: { invitationId: string }) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  return (
+    <Button
+      size="sm"
+      variant="danger"
+      disabled={isPending}
+      onClick={() =>
+        startTransition(async () => {
+          await revokeInvitationAction(invitationId);
+          router.refresh();
+        })
+      }
+    >
+      Rompre
+    </Button>
+  );
+}

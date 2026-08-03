@@ -1,0 +1,16 @@
+# PostgreSQL local de développement uniquement — la production utilise Railway.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: toile-dor-postgres
+    environment:
+      POSTGRES_USER: toile
+      POSTGRES_PASSWORD: toile
+      POSTGRES_DB: toile_dor
+    ports:
+      - "5432:5432"
+    volumes:
+      - toile_pgdata:/var/lib/postgresql/data
+
+volumes:
+  toile_pgdata:

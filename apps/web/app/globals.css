@@ -1,0 +1,98 @@
+@import "tailwindcss";
+@import "@toile/ui/tokens.css";
+
+/* Expose les tokens au moteur utilitaire Tailwind 4 :
+   bg-obsidian, text-gold, border-seal… */
+@theme inline {
+  --color-obsidian: var(--toile-bg);
+  --color-raised: var(--toile-bg-raised);
+  --color-elevated: var(--toile-bg-elevated);
+  --color-hover-bg: var(--toile-bg-hover);
+  --color-wood: var(--toile-bg-wood);
+
+  --color-gold: var(--toile-gold);
+  --color-gold-bright: var(--toile-gold-bright);
+  --color-gold-dim: var(--toile-gold-dim);
+  --color-gold-faint: var(--toile-gold-faint);
+  --color-copper: var(--toile-copper);
+
+  --color-ink: var(--toile-ink);
+  --color-ink-muted: var(--toile-ink-muted);
+  --color-ink-faint: var(--toile-ink-faint);
+  --color-parchment: var(--toile-parchment);
+  --color-parchment-deep: var(--toile-parchment-deep);
+  --color-parchment-text: var(--toile-parchment-text);
+
+  --color-blood: var(--toile-blood);
+  --color-blood-bright: var(--toile-blood-bright);
+  --color-smoke: var(--toile-smoke);
+
+  --color-success: var(--toile-success);
+  --color-warning: var(--toile-warning);
+  --color-danger: var(--toile-danger);
+  --color-info: var(--toile-info);
+
+  --color-rank-d: var(--toile-rank-d);
+  --color-rank-c: var(--toile-rank-c);
+  --color-rank-b: var(--toile-rank-b);
+  --color-rank-a: var(--toile-rank-a);
+  --color-rank-s: var(--toile-rank-s);
+  --color-rank-ss: var(--toile-rank-ss);
+
+  --color-border-default: var(--toile-border);
+  --color-border-gold: var(--toile-border-gold);
+  --color-border-strong: var(--toile-border-strong);
+
+  --font-display: var(--toile-font-display);
+  --font-body: var(--toile-font-body);
+  --font-mono-toile: var(--toile-font-mono);
+
+  --radius-sm: var(--toile-radius-sm);
+  --radius-md: var(--toile-radius-md);
+
+  --shadow-card: var(--toile-shadow-card);
+  --shadow-modal: var(--toile-shadow-modal);
+  --shadow-gold: var(--toile-shadow-gold);
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--toile-bg);
+  color: var(--toile-ink);
+  font-family: var(--toile-font-body);
+  /* Toile géométrique en fils d'or très discrète */
+  background-image:
+    radial-gradient(circle at 15% 20%, rgba(184, 150, 62, 0.04), transparent 40%),
+    radial-gradient(circle at 85% 80%, rgba(184, 150, 62, 0.03), transparent 45%);
+  min-height: 100dvh;
+}
+
+/* Focus clavier toujours visible — accessibilité non négociable */
+:focus-visible {
+  outline: 2px solid var(--toile-gold-bright);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--toile-gold-dim);
+  color: var(--toile-ink);
+}
+
+/* Barres de défilement discrètes assorties */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--toile-gold-dim) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
