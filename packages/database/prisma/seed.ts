@@ -170,6 +170,9 @@ async function main() {
     },
   });
 
+  const day = 86_400_000;
+  const now = Date.now();
+
   // ── Données de démonstration (ignorées avec SEED_DEMO=0) ──
   if (seedDemo) {
   // ── Factions et groupes fictifs ──
@@ -283,8 +286,6 @@ async function main() {
   }
 
   // ── Missions fictives, tous rangs et plusieurs statuts ──
-  const day = 86_400_000;
-  const now = Date.now();
   const missionDefs: {
     code: string; rank: MissionRank; category: MissionCategory; status:
       | "AVAILABLE" | "CLAIM_PENDING" | "IN_PROGRESS" | "COMPLETED" | "FAILED" | "CANCELLED";
@@ -418,6 +419,7 @@ async function main() {
         },
       });
     }
+  }
   }
 
   // Invitations super_admin initiales si aucune invitation n'existe :
