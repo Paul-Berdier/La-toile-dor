@@ -14,6 +14,60 @@ async function groupOf(userId: string) {
   return membership.group;
 }
 
+const promotionTargetId = "demo-member-3-0-0";
+let promotionGroupId = "";
+let promotionFactionId = "";
+let promotionTargetName = "";
+let promotionAuditCount = 0;
+
+async function resetPromotionFixture() {
+  const seededAgents = await prisma.user.findMany({
+    where: { id: { startsWith: "demo-member-3-" } },
+    select: { id: true },
+  });
+  const seededAgentIds = seededAgents.map(({ id }) => id);
+  const leaderRole = await prisma.role.findUniqueOrThrow({ where: { slug: "faction_leader" } });
+
+  await prisma.$transaction([
+    prisma.groupMember.updateMany({
+      where: { userId: { in: seededAgentIds } },
+      data: { isLeader: false },
+    }),
+    prisma.factionMember.updateMany({
+      where: { factionId: promotionFactionId, userId: { in: seededAgentIds } },
+      data: { isLeader: false },
+    }),
+    prisma.userRole.deleteMany({
+      where: { userId: { in: seededAgentIds }, roleId: leaderRole.id },
+    }),
+  ]);
+}
+
+test.beforeAll(async () => {
+  const target = await prisma.groupMember.findFirstOrThrow({
+    where: { userId: promotionTargetId },
+    include: { group: true, user: true },
+  });
+  promotionGroupId = target.groupId;
+  promotionFactionId = target.group.factionId;
+  promotionTargetName = target.user.displayName;
+
+  // Nettoie aussi les promotions laissées par d'anciens runs interrompus.
+  await resetPromotionFixture();
+  promotionAuditCount = await prisma.auditLog.count({
+    where: {
+      actorId: "demo-chief-3",
+      action: "group.member_promoted",
+      resourceId: promotionGroupId,
+    },
+  });
+});
+
+test.afterAll(async () => {
+  await resetPromotionFixture();
+  await prisma.$disconnect();
+});
+
 test("un membre voit les identités réelles de SON groupe", async ({ context, page }) => {
   // demo-member-0-0-0 appartient à Kumogakure — Cellule 1
   const group = await groupOf("demo-member-0-0-0");
@@ -86,38 +140,33 @@ test("promotion : un chef promeut un agent de SON groupe (audit + rôle)", async
   context,
   page,
 }) => {
-  const group = await groupOf("demo-chief-3");
-  const agent = await prisma.groupMember.findFirstOrThrow({
-    where: { groupId: group.id, isLeader: false },
-    include: { user: true },
-  });
-
   await loginAs(context, "demo-chief-3");
-  await page.goto(`/groupes/${group.id}`);
-  // Cibler précisément la ligne de CET agent (l'ordre d'affichage varie)
-  const row = page.locator("li", { hasText: agent.user.displayName }).first();
+  await page.goto(`/groupes/${promotionGroupId}`);
+  const row = page.locator("li", { hasText: promotionTargetName });
   await row.getByRole("button", { name: "Promouvoir en chef de groupe" }).click();
   await expect(page.getByText(/Vous êtes sur le point de promouvoir/)).toBeVisible();
   await page.getByRole("button", { name: "Confirmer la promotion" }).click();
 
   await expect(page.getByRole("button", { name: "Confirmer la promotion" })).toHaveCount(0);
 
-  const updated = await prisma.groupMember.findUniqueOrThrow({
-    where: { groupId_userId: { groupId: group.id, userId: agent.userId } },
-  });
-  expect(updated.isLeader).toBe(true);
+  await expect
+    .poll(async () => {
+      const updated = await prisma.groupMember.findUniqueOrThrow({
+        where: { groupId_userId: { groupId: promotionGroupId, userId: promotionTargetId } },
+      });
+      return updated.isLeader;
+    })
+    .toBe(true);
 
-  const auditEntry = await prisma.auditLog.findFirst({
-    where: { action: "group.member_promoted", resourceId: group.id },
-    orderBy: { createdAt: "desc" },
-  });
-  expect(auditEntry).not.toBeNull();
-
-  // Remise à zéro pour la rejouabilité
-  await prisma.groupMember.update({
-    where: { groupId_userId: { groupId: group.id, userId: agent.userId } },
-    data: { isLeader: false },
-  });
-  const leaderRole = await prisma.role.findUniqueOrThrow({ where: { slug: "faction_leader" } });
-  await prisma.userRole.deleteMany({ where: { userId: agent.userId, roleId: leaderRole.id } });
+  await expect
+    .poll(() =>
+      prisma.auditLog.count({
+        where: {
+          actorId: "demo-chief-3",
+          action: "group.member_promoted",
+          resourceId: promotionGroupId,
+        },
+      }),
+    )
+    .toBe(promotionAuditCount + 1);
 });

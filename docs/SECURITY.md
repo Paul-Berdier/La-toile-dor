@@ -43,8 +43,12 @@ confidentialité du RP.
 - RBAC : `Role` → `RolePermission` → `Permission` (clés atomiques
   `mission.create`, `claim.review`…). Vérifié par `requirePermission` dans
   chaque action serveur et route — masquer un bouton n'est jamais la sécurité.
-- Accès confidentiel **par mission** (`resolveMissionViewLevel`) :
-  modérateur, OU membre du groupe attribué, OU participant explicite.
+- Accès confidentiel **par mission** (`viewLevelFor`) :
+  modérateur, OU membre de l'un des groupes attribués activement, OU participant
+  explicite. Une revendication seule n'accorde aucun accès.
+- Gestion des groupes : un chef agit uniquement sur un groupe où son
+  `GroupMember.isLeader` vaut `true`; `group.edit.any` étend cette portée à la
+  modération.
 
 ## 5. Confidentialité par construction
 
@@ -67,6 +71,18 @@ serveur `next dev` à de vrais joueurs.
 - Les payloads de notifications (file `NotificationDelivery`) ne contiennent
   que code, rang, titre public.
 
+### Identités réelles
+
+Le prénom et le nom suivent un second sérialiseur à deux niveaux
+(`packages/shared/src/identity.ts`). `canViewRealIdentity` autorise uniquement
+la propre identité, un membre d'au moins un même groupe ou un détenteur de
+`identity.view.real`. Pour tout autre visiteur, `firstName` et `lastName` sont
+absents du DTO et donc du HTML/RSC/réseau.
+
+Les audits et notifications n'enregistrent jamais les prénoms ou noms. La
+confirmation de l'encart de confidentialité est horodatée dans
+`privacyAcknowledgedAt`.
+
 ## 6. Validation et en-têtes
 
 - **Zod côté serveur** sur toutes les entrées (actions et routes).
@@ -78,6 +94,9 @@ serveur `next dev` à de vrais joueurs.
   `X-Robots-Tag: noindex`, Permissions-Policy restrictive.
 - XSS : React échappe par défaut ; aucun `dangerouslySetInnerHTML`.
 - Injections : Prisma paramètre toutes les requêtes.
+- Images de groupe : 500 Ko maximum et validation de la signature binaire PNG,
+  JPEG ou WEBP avant stockage en base ; le type déclaré par le client n'est pas
+  considéré comme une preuve.
 
 ## 7. Discrétion
 

@@ -7,6 +7,7 @@ import { defineConfig } from "@playwright/test";
  */
 export default defineConfig({
   testDir: "./e2e",
+  globalTeardown: "./e2e/global-teardown.mjs",
   timeout: 60_000,
   retries: 0,
   workers: 1, // les tests partagent la base : exécution séquentielle
@@ -15,9 +16,10 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   webServer: {
-    command: "npm run start -- -p 3100",
+    command: "node e2e/start-production.mjs",
     url: "http://localhost:3100/connexion",
     reuseExistingServer: true,
     timeout: 60_000,
+    gracefulShutdown: { signal: "SIGTERM", timeout: 1_000 },
   },
 });

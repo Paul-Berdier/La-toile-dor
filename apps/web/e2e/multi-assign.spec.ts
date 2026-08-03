@@ -9,13 +9,7 @@ test.describe.configure({ mode: "serial" });
 
 let missionId = "";
 
-test.beforeAll(async () => {
-  const mission = await prisma.mission.findUniqueOrThrow({ where: { code: "TO-D-0001" } });
-  missionId = mission.id;
-});
-
-test.afterAll(async () => {
-  // Retour à l'état du seed : mission disponible, attributions purgées
+async function resetMission() {
   await prisma.missionAssignment.deleteMany({ where: { missionId } });
   await prisma.missionClaim.updateMany({
     where: { missionId },
@@ -25,6 +19,18 @@ test.afterAll(async () => {
     where: { id: missionId },
     data: { status: "AVAILABLE", assignedFactionId: null, assignedGroupId: null, assignedAt: null },
   });
+}
+
+test.beforeAll(async () => {
+  const mission = await prisma.mission.findUniqueOrThrow({ where: { code: "TO-D-0001" } });
+  missionId = mission.id;
+  await resetMission();
+});
+
+test.afterAll(async () => {
+  // Retour à l'état du seed, même si un run précédent s'est interrompu.
+  await resetMission();
+  await prisma.$disconnect();
 });
 
 test("le modérateur attribue la mission à DEUX groupes et la démarre", async ({
@@ -45,11 +51,11 @@ test("le modérateur attribue la mission à DEUX groupes et la démarre", async 
   await select.selectOption({ index: 1 });
   await dialog.getByRole("button", { name: "Ajouter", exact: true }).click();
 
-  // Effectifs : 4 et 3 → total 7
+  // Les cellules du seed comptent chacune 3 membres : 3 + 3 → total 6.
   const headcountInputs = dialog.locator("input[type=number]");
-  await headcountInputs.nth(0).fill("4");
+  await headcountInputs.nth(0).fill("3");
   await headcountInputs.nth(1).fill("3");
-  await expect(dialog.getByText("Effectif total : 7")).toBeVisible();
+  await expect(dialog.getByText("Effectif total : 6")).toBeVisible();
 
   // Groupe principal : le premier
   await dialog.getByRole("radio").first().check();
@@ -66,7 +72,7 @@ test("le modérateur attribue la mission à DEUX groupes et la démarre", async 
   });
   expect(mission.status).toBe("IN_PROGRESS");
   expect(mission.assignments).toHaveLength(2);
-  expect(mission.assignments.reduce((s, a) => s + a.assignedHeadcount, 0)).toBe(7);
+  expect(mission.assignments.reduce((s, a) => s + a.assignedHeadcount, 0)).toBe(6);
   expect(mission.assignments.filter((a) => a.isLeadGroup)).toHaveLength(1);
 });
 
@@ -84,7 +90,7 @@ test("chaque groupe assigné voit l'équipe ; l'historique et l'audit existent",
   await loginAs(context, member.userId);
   await page.goto(`/missions/${missionId}`);
   await expect(page.getByRole("heading", { name: /équipe assignée/i })).toBeVisible();
-  await expect(page.getByText("Effectif total : 7")).toBeVisible();
+  await expect(page.getByText("Effectif total : 6")).toBeVisible();
   await expect(page.getByText("Groupe principal")).toBeVisible();
 
   const history = await prisma.missionStatusHistory.findFirst({

@@ -4,12 +4,19 @@
  * en CI). Le client Prisma généré (JS) est importé directement.
  */
 import { createHash, randomBytes } from "node:crypto";
-import type { BrowserContext } from "@playwright/test";
+import { test, type BrowserContext } from "@playwright/test";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore — client généré
 import { PrismaClient } from "../../../packages/database/generated/client/index.js";
 
 export const prisma = new PrismaClient();
+
+// Les workers Playwright restent sinon ouverts sur Windows après la fin des
+// assertions à cause du moteur Prisma. Les fichiers qui font un nettoyage en
+// afterAll se déconnectent une seconde fois après ce nettoyage.
+test.afterAll(async () => {
+  await prisma.$disconnect();
+});
 
 /** Crée une session valide pour un utilisateur du seed et pose le cookie. */
 export async function loginAs(context: BrowserContext, userId: string): Promise<void> {

@@ -83,6 +83,22 @@ DATABASE_URL="<url-production>" INVITE_TOKEN_PEPPER="<pepper-production>" APP_UR
 Le seed affiche **une seule fois** le lien d'invitation du super
 administrateur : le consommer immédiatement.
 
+### Référentiels après la migration identité/groupes
+
+La migration `20260803150000_identity_groups_multiassign` ajoute trois clés
+RBAC qui doivent être affectées aux rôles de production : `group.create`,
+`group.edit.any` et `identity.view.real`.
+
+Méthode recommandée : définir temporairement `BOOTSTRAP_SEED=1` sur le service
+web puis redéployer. Le `Dockerfile` force `SEED_DEMO=0`, donc seuls les
+référentiels sont rejoués. Vérifier `Seed terminé.` dans les logs, retirer
+immédiatement `BOOTSTRAP_SEED`, puis redéployer une seconde fois.
+
+Alternative sans seed : exécuter le script idempotent
+[`packages/database/prisma/production/20260803_identity_group_permissions.sql`](../packages/database/prisma/production/20260803_identity_group_permissions.sql)
+dans l'éditeur SQL Railway ou avec un client `psql` connecté à la base de
+production. La requête finale doit renvoyer 6 lignes.
+
 ## 7. URL publique
 
 L'URL générée à l'étape 3 EST la valeur d'`APP_URL`. Toute modification de

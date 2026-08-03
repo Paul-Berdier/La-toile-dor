@@ -14,7 +14,7 @@ packages/
   auth/         crypto, sessions, invitations, OAuth Discord, autorisation, audit
   ui/           tokens CSS du design system
   config/       tsconfig de base
-docs/           DESIGN_SYSTEM, SECURITY, ARCHITECTURE, DEPLOYMENT_RAILWAY
+docs/           conception, sécurité, identité, groupes, attributions, déploiement
 ```
 
 ## Séparation des responsabilités
@@ -51,6 +51,14 @@ docs/           DESIGN_SYSTEM, SECURITY, ARCHITECTURE, DEPLOYMENT_RAILWAY
 6. **Mode dev ≠ production** — React dev streame les valeurs awaitées au
    navigateur (débogage) ; toutes les garanties de non-fuite sont validées
    sur build de production (voir SECURITY.md §5).
+7. **Identité à deux niveaux** — `canViewRealIdentity` et le sérialiseur
+   `public/real` sont l'unique chemin vers le prénom et le nom. En dehors de la
+   propre identité, du même groupe ou de `identity.view.real`, ces clés
+   n'existent pas dans le DTO.
+8. **Attribution normalisée et multi-groupes** — `MissionAssignment` est la
+   source des groupes actifs, de leur effectif et du groupe principal. Les
+   colonnes historiques de `Mission` restent synchronisées uniquement pour la
+   compatibilité. Les index partiels PostgreSQL portent les invariants actifs.
 
 ## Cycle de vie d'une mission
 
@@ -62,8 +70,23 @@ AVAILABLE/…/IN_PROGRESS → CANCELLED | EXPIRED       → ARCHIVED
 
 Colonnes Kanban : À prendre (AVAILABLE, CLAIM_PENDING) · En cours (ASSIGNED,
 IN_PROGRESS) · Accomplies · Échouées (FAILED, EXPIRED) · Annulées.
-Chaque transition écrit `MissionStatusHistory` + `AuditLog` et déclenche les
-notifications ; les transitions critiques exigent confirmation + justification.
+Le passage vers « En cours » exige au moins une attribution active. Le retour
+vers « À prendre » demande explicitement de conserver ou retirer les
+attributions. Chaque transition écrit `MissionStatusHistory` + `AuditLog` et
+déclenche les notifications ; les transitions critiques exigent confirmation
++ justification. À l'accomplissement, chaque groupe participant reçoit ses
+propres lignes de points.
+
+## Parcours de première connexion
+
+```
+Invitation → OAuth Discord → /bienvenue (identité + confidentialité)
+                              └→ création de groupe si CREATE_NEW_GROUP
+                                  → profileCompleted → /missions
+```
+
+Les comptes historiques ont `profileCompleted = false` après la migration et
+suivent volontairement ce parcours à leur prochaine connexion.
 
 ## Notifications et automatisations — mode « sans bot » (configuration retenue)
 

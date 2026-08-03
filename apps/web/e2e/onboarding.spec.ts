@@ -23,6 +23,7 @@ test.afterAll(async () => {
       displayNameNorm: null,
     },
   });
+  await prisma.$disconnect();
 });
 
 test("un profil incomplet est redirigé vers l'onboarding et bloqué ailleurs", async ({

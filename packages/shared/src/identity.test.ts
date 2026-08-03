@@ -54,7 +54,7 @@ describe("serializeUserIdentity — DTO à deux niveaux", () => {
   };
 
   it("non autorisé : les clés firstName/lastName N'EXISTENT PAS", () => {
-    const view = serializeUserIdentity(viewer(), record) as Record<string, unknown>;
+    const view = serializeUserIdentity(viewer(), record) as unknown as Record<string, unknown>;
     expect(view).toEqual({ id: "cible", displayName: "Araignée Rouge" });
     expect(view).not.toHaveProperty("firstName");
     expect(view).not.toHaveProperty("lastName");

@@ -121,6 +121,7 @@ test("chaque étape est consignée au journal d'audit", async () => {
 test.afterAll(async () => {
   // Nettoyage : les contrats e2e ne doivent pas polluer les données de démo
   await prisma.mission.deleteMany({ where: { publicTitle: { startsWith: "Contrat e2e" } } });
+  await prisma.$disconnect();
 });
 
 test("le déplacement Kanban (accomplie) est historisé et crédite les points", async ({
