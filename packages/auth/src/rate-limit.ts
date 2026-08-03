@@ -22,6 +22,7 @@ export function rateLimit(
   maxAttempts: number,
   windowSeconds: number,
 ): RateLimitResult {
+  cleanupRateLimits();
   const now = Date.now();
   const bucket = buckets.get(key);
 

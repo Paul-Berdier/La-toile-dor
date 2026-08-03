@@ -155,7 +155,7 @@ titre display uppercase. Confirmation critique = vocabulaire du sceau
 
 ## 8. Confidentialité visuelle
 
-- **Filigrane** : pseudo, ID partiel, faction, horodatage, ID de session,
+- **Filigrane** : pseudo, ID partiel, groupes, horodatage, ID de session,
   répété en diagonale, opacité ~0,05, deux couches indépendantes.
 - **Mode Streamer** (`Ctrl+Shift+S`) : les valeurs sensibles sont remplacées
   **côté serveur** par des codes (`CIBLE-A3F2`) ; bannière d'état visible.

@@ -3,7 +3,6 @@ import { prisma } from "@toile/database";
 import {
   audit,
   checkInvitation,
-  consumeInvitation,
   createSession,
   exchangeCode,
   fetchDiscordUser,
@@ -182,56 +181,61 @@ export async function GET(req: NextRequest) {
     const rpTitle = req.cookies.get("toile_rp_title")?.value?.slice(0, 60).trim() || null;
     const village = req.cookies.get("toile_village")?.value?.slice(0, 60).trim() || null;
 
-    const user = await prisma.user.create({
-      data: {
-        displayName: rpTitle ?? discordUser.global_name ?? discordUser.username,
-        rpTitle,
-        village,
-        status: invitation.requireApproval ? "PENDING" : "ACTIVE",
-        approvedAt: invitation.requireApproval ? null : new Date(),
-        discordAccount: {
-          create: {
-            discordId: discordUser.id,
-            username: discordUser.username,
-            globalName: discordUser.global_name,
-            avatarHash: discordUser.avatar,
-            guildRoles,
-            syncedAt: new Date(),
-          },
-        },
-      },
-    });
-
-    const consumed = await consumeInvitation(invitation.id, user.id);
-    if (!consumed) {
-      // Course perdue : l'invitation vient d'être utilisée par ailleurs
-      await prisma.user.delete({ where: { id: user.id } });
-      await audit({ action: "invite.check_failed", reason: "race_used", ...meta });
-      return redirectTo(req, "/connexion?erreur=acces");
-    }
-
     const invitedRole = invitation.roleId
       ? await prisma.role.findUnique({ where: { id: invitation.roleId } })
       : null;
-    const isLeaderRole = invitedRole?.slug === "faction_leader";
+    const isLeaderRole = invitedRole?.slug === "group_leader";
 
-    if (invitation.roleId) {
-      await prisma.userRole.create({ data: { userId: user.id, roleId: invitation.roleId } });
-    }
-    if (invitation.factionId) {
-      await prisma.factionMember.create({
-        data: {
-          factionId: invitation.factionId,
-          userId: user.id,
-          isLeader: isLeaderRole,
-        },
+    let user: { id: string };
+    try {
+      // Création du compte, consommation du fil et affectations sont une seule
+      // transaction : aucune course ne peut laisser un compte orphelin.
+      user = await prisma.$transaction(async (tx) => {
+        if (invitation.groupId) {
+          const group = await tx.group.findFirst({
+            where: { id: invitation.groupId, isActive: true },
+            select: { id: true },
+          });
+          if (!group) throw new Error("INVITATION_GROUP_INACTIVE");
+        }
+        const created = await tx.user.create({
+          data: {
+            displayName: rpTitle ?? discordUser.global_name ?? discordUser.username,
+            rpTitle,
+            village,
+            playerLevelId: invitation.playerLevelId,
+            status: invitation.requireApproval ? "PENDING" : "ACTIVE",
+            approvedAt: invitation.requireApproval ? null : new Date(),
+            discordAccount: {
+              create: {
+                discordId: discordUser.id,
+                username: discordUser.username,
+                globalName: discordUser.global_name,
+                avatarHash: discordUser.avatar,
+                guildRoles,
+                syncedAt: new Date(),
+              },
+            },
+          },
+        });
+        const consumed = await tx.invitation.updateMany({
+          where: { id: invitation.id, status: "ACTIVE", usedById: null },
+          data: { status: "USED", usedById: created.id, usedAt: new Date() },
+        });
+        if (consumed.count !== 1) throw new Error("INVITATION_RACE");
+        if (invitation.roleId) {
+          await tx.userRole.create({ data: { userId: created.id, roleId: invitation.roleId } });
+        }
+        if (invitation.groupId) {
+          await tx.groupMember.create({
+            data: { groupId: invitation.groupId, userId: created.id, isLeader: isLeaderRole },
+          });
+        }
+        return created;
       });
-    }
-    // Groupe pré-assigné par l'inviteur (chef de groupe ou modération)
-    if (invitation.groupId) {
-      await prisma.groupMember.create({
-        data: { groupId: invitation.groupId, userId: user.id, isLeader: isLeaderRole },
-      });
+    } catch {
+      await audit({ action: "invite.check_failed", reason: "provisioning_race", ...meta });
+      return redirectTo(req, "/connexion?erreur=acces");
     }
 
     await audit({

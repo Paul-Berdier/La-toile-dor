@@ -11,6 +11,8 @@ import {
   type MissionViewLevel,
   type KanbanColumnKey,
   PERMISSIONS,
+  canViewAssignmentRoster,
+  toPublicRosterAgent,
 } from "@toile/shared";
 import type { CurrentUser } from "@/lib/session";
 import { maskValue } from "@/lib/streamer";
@@ -21,22 +23,33 @@ import { maybeExpireMissions } from "@/server/expiration";
 export interface TeamSummary {
   groupsCount: number;
   totalHeadcount: number;
-  label: string; // « Faction — Groupe » (1 groupe) ou « 2 groupes · 7 participants »
+  label: string;
+  rosters: { groupName: string; agentNames: string[] }[];
 }
 
 export interface CardClaimInfo {
   groupId: string;
   groupName: string;
-  factionName: string;
+  factionName: string | null;
   headcount: number;
+  participantIds: string[];
+  publicRoster: boolean;
 }
 
 export interface CardAssignmentInfo {
   groupId: string;
   groupName: string;
-  factionName: string;
+  factionName: string | null;
   headcount: number;
   isLead: boolean;
+  participantIds: string[];
+  publicRoster: boolean;
+}
+
+export interface AgentOption {
+  id: string;
+  displayName: string;
+  levelLabel: string | null;
 }
 
 /** Carte Kanban : la vue sérialisée + méta d'affichage non confidentielles. */
@@ -53,11 +66,19 @@ export interface BoardCard {
 }
 
 export interface BoardData {
+  /** Brouillons visibles uniquement par la modération, hors glisser-déposer. */
+  drafts: BoardCard[];
   columns: { key: KanbanColumnKey; label: string; cards: BoardCard[] }[];
   isModerator: boolean;
-  myGroups: { id: string; name: string; factionId: string; memberCount: number }[];
+  myGroups: { id: string; name: string; factionId: string | null; memberCount: number }[];
   /** Modération uniquement : catalogue pour l'ajout manuel d'un groupe */
-  groupsCatalog: { id: string; name: string; factionName: string; memberCount: number }[];
+  groupsCatalog: {
+    id: string;
+    name: string;
+    factionName: string | null;
+    memberCount: number;
+    members: AgentOption[];
+  }[];
 }
 
 function columnOf(status: string): KanbanColumnKey | null {
@@ -74,13 +95,30 @@ export async function getAccessContext(current: CurrentUser) {
     current.permissions.has(PERMISSIONS.MISSION_VIEW_ALL) &&
     current.permissions.has(PERMISSIONS.MISSION_VIEW_CONFIDENTIAL);
 
-  const [groupMemberships, participations, factionMemberships] = await Promise.all([
+  const [groupMemberships, participations] = await Promise.all([
     prisma.groupMember.findMany({
       where: { userId },
-      include: { group: { include: { _count: { select: { members: true } } } } },
+      include: {
+        group: {
+          include: {
+            members: {
+              where: { user: { status: "ACTIVE" } },
+              orderBy: [{ isLeader: "desc" }, { joinedAt: "asc" }],
+              select: {
+                user: {
+                  select: {
+                    id: true,
+                    displayName: true,
+                    playerLevel: { select: { label: true, order: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
     }),
     prisma.missionParticipant.findMany({ where: { userId }, select: { missionId: true } }),
-    prisma.factionMember.findMany({ where: { userId } }),
   ]);
 
   return {
@@ -93,10 +131,15 @@ export async function getAccessContext(current: CurrentUser) {
         id: m.groupId,
         name: m.group.name,
         factionId: m.group.factionId,
-        memberCount: m.group._count.members,
+        memberCount: m.group.members.length,
+        members: m.group.members.map((member) => ({
+          id: member.user.id,
+          displayName: member.user.displayName,
+          levelLabel: member.user.playerLevel?.label ?? null,
+          levelOrder: member.user.playerLevel?.order ?? 0,
+        })),
       })),
     participantMissionIds: new Set(participations.map((p) => p.missionId)),
-    factionIds: new Set(factionMemberships.map((f) => f.factionId)),
   };
 }
 
@@ -152,7 +195,13 @@ const missionInclude = {
   },
   claims: {
     where: { status: { in: ["PENDING", "INFO_REQUESTED"] } },
-    include: { group: { select: { name: true, factionId: true, faction: { select: { name: true } } } } },
+    include: {
+      group: { select: { name: true, factionId: true, faction: { select: { name: true } } } },
+      participants: { select: { userId: true } },
+    },
+  },
+  participants: {
+    select: { userId: true, groupId: true, user: { select: { displayName: true } } },
   },
   _count: { select: { claims: { where: { status: "PENDING" } } } },
 } satisfies Prisma.MissionInclude;
@@ -211,8 +260,10 @@ export async function getBoard(
   });
 
   const cards: BoardCard[] = [];
+  const drafts: BoardCard[] = [];
   for (const mission of missions) {
-    const column = columnOf(mission.status);
+    const isDraft = mission.status === "DRAFT";
+    const column = isDraft ? "a_prendre" : columnOf(mission.status);
     if (!column) continue;
 
     const level = viewLevelFor(ctx, mission);
@@ -231,24 +282,41 @@ export async function getBoard(
       if (!fits) continue;
     }
 
-    // Équipe assignée : modérateurs, membres attribués, factions concernées
+    // Une faction est une étiquette : elle ne donne jamais accès à une équipe.
+    // Chaque groupe contrôle séparément la publicité de son propre roster.
     let team: TeamSummary | null = null;
-    const maySeeAssignee =
-      ctx.isModerator ||
-      level === "assigned" ||
-      mission.assignments.some((a) => ctx.factionIds.has(a.group.factionId));
-    if (maySeeAssignee && mission.assignments.length > 0) {
-      const totalHeadcount = mission.assignments.reduce((sum, a) => sum + a.assignedHeadcount, 0);
-      const label =
-        mission.assignments.length === 1
-          ? streamer
-            ? maskValue("GRP", mission.assignments[0]!.groupId)
-            : `${mission.assignments[0]!.faction.name} — ${mission.assignments[0]!.group.name}`
-          : `${mission.assignments.length} groupes · ${totalHeadcount} participants`;
-      team = { groupsCount: mission.assignments.length, totalHeadcount, label };
+    const visibleAssignments = mission.assignments.filter((assignment) =>
+      canViewAssignmentRoster({
+        isModerator: ctx.isModerator,
+        viewerGroupIds: ctx.groupIds,
+        assignmentGroupId: assignment.groupId,
+        publicRoster: assignment.publicRoster,
+      }),
+    );
+    if (visibleAssignments.length > 0) {
+      const rosters = visibleAssignments.map((assignment) => ({
+        groupName: streamer
+          ? maskValue("GRP", assignment.groupId)
+          : assignment.group.name,
+        agentNames: mission.participants
+          .filter((participant) => participant.groupId === assignment.groupId)
+          .map((participant) =>
+            streamer
+              ? maskValue("OPR", participant.userId)
+              : toPublicRosterAgent(participant.user).displayName,
+          )
+          .sort((a, b) => a.localeCompare(b, "fr")),
+      }));
+      const totalHeadcount = rosters.reduce((sum, roster) => sum + roster.agentNames.length, 0);
+      team = {
+        groupsCount: visibleAssignments.length,
+        totalHeadcount,
+        label: rosters.map((roster) => roster.groupName).join(" · "),
+        rosters,
+      };
     }
 
-    cards.push({
+    const card: BoardCard = {
       view,
       column,
       team,
@@ -262,19 +330,28 @@ export async function getBoard(
             pendingClaims: mission.claims.map((claim) => ({
               groupId: claim.groupId,
               groupName: claim.group.name,
-              factionName: claim.group.faction.name,
+              factionName: claim.group.faction?.name ?? null,
               headcount: claim.proposedHeadcount ?? 1,
+              participantIds: claim.participants.map((participant) => participant.userId),
+              publicRoster: claim.publicRoster,
             })),
             activeAssignments: mission.assignments.map((assignment) => ({
               groupId: assignment.groupId,
               groupName: assignment.group.name,
-              factionName: assignment.faction.name,
+              factionName: assignment.faction?.name ?? null,
               headcount: assignment.assignedHeadcount,
               isLead: assignment.isLeadGroup,
+              publicRoster: assignment.publicRoster,
+              participantIds: mission.participants
+                .filter((participant) => participant.groupId === assignment.groupId)
+                .map((participant) => participant.userId),
             })),
           }
         : {}),
-    });
+    };
+
+    if (isDraft) drafts.push(card);
+    else cards.push(card);
   }
 
   // Catalogue des groupes pour l'attribution manuelle (modération)
@@ -282,25 +359,51 @@ export async function getBoard(
     ? (
         await prisma.group.findMany({
           where: { isActive: true },
-          include: { faction: { select: { name: true } }, _count: { select: { members: true } } },
+          include: {
+            faction: { select: { name: true } },
+            members: {
+              where: { user: { status: "ACTIVE" } },
+              orderBy: [{ isLeader: "desc" }, { joinedAt: "asc" }],
+              select: {
+                user: {
+                  select: {
+                    id: true,
+                    displayName: true,
+                    playerLevel: { select: { label: true } },
+                  },
+                },
+              },
+            },
+          },
           orderBy: [{ faction: { name: "asc" } }, { name: "asc" }],
         })
       ).map((group) => ({
         id: group.id,
         name: group.name,
-        factionName: group.faction.name,
-        memberCount: group._count.members,
+        factionName: group.faction?.name ?? null,
+        memberCount: group.members.length,
+        members: group.members.map((member) => ({
+          id: member.user.id,
+          displayName: member.user.displayName,
+          levelLabel: member.user.playerLevel?.label ?? null,
+        })),
       }))
     : [];
 
   return {
+    drafts,
     columns: KANBAN_COLUMNS.map((col) => ({
       key: col.key,
       label: col.label,
       cards: cards.filter((c) => c.column === col.key),
     })),
     isModerator: ctx.isModerator,
-    myGroups: ctx.ledGroups,
+    myGroups: ctx.ledGroups.map(({ id, name, factionId, memberCount }) => ({
+      id,
+      name,
+      factionId,
+      memberCount,
+    })),
     groupsCatalog,
   };
 }
@@ -313,11 +416,23 @@ export async function getMissionDetail(current: CurrentUser, missionId: string) 
     include: {
       ...missionInclude,
       claims: {
-        include: { group: { include: { faction: true } }, leader: true },
+        include: {
+          group: { include: { faction: true } },
+          leader: true,
+          participants: {
+            include: { user: { include: { playerLevel: true } } },
+            orderBy: { user: { displayName: "asc" } },
+          },
+        },
         orderBy: { createdAt: "desc" },
       },
       statusHistory: { orderBy: { createdAt: "desc" }, take: 30 },
-      participants: { include: { user: { select: { displayName: true } } } },
+      participants: {
+        include: {
+          user: { select: { displayName: true, playerLevel: { select: { label: true } } } },
+          group: { select: { name: true } },
+        },
+      },
       reports: { orderBy: { submittedAt: "desc" } },
       attachments: true,
       minRecommendedLevel: { select: { label: true } },
@@ -339,14 +454,34 @@ export async function getMissionDetail(current: CurrentUser, missionId: string) 
       ? (
           await prisma.group.findMany({
             where: { isActive: true },
-            include: { faction: { select: { name: true } }, _count: { select: { members: true } } },
+            include: {
+              faction: { select: { name: true } },
+              members: {
+                where: { user: { status: "ACTIVE" } },
+                orderBy: [{ isLeader: "desc" }, { joinedAt: "asc" }],
+                select: {
+                  user: {
+                    select: {
+                      id: true,
+                      displayName: true,
+                      playerLevel: { select: { label: true } },
+                    },
+                  },
+                },
+              },
+            },
             orderBy: [{ faction: { name: "asc" } }, { name: "asc" }],
           })
         ).map((group) => ({
           id: group.id,
           name: group.name,
-          factionName: group.faction.name,
-          memberCount: group._count.members,
+          factionName: group.faction?.name ?? null,
+          memberCount: group.members.length,
+          members: group.members.map((member) => ({
+            id: member.user.id,
+            displayName: member.user.displayName,
+            levelLabel: member.user.playerLevel?.label ?? null,
+          })),
         }))
       : [];
 

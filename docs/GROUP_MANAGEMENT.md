@@ -5,7 +5,7 @@
 La page `/groupes` affiche tous les groupes actifs à la modération et seulement
 les groupes d'appartenance aux autres membres. `/groupes/[id]` présente :
 
-- la faction et le nom du groupe ;
+- le nom du groupe et sa faction éventuelle ;
 - le pays et le village principaux de résidence ;
 - les spécialités ;
 - l'image ou l'emblème de remplacement ;
@@ -22,13 +22,28 @@ Un chef invité peut recevoir l'un des parcours suivants :
 - fonder son groupe pendant l'onboarding (`CREATE_NEW_GROUP`).
 
 Dans le second cas, le serveur vérifie l'invitation consommée, l'identité déjà
-complétée et l'absence de groupe déjà dirigé. Le groupe, l'appartenance à la
-faction, l'appartenance au groupe et le statut de chef sont créés dans une
-transaction.
+complétée et l'absence de groupe déjà dirigé. Le groupe, l'appartenance au
+groupe et le statut de chef sont créés dans une transaction. La faction portée
+par l'invitation est facultative ; sans elle, aucune faction homonyme n'est
+créée implicitement.
 
-La permission `group.create` est réservée à la modération pour les futurs flux
-de création hors onboarding. Elle ne permet pas de contourner le mode de
-l'invitation dans `createOnboardingGroupAction`.
+La permission `group.create` permet à la modération de créer un groupe avec ou
+sans faction. Elle ne permet pas de contourner le mode de l'invitation dans
+`createOnboardingGroupAction`.
+
+## Groupes et factions
+
+Le groupe est l'unité d'appartenance, d'autorité, de confidentialité et de
+score. Une faction (`Suna`, `Konoha`, `Ame`...) est seulement un rattachement
+facultatif de `Group.factionId` :
+
+- un groupe peut n'appartenir à aucune faction ;
+- une personne n'obtient aucun droit parce qu'un autre groupe partage sa faction ;
+- il n'existe aucun rôle applicatif de chef de faction ;
+- la modération peut attacher ou détacher un groupe, avec audit
+  `group.faction_changed` ;
+- l'ancienne table `FactionMember` est conservée uniquement pour compatibilité
+  de migration et n'est plus consultée par l'application.
 
 ## Modification
 
@@ -41,7 +56,8 @@ Le contrôle est exécuté côté serveur par `canManageGroup`. `group.manage`
 reste la permission fonctionnelle des chefs, mais la portée effective est
 toujours limitée par leur appartenance `GroupMember.isLeader`.
 
-Le nom est unique au sein d'une faction. Une modification écrit l'événement
+Le nom est unique au sein d'un même rattachement (même faction ou ensemble des
+groupes sans faction). Une modification écrit l'événement
 `group.updated` avec les anciennes et nouvelles valeurs utiles.
 
 ## Image
@@ -66,6 +82,21 @@ ajoutés seulement après passage dans le sérialiseur central d'identité : mê
 groupe, propre identité ou permission `identity.view.real`. Voir
 `IDENTITY_AND_PRIVACY.md`.
 
+Un utilisateur peut appartenir à plusieurs groupes : `GroupMember` est
+identifié par le couple `(groupId, userId)`. Depuis `/admin/utilisateurs`, un
+super-administrateur peut ajouter ou retirer un compte actif de plusieurs
+groupes. L'ajout ne crée aucune appartenance de faction. Un chef ne peut pas être retiré par cette case
+générique afin de ne pas laisser un rôle de direction incohérent.
+
+Cette gestion est volontairement protégée par `user.manage` : un modérateur
+peut être membre de plusieurs groupes, mais ne peut pas s'y ajouter lui-même.
+Les événements `group.member_added` et `group.member_removed` sont audités.
+
+Le niveau RP (`PlayerLevel`) est choisi dès la création de l'invitation et
+appliqué au compte dans la transaction OAuth. La gestion des utilisateurs
+permet de corriger le niveau des comptes historiques ; la migration attribue
+provisoirement le niveau le plus bas aux anciennes fiches qui n'en avaient pas.
+
 ## Promotion d'un agent
 
 Un chef du groupe ou la modération peut promouvoir un membre actif du même
@@ -73,8 +104,7 @@ groupe. L'action demande une confirmation explicite puis met à jour, dans une
 transaction :
 
 1. `GroupMember.isLeader` ;
-2. `FactionMember.isLeader` ;
-3. le rôle applicatif `faction_leader`.
+2. le rôle applicatif `group_leader`.
 
 Les permissions sont relues à chaque requête et deviennent donc effectives
 immédiatement. L'événement `group.member_promoted` ne contient que l'identifiant
@@ -90,4 +120,7 @@ ni recréé.
 - ne jamais stocker les images sur le système de fichiers Railway ;
 - ne jamais inclure prénom ou nom dans les audits et notifications ;
 - utiliser le référentiel partagé des catégories pour les spécialités ;
-- conserver l'unicité `(factionId, name)` lors des créations et renommages.
+- conserver l'unicité du nom dans un même rattachement, y compris quand
+  `factionId` vaut `NULL` ;
+- ne jamais déduire une permission, une notification ou une visibilité d'une
+  faction partagée.

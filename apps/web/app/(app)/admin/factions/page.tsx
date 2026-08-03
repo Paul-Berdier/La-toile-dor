@@ -6,22 +6,39 @@ import { FactionCreateForm, GroupCreateForm } from "@/components/admin/config-fo
 export const dynamic = "force-dynamic";
 
 export default async function AdminFactionsPage() {
-  await requireUserWith(PERMISSIONS.FACTION_MANAGE);
+  const current = await requireUserWith(PERMISSIONS.GROUP_CREATE);
 
-  const factions = await prisma.faction.findMany({
-    orderBy: { name: "asc" },
-    include: {
-      members: { include: { user: { select: { displayName: true, status: true } } } },
-      groups: {
-        where: { isActive: true },
-        include: { members: { include: { user: { select: { displayName: true } } } } },
+  const [factions, unaffiliatedGroups] = await Promise.all([
+    prisma.faction.findMany({
+      orderBy: { name: "asc" },
+      include: {
+        groups: {
+          where: { isActive: true },
+          include: { members: { include: { user: { select: { displayName: true } } } } },
+        },
       },
-    },
-  });
+    }),
+    prisma.group.findMany({
+      where: { isActive: true, factionId: null },
+      include: { members: { include: { user: { select: { displayName: true } } } } },
+      orderBy: { name: "asc" },
+    }),
+  ]);
 
   return (
     <div className="space-y-6">
-      <FactionCreateForm />
+      {current.permissions.has(PERMISSIONS.FACTION_MANAGE) && <FactionCreateForm />}
+
+      <section className="border border-border-gold bg-raised p-4">
+        <h2 className="font-display text-sm tracking-widest text-gold uppercase">
+          Groupes sans faction
+        </h2>
+        <p className="mt-1 text-xs text-ink-faint">
+          Une faction est un rattachement facultatif ; elle ne porte aucun rôle de chef.
+        </p>
+        <GroupList groups={unaffiliatedGroups} />
+        <div className="mt-3"><GroupCreateForm /></div>
+      </section>
 
       <div className="grid gap-4 lg:grid-cols-2">
         {factions.map((faction) => (
@@ -30,22 +47,9 @@ export default async function AdminFactionsPage() {
               {faction.name}
             </h2>
             <p className="mt-1 text-xs text-ink-faint">
-              {faction.members.length} membre(s) ·{" "}
-              {faction.members.filter((m) => m.isLeader).length} chef(s)
+              {faction.groups.length} groupe(s) rattaché(s) · aucun rôle de chef de faction
             </p>
-
-            <ul className="mt-3 space-y-2">
-              {faction.groups.map((group) => (
-                <li key={group.id} className="border border-border-default bg-elevated p-3">
-                  <p className="text-sm text-ink">{group.name}</p>
-                  <p className="text-xs text-ink-muted">
-                    {group.members
-                      .map((m) => `${m.isLeader ? "◆ " : ""}${m.user.displayName}`)
-                      .join(", ") || "Cellule vide"}
-                  </p>
-                </li>
-              ))}
-            </ul>
+            <GroupList groups={faction.groups} />
             <div className="mt-3">
               <GroupCreateForm factionId={faction.id} />
             </div>
@@ -53,5 +57,27 @@ export default async function AdminFactionsPage() {
         ))}
       </div>
     </div>
+  );
+}
+
+function GroupList({
+  groups,
+}: {
+  groups: { id: string; name: string; members: { isLeader: boolean; user: { displayName: string } }[] }[];
+}) {
+  return (
+    <ul className="mt-3 space-y-2">
+      {groups.map((group) => (
+        <li key={group.id} className="border border-border-default bg-elevated p-3">
+          <p className="text-sm text-ink">{group.name}</p>
+          <p className="text-xs text-ink-muted">
+            {group.members
+              .map((member) => `${member.isLeader ? "◆ " : ""}${member.user.displayName}`)
+              .join(", ") || "Groupe vide"}
+          </p>
+        </li>
+      ))}
+      {groups.length === 0 && <li className="text-xs text-ink-faint italic">Aucun groupe.</li>}
+    </ul>
   );
 }

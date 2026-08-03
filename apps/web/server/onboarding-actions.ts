@@ -123,26 +123,16 @@ export async function createOnboardingGroupAction(raw: unknown): Promise<Result>
   const meta = await requestMeta();
   try {
     await prisma.$transaction(async (tx) => {
-      // Faction cible : celle de l'invitation, sinon faction homonyme créée
-      // (le classement et les scores exigent une faction).
-      let factionId = state.invitation?.factionId ?? null;
-      if (!factionId) {
-        const slug = name
-          .toLowerCase()
-          .normalize("NFD")
-          .replace(/[̀-ͯ]/g, "")
-          .replace(/[^a-z0-9]+/g, "-")
-          .replace(/(^-|-$)/g, "");
-        const faction = await tx.faction.upsert({
-          where: { slug: slug || `groupe-${current.session.userId.slice(-6)}` },
-          update: {},
-          create: { slug: slug || `groupe-${current.session.userId.slice(-6)}`, name },
-        });
-        factionId = faction.id;
+      // La faction est un rattachement facultatif du groupe, jamais une
+      // appartenance ni une autorité créée implicitement.
+      const factionId = state.invitation?.factionId ?? null;
+      if (factionId) {
+        const faction = await tx.faction.findFirst({ where: { id: factionId, isActive: true } });
+        if (!faction) throw new Error("FACTION_INACTIVE");
       }
 
-      const existing = await tx.group.findUnique({
-        where: { factionId_name: { factionId, name } },
+      const existing = await tx.group.findFirst({
+        where: { factionId, name: { equals: name, mode: "insensitive" } },
       });
       if (existing) throw new Error("NAME_TAKEN");
 
@@ -155,11 +145,6 @@ export async function createOnboardingGroupAction(raw: unknown): Promise<Result>
           primaryVillage: data.primaryVillage?.trim() || null,
           specialties: data.specialties,
         },
-      });
-      await tx.factionMember.upsert({
-        where: { factionId_userId: { factionId, userId: current.session.userId } },
-        update: { isLeader: true },
-        create: { factionId, userId: current.session.userId, isLeader: true },
       });
       await tx.groupMember.create({
         data: { groupId: group.id, userId: current.session.userId, isLeader: true },
@@ -180,7 +165,10 @@ export async function createOnboardingGroupAction(raw: unknown): Promise<Result>
     });
   } catch (error) {
     if (error instanceof Error && error.message === "NAME_TAKEN") {
-      return { ok: false, error: "Un groupe porte déjà ce nom dans cette faction." };
+      return { ok: false, error: "Un groupe porte déjà ce nom dans ce rattachement." };
+    }
+    if (error instanceof Error && error.message === "FACTION_INACTIVE") {
+      return { ok: false, error: "La faction prévue par l'invitation n'est plus disponible." };
     }
     throw error;
   }

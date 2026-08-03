@@ -16,6 +16,7 @@ export default async function RevendicationsPage() {
     include: {
       mission: true,
       leader: { include: { playerLevel: true } },
+      participants: { include: { user: { include: { playerLevel: true } } } },
       group: {
         include: {
           faction: true,
@@ -44,9 +45,9 @@ export default async function RevendicationsPage() {
 
       <ul className="space-y-5">
         {claims.map((claim) => {
-          const members = claim.group.members;
+          const members = claim.participants;
           const levels = members
-            .map((m) => m.user.playerLevel?.order ?? 0)
+            .map((participant) => participant.user.playerLevel?.order ?? 0)
             .filter((o) => o > 0);
           const avgOrder = levels.length
             ? levels.reduce((a, b) => a + b, 0) / levels.length
@@ -83,22 +84,27 @@ export default async function RevendicationsPage() {
               <div className="grid gap-4 p-4 sm:grid-cols-2">
                 <div>
                   <h2 className="text-[0.65rem] uppercase tracking-wider text-ink-faint">
-                    Cellule candidate
+                    Groupe et agents engagés
                   </h2>
                   <p className="mt-1 text-sm text-ink">
-                    {claim.group.faction.name} — {claim.group.name}
+                    {claim.group.name}
+                    {claim.group.faction ? ` · ${claim.group.faction.name}` : ""}
                   </p>
                   <p className="text-xs text-ink-muted">
                     Chef : {claim.leader.displayName}
                     {claim.leader.playerLevel ? ` (${claim.leader.playerLevel.label})` : ""}
                   </p>
+                  <p className="mt-1 font-mono-toile text-[0.65rem] text-ink-faint">
+                    {claim.publicRoster
+                      ? "Roster public : groupe et pseudonymes"
+                      : "Roster invisible pour les autres joueurs"}
+                  </p>
                   <ul className="mt-2 space-y-0.5 text-xs text-ink-muted">
-                    {members.map((member) => (
-                      <li key={member.userId}>
-                        {member.isLeader ? "◆ " : "· "}
-                        {member.user.displayName}
-                        {member.user.playerLevel ? (
-                          <span className="text-ink-faint"> — {member.user.playerLevel.label}</span>
+                    {members.map((participant) => (
+                      <li key={participant.userId}>
+                        · {participant.user.displayName}
+                        {participant.user.playerLevel ? (
+                          <span className="text-ink-faint"> — {participant.user.playerLevel.label}</span>
                         ) : null}
                       </li>
                     ))}
@@ -112,7 +118,7 @@ export default async function RevendicationsPage() {
                     <div className="flex justify-between">
                       <dt>Effectif proposé</dt>
                       <dd className="font-mono-toile text-gold">
-                        {claim.proposedHeadcount ?? "—"}
+                        {claim.participants.length}
                       </dd>
                     </div>
                     <div className="flex justify-between">

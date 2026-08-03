@@ -2,7 +2,12 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { setUserStatusAction, setUserRoleAction } from "@/server/admin-actions";
+import {
+  setUserGroupMembershipAction,
+  setUserRoleAction,
+  setUserStatusAction,
+  setUserLevelAction,
+} from "@/server/admin-actions";
 import { Button } from "@/components/ui/button";
 
 export function UserActions({
@@ -10,11 +15,19 @@ export function UserActions({
   status,
   roles,
   allRoles,
+  groupMemberships,
+  allGroups,
+  playerLevelId,
+  allLevels,
 }: {
   userId: string;
   status: string;
   roles: string[];
   allRoles: { slug: string; name: string }[];
+  groupMemberships: { groupId: string; isLeader: boolean }[];
+  allGroups: { id: string; name: string; factionName: string | null }[];
+  playerLevelId: string | null;
+  allLevels: { id: string; label: string }[];
 }) {
   const router = useRouter();
   const [reason, setReason] = useState("");
@@ -39,6 +52,28 @@ export function UserActions({
       const res = await setUserRoleAction({ userId, roleSlug: slug, grant });
       if (!res.ok) setError(res.error ?? "Échec.");
       else router.refresh();
+    });
+  };
+
+  const toggleGroup = (groupId: string, member: boolean) => {
+    startTransition(async () => {
+      const res = await setUserGroupMembershipAction({ userId, groupId, member });
+      if (!res.ok) setError(res.error ?? "Échec.");
+      else {
+        setError(null);
+        router.refresh();
+      }
+    });
+  };
+
+  const setLevel = (nextPlayerLevelId: string) => {
+    startTransition(async () => {
+      const res = await setUserLevelAction({ userId, playerLevelId: nextPlayerLevelId });
+      if (!res.ok) setError(res.error ?? "Échec.");
+      else {
+        setError(null);
+        router.refresh();
+      }
     });
   };
 
@@ -107,6 +142,48 @@ export function UserActions({
           })}
         </div>
       </details>
+
+      <details className="text-xs">
+        <summary className="cursor-pointer text-ink-faint hover:text-ink">
+          Groupes ({groupMemberships.length})
+        </summary>
+        <div className="mt-1 max-h-48 space-y-1 overflow-y-auto border border-border-default bg-elevated p-2">
+          {allGroups.map((group) => {
+            const membership = groupMemberships.find((item) => item.groupId === group.id);
+            return (
+              <label key={group.id} className="flex items-start gap-1.5 text-ink-muted">
+                <input
+                  type="checkbox"
+                  checked={Boolean(membership)}
+                  onChange={() => toggleGroup(group.id, !membership)}
+                  disabled={isPending || membership?.isLeader === true}
+                  className="mt-0.5 accent-[var(--toile-gold)]"
+                />
+                <span>
+                  {group.name}{group.factionName ? ` · ${group.factionName}` : ""}
+                  {membership?.isLeader && <span className="ml-1 text-gold">(chef)</span>}
+                </span>
+              </label>
+            );
+          })}
+          {allGroups.length === 0 && <p className="text-ink-faint italic">Aucun groupe actif.</p>}
+        </div>
+      </details>
+
+      <label className="block text-xs text-ink-faint">
+        Niveau
+        <select
+          value={playerLevelId ?? ""}
+          onChange={(event) => setLevel(event.target.value)}
+          disabled={isPending}
+          className="mt-1 w-full border border-border-default bg-elevated px-2 py-1 text-xs text-ink"
+        >
+          <option value="" disabled>Choisir…</option>
+          {allLevels.map((level) => (
+            <option key={level.id} value={level.id}>{level.label}</option>
+          ))}
+        </select>
+      </label>
 
       {error && <p className="text-xs text-blood-bright">{error}</p>}
     </div>

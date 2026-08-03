@@ -5,16 +5,24 @@ import { isStreamerMode, maskValue } from "@/lib/streamer";
 
 export const dynamic = "force-dynamic";
 
-interface FactionScore {
+interface GroupScore {
   id: string;
   name: string;
+  factionName: string | null;
   points: number;
   completed: number;
   failed: number;
   ryosEarned: number;
   bestStreak: number;
   sanctions: number;
-  groups: { id: string; name: string; points: number }[];
+}
+
+interface AgentScore {
+  id: string;
+  name: string;
+  points: number;
+  ryos: number;
+  missions: number;
 }
 
 export default async function ClassementPage({
@@ -29,31 +37,55 @@ export default async function ClassementPage({
   const seasons = await prisma.leaderboardSeason.findMany({ orderBy: { startsAt: "desc" } });
   const activeSeason = saison === "toutes" ? null : seasons.find((s) => s.id === saison) ?? seasons.find((s) => s.isActive) ?? null;
 
-  const [factions, scores, resolvedMissions] = await Promise.all([
-    prisma.faction.findMany({
+  const participantDateFilter = activeSeason
+    ? {
+        resolvedAt: {
+          gte: activeSeason.startsAt,
+          ...(activeSeason.endsAt ? { lte: activeSeason.endsAt } : {}),
+        },
+      }
+    : {};
+
+  const [groups, scores, resolvedAssignments, rewardedParticipants] = await Promise.all([
+    prisma.group.findMany({
       where: { isActive: true },
-      include: { groups: { where: { isActive: true } } },
+      include: { faction: { select: { name: true } } },
     }),
     prisma.missionScore.findMany({
       where: activeSeason ? { seasonId: activeSeason.id } : {},
       orderBy: { createdAt: "asc" },
     }),
-    prisma.mission.findMany({
-      where: { status: { in: ["COMPLETED", "FAILED"] }, assignedFactionId: { not: null } },
-      select: {
-        assignedFactionId: true,
-        status: true,
-        rewardRyoMin: true,
-        rewardRyoMax: true,
-        resolvedAt: true,
+    prisma.missionAssignment.findMany({
+      where: { active: true, mission: { status: { in: ["COMPLETED", "FAILED"] } } },
+      include: {
+        mission: {
+          select: {
+            status: true,
+            rewardRyoMin: true,
+            rewardRyoMax: true,
+            resolvedAt: true,
+          },
+        },
       },
-      orderBy: { resolvedAt: "asc" },
+      orderBy: { mission: { resolvedAt: "asc" } },
+    }),
+    prisma.missionParticipant.findMany({
+      where: { mission: { status: "COMPLETED", ...participantDateFilter } },
+      select: {
+        userId: true,
+        groupId: true,
+        pointsAwarded: true,
+        ryoAwarded: true,
+        user: { select: { displayName: true } },
+      },
     }),
   ]);
 
-  const rows: FactionScore[] = factions.map((faction) => {
-    const factionScores = scores.filter((s) => s.factionId === faction.id);
-    const missions = resolvedMissions.filter((m) => m.assignedFactionId === faction.id);
+  const rows: GroupScore[] = groups.map((group) => {
+    const groupScores = scores.filter((score) => score.groupId === group.id);
+    const missions = resolvedAssignments
+      .filter((assignment) => assignment.groupId === group.id)
+      .map((assignment) => assignment.mission);
     // Série de victoires la plus longue (missions résolues, ordre chronologique)
     let bestStreak = 0;
     let streak = 0;
@@ -65,45 +97,52 @@ export default async function ClassementPage({
         streak = 0;
       }
     }
-    const groupTotals = new Map<string, number>();
-    for (const score of factionScores) {
-      if (score.groupId) {
-        groupTotals.set(score.groupId, (groupTotals.get(score.groupId) ?? 0) + score.points);
-      }
-    }
     return {
-      id: faction.id,
-      name: streamer ? maskValue("FAC", faction.id) : faction.name,
-      points: factionScores.reduce((sum, s) => sum + s.points, 0),
+      id: group.id,
+      name: streamer ? maskValue("GRP", group.id) : group.name,
+      factionName: streamer
+        ? group.factionId ? maskValue("FAC", group.factionId) : null
+        : group.faction?.name ?? null,
+      points: groupScores.reduce((sum, score) => sum + score.points, 0),
       completed: missions.filter((m) => m.status === "COMPLETED").length,
       failed: missions.filter((m) => m.status === "FAILED").length,
-      ryosEarned: missions
-        .filter((m) => m.status === "COMPLETED")
-        .reduce((sum, m) => sum + Math.round((m.rewardRyoMin + m.rewardRyoMax) / 2), 0),
+      ryosEarned: rewardedParticipants
+        .filter((participant) => participant.groupId === group.id)
+        .reduce((sum, participant) => sum + participant.ryoAwarded, 0),
       bestStreak,
-      sanctions: factionScores.filter((s) => s.reason === "ADMIN_PENALTY" || s.reason === "RP_VIOLATION").length,
-      groups: faction.groups
-        .map((group) => ({
-          id: group.id,
-          name: streamer ? maskValue("GRP", group.id) : group.name,
-          points: groupTotals.get(group.id) ?? 0,
-        }))
-        .sort((a, b) => b.points - a.points),
+      sanctions: groupScores.filter((score) => score.reason === "ADMIN_PENALTY" || score.reason === "RP_VIOLATION").length,
     };
   });
 
   rows.sort((a, b) => b.points - a.points);
   const maxPoints = Math.max(1, ...rows.map((r) => r.points));
+  const agentsById = new Map<string, AgentScore>();
+  for (const participant of rewardedParticipants) {
+    const current = agentsById.get(participant.userId) ?? {
+      id: participant.userId,
+      name: streamer ? maskValue("OPR", participant.userId) : participant.user.displayName,
+      points: 0,
+      ryos: 0,
+      missions: 0,
+    };
+    current.points += participant.pointsAwarded;
+    current.ryos += participant.ryoAwarded;
+    current.missions += 1;
+    agentsById.set(participant.userId, current);
+  }
+  const agentRows = [...agentsById.values()].sort(
+    (a, b) => b.points - a.points || b.ryos - a.ryos || a.name.localeCompare(b.name),
+  );
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-6 lg:px-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="font-display text-xl tracking-[0.15em] text-ink uppercase">
-            La constellation des factions
+            Le classement des groupes
           </h1>
           <p className="mt-1 text-xs text-ink-faint">
-            Plus le fil est épais, plus la faction pèse sur la Toile.
+            Chaque groupe marque ses propres points, avec ou sans faction.
           </p>
         </div>
         <nav aria-label="Filtrer par saison" className="flex flex-wrap gap-1">
@@ -137,7 +176,7 @@ export default async function ClassementPage({
 
       {/* Constellation — masquée sur mobile où la liste ci-dessous prend le relais */}
       <section
-        aria-label="Toile des factions"
+        aria-label="Toile des groupes"
         className="mt-6 hidden border border-border-gold bg-raised sm:block"
       >
         <Constellation rows={rows} maxPoints={maxPoints} />
@@ -158,6 +197,9 @@ export default async function ClassementPage({
           >
             <p className="font-display text-2xl text-gold">{["Ⅰ", "Ⅱ", "Ⅲ"][i]}</p>
             <p className="mt-1 truncate text-sm font-medium text-ink">{row.name}</p>
+            <p className="truncate text-[0.65rem] text-ink-faint">
+              {row.factionName ?? "Sans faction"}
+            </p>
             <p className="font-mono-toile text-lg text-gold">{row.points} pts</p>
             <p className="text-[0.65rem] text-ink-faint">
               {row.completed} accomplies · série max {row.bestStreak}
@@ -176,6 +218,7 @@ export default async function ClassementPage({
               <summary className="flex cursor-pointer flex-wrap items-center gap-3 p-4 hover:bg-hover-bg">
                 <span className="w-8 font-display text-lg text-gold-dim">{i + 1}</span>
                 <span className="min-w-0 flex-1 truncate text-sm text-ink">{row.name}</span>
+                <span className="text-[0.65rem] text-ink-faint">{row.factionName ?? "Sans faction"}</span>
                 {/* Fil de progression */}
                 <span aria-hidden className="hidden h-px flex-1 bg-border-default sm:block">
                   <span
@@ -196,19 +239,37 @@ export default async function ClassementPage({
                   danger={row.sanctions > 0}
                 />
               </dl>
-              {row.groups.length > 0 && (
-                <ul className="border-t border-border-default p-4 text-xs text-ink-muted">
-                  {row.groups.map((group) => (
-                    <li key={group.id} className="flex justify-between py-0.5">
-                      <span>{group.name}</span>
-                      <span className="font-mono-toile">{group.points} pts</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
             </details>
           );
         })}
+      </section>
+
+      <section aria-label="Répartition individuelle" className="mt-8 border border-border-gold bg-raised">
+        <div className="border-b border-border-gold p-4">
+          <h2 className="font-display text-sm tracking-widest text-gold uppercase">
+            Parts des agents
+          </h2>
+          <p className="mt-1 text-xs text-ink-faint">
+            Points et ryō réellement reçus sur les missions accomplies de la période.
+          </p>
+        </div>
+        <ol className="divide-y divide-border-default">
+          {agentRows.map((agent, index) => (
+            <li key={agent.id} className="grid grid-cols-[2rem_1fr_auto] items-center gap-3 px-4 py-3 text-sm">
+              <span className="font-display text-gold-dim">{index + 1}</span>
+              <span className="min-w-0 truncate text-ink">{agent.name}</span>
+              <span className="text-right font-mono-toile text-xs text-gold">
+                {agent.points} pts · {agent.ryos.toLocaleString("fr-FR")} ryō
+                <span className="ml-2 text-ink-faint">({agent.missions} mission{agent.missions > 1 ? "s" : ""})</span>
+              </span>
+            </li>
+          ))}
+          {agentRows.length === 0 && (
+            <li className="p-6 text-center text-xs text-ink-faint italic">
+              Aucune part individuelle attribuée pour cette période.
+            </li>
+          )}
+        </ol>
       </section>
     </main>
   );
@@ -223,9 +284,9 @@ function Stat({ label, value, danger = false }: { label: string; value: string; 
   );
 }
 
-/** Toile SVG : chaque faction est un nœud relié au centre par un fil d'or
+/** Toile SVG : chaque groupe est un nœud relié au centre par un fil d'or
     dont l'épaisseur et l'éclat reflètent ses points. */
-function Constellation({ rows, maxPoints }: { rows: FactionScore[]; maxPoints: number }) {
+function Constellation({ rows, maxPoints }: { rows: GroupScore[]; maxPoints: number }) {
   const cx = 400;
   const cy = 210;
   const radius = 150;
@@ -243,14 +304,14 @@ function Constellation({ rows, maxPoints }: { rows: FactionScore[]; maxPoints: n
   });
 
   return (
-    <svg viewBox="0 0 800 420" className="h-auto w-full" role="img" aria-label="Réseau des factions">
+    <svg viewBox="0 0 800 420" className="h-auto w-full" role="img" aria-label="Réseau des groupes">
       {/* Anneaux de la toile */}
       <g fill="none" stroke="var(--toile-gold-faint)" strokeWidth="0.6">
         {[60, 105, 150].map((r) => (
           <ellipse key={r} cx={cx} cy={cy} rx={r} ry={r * 0.78} />
         ))}
       </g>
-      {/* Fils entre factions voisines */}
+      {/* Fils entre groupes voisins */}
       <g stroke="var(--toile-gold-dim)" strokeWidth="0.5" opacity="0.5">
         {nodes.map((node, i) => {
           const next = nodes[(i + 1) % nodes.length];
@@ -274,7 +335,7 @@ function Constellation({ rows, maxPoints }: { rows: FactionScore[]; maxPoints: n
       {/* Centre : l'araignée de la Toile */}
       <circle cx={cx} cy={cy} r="7" fill="var(--toile-gold-bright)" />
       <circle cx={cx} cy={cy} r="12" fill="none" stroke="var(--toile-gold-dim)" strokeWidth="0.8" />
-      {/* Nœuds de faction */}
+      {/* Nœuds de groupe */}
       {nodes.map((node) => (
         <g key={node.id}>
           <circle

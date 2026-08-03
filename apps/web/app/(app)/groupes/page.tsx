@@ -66,7 +66,11 @@ export default async function GroupesPage() {
                   {streamer ? maskValue("GRP", group.id) : group.name}
                 </span>
                 <span className="block truncate text-xs text-ink-faint">
-                  {streamer ? maskValue("FAC", group.factionId) : group.faction.name}
+                  {group.factionId
+                    ? streamer
+                      ? maskValue("FAC", group.factionId)
+                      : group.faction?.name
+                    : "Sans faction"}
                   {" · "}
                   {group.members.length} membre{group.members.length > 1 ? "s" : ""}
                   {" · "}

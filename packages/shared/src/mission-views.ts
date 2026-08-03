@@ -5,7 +5,7 @@
  * inférieur. La confidentialité est garantie par construction — jamais par
  * un masquage CSS ou un champ vidé côté client.
  *
- * - PublicMissionView   : chef de faction AVANT attribution (et cartes Kanban)
+ * - PublicMissionView   : chef de groupe AVANT attribution (et cartes Kanban)
  * - AssignedMissionView : groupe attribué + participants explicites
  * - ModeratorMissionView: modérateurs et super administrateurs
  */

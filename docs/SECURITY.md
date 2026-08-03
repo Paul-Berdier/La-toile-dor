@@ -31,9 +31,12 @@ confidentialité du RP.
 - Jeton : 32 octets `crypto.randomBytes`, encodé base64url.
 - Stockage : `SHA-256(token + INVITE_TOKEN_PEPPER)` uniquement — une fuite de
   base ne permet pas de forger un lien.
-- Usage unique (contrainte d'unicité + mise à jour conditionnelle atomique,
-  résistante aux courses), expiration obligatoire, révocable, restriction
+- Usage unique : création du compte, consommation conditionnelle, rôle et
+  rattachement au groupe sont dans une même transaction résistante aux courses.
+  Expiration obligatoire, révocation et restriction
   possible à un ID Discord précis, approbation manuelle optionnelle.
+- Le niveau porté par l'invitation est validé côté serveur et affecté dans
+  cette même transaction ; un identifiant de niveau inconnu est refusé.
 - Le lien clair n'est affiché **qu'une fois** à sa création.
 - Rate-limit : 8 vérifications / 5 min / IP ; messages d'échec génériques
   (« Fil rompu ») ne révélant ni l'existence ni l'état de l'invitation.
@@ -46,9 +49,28 @@ confidentialité du RP.
 - Accès confidentiel **par mission** (`viewLevelFor`) :
   modérateur, OU membre de l'un des groupes attribués activement, OU participant
   explicite. Une revendication seule n'accorde aucun accès.
+- Les agents choisis sont revalidés côté serveur lors de la revendication,
+  lors de son acceptation et lors d'une attribution manuelle : compte actif,
+  appartenance actuelle au groupe et groupe actif. Un même agent ne peut
+  représenter deux groupes sur la même mission.
+- Retirer les attributions supprime dans la même transaction les participants
+  et donc leur accès confidentiel. Les décisions concurrentes sur une
+  revendication utilisent des écritures gardées et des transactions
+  `Serializable`.
+- Une mission accomplie et créditée devient immuable : elle ne peut pas être
+  rouverte, et la présence d'un score antérieur bloque tout second versement
+  de points ou de ryō.
+- Le roster d'un groupe attribué est privé par défaut. Seuls la modération,
+  les membres de ce groupe ou les joueurs bénéficiant du consentement public
+  explicite de son chef le voient. Cette vue publique est construite depuis
+  une sélection Prisma limitée à `displayName` : prénom, nom, niveau,
+  récompenses et données confidentielles n'y entrent jamais.
 - Gestion des groupes : un chef agit uniquement sur un groupe où son
   `GroupMember.isLeader` vaut `true`; `group.edit.any` étend cette portée à la
   modération.
+- Une faction est une classification facultative du groupe, jamais un périmètre
+  d'autorisation : deux groupes de `Suna` ne partagent ni dossiers, ni identités,
+  ni notifications. Aucun rôle de chef de faction n'est utilisé.
 
 ## 5. Confidentialité par construction
 
@@ -90,7 +112,8 @@ confirmation de l'encart de confidentialité est horodatée dans
   mutations par cookies `SameSite=Lax` + POST uniquement.
 - En-têtes (voir `next.config.ts`) : CSP (`default-src 'self'`,
   `frame-ancestors 'none'`, images limitées à `cdn.discordapp.com`),
-  `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy: no-referrer`,
+  HSTS en production, isolation COOP/CORP, `X-Frame-Options: DENY`, `nosniff`,
+  `Referrer-Policy: no-referrer`,
   `X-Robots-Tag: noindex`, Permissions-Policy restrictive.
 - XSS : React échappe par défaut ; aucun `dangerouslySetInnerHTML`.
 - Injections : Prisma paramètre toutes les requêtes.
@@ -118,7 +141,7 @@ métadonnées, service via une route authentifiée (jamais d'URL publique).
 
 Il est impossible d'empêcher techniquement un utilisateur autorisé de filmer
 son écran ; les mesures suivantes limitent les fuites **accidentelles** :
-filigrane dynamique multicouche (pseudo, ID partiel, faction, heure, session),
+filigrane dynamique multicouche (pseudo, ID partiel, groupes, heure, session),
 mode Streamer avec substitution **côté serveur** des valeurs sensibles,
 voile de confidentialité (manuel + inactivité), flou à la perte de focus.
 La sécurité principale reste le filtrage serveur (§5).

@@ -16,7 +16,6 @@ async function groupOf(userId: string) {
 
 const promotionTargetId = "demo-member-3-0-0";
 let promotionGroupId = "";
-let promotionFactionId = "";
 let promotionTargetName = "";
 let promotionAuditCount = 0;
 
@@ -26,15 +25,11 @@ async function resetPromotionFixture() {
     select: { id: true },
   });
   const seededAgentIds = seededAgents.map(({ id }) => id);
-  const leaderRole = await prisma.role.findUniqueOrThrow({ where: { slug: "faction_leader" } });
+  const leaderRole = await prisma.role.findUniqueOrThrow({ where: { slug: "group_leader" } });
 
   await prisma.$transaction([
     prisma.groupMember.updateMany({
       where: { userId: { in: seededAgentIds } },
-      data: { isLeader: false },
-    }),
-    prisma.factionMember.updateMany({
-      where: { factionId: promotionFactionId, userId: { in: seededAgentIds } },
       data: { isLeader: false },
     }),
     prisma.userRole.deleteMany({
@@ -49,7 +44,6 @@ test.beforeAll(async () => {
     include: { group: true, user: true },
   });
   promotionGroupId = target.groupId;
-  promotionFactionId = target.group.factionId;
   promotionTargetName = target.user.displayName;
 
   // Nettoie aussi les promotions laissées par d'anciens runs interrompus.

@@ -9,11 +9,12 @@ import {
   MISSION_CATEGORIES,
   RANK_ORDER,
   RANK_DEFAULTS,
+  ELIGIBILITY_MODE_LABELS,
   formatRyoRange,
   type MissionCreateInput,
   type Rank,
 } from "@toile/shared";
-import { createMissionAction } from "@/server/mission-create";
+import { createMissionAction, updateMissionAction } from "@/server/mission-create";
 import { Button } from "@/components/ui/button";
 import { RankSeal } from "./rank-seal";
 
@@ -44,7 +45,21 @@ const STEP_FIELDS: (keyof MissionCreateInput)[][] = [
   [],
 ];
 
-export function CreateWizard({ levels }: { levels: { slug: string; label: string }[] }) {
+interface MissionWizardProps {
+  levels: { slug: string; label: string }[];
+  mode?: "create" | "edit";
+  missionId?: string;
+  currentStatus?: string;
+  initialValues?: MissionCreateInput;
+}
+
+export function CreateWizard({
+  levels,
+  mode = "create",
+  missionId,
+  currentStatus,
+  initialValues,
+}: MissionWizardProps) {
   const [step, setStep] = useState(0);
   const [serverError, setServerError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -52,7 +67,7 @@ export function CreateWizard({ levels }: { levels: { slug: string; label: string
   const form = useForm<MissionCreateInput>({
     resolver: zodResolver(missionCreateSchema),
     mode: "onBlur",
-    defaultValues: {
+    defaultValues: initialValues ?? {
       publicTitle: "",
       category: "COLLECTE_INFORMATIONS",
       rank: "D",
@@ -94,10 +109,16 @@ export function CreateWizard({ levels }: { levels: { slug: string; label: string
   const submit = (publish: boolean) => {
     setValue("publish", publish);
     startTransition(async () => {
-      const result = await createMissionAction(getValues());
+      const result =
+        mode === "edit" && missionId
+          ? await updateMissionAction({ missionId, values: getValues() })
+          : await createMissionAction(getValues());
       // En cas de succès l'action redirige ; on n'arrive ici qu'en erreur
       if (result && !result.ok) {
-        setServerError(result.error ?? "La création a échoué.");
+        setServerError(
+          result.error ??
+            (mode === "edit" ? "La modification a échoué." : "La création a échoué."),
+        );
       }
     });
   };
@@ -199,7 +220,7 @@ export function CreateWizard({ levels }: { levels: { slug: string; label: string
             <div>
               <label htmlFor="publicSummary" className={label}>Résumé public (visible avant attribution)</label>
               <textarea id="publicSummary" rows={4} {...register("publicSummary")} className={input}
-                placeholder="Ce que les chefs de faction liront sur le tableau…" />
+                placeholder="Ce que les chefs de groupe liront sur le tableau…" />
             </div>
             <fieldset className="space-y-2">
               <legend className={label}>Visibilité avant attribution</legend>
@@ -353,6 +374,7 @@ export function CreateWizard({ levels }: { levels: { slug: string; label: string
                 id="expiresAt"
                 type="datetime-local"
                 className={input}
+                value={toLocalDateTime(values.expiresAt)}
                 onChange={(e) => {
                   setValue("expiresAt", e.target.value ? new Date(e.target.value).toISOString() : null);
                   if (e.target.value) setValue("rpDuration", null);
@@ -394,16 +416,23 @@ export function CreateWizard({ levels }: { levels: { slug: string; label: string
           <fieldset className="space-y-2">
             <legend className={label}>Application des critères (niveau, effectif)</legend>
             {([
-              ["RECOMMENDATION", "Recommandation uniquement — aucune alerte"],
-              ["WARNING", "Avertissement — la revendication signale les écarts au tisseur"],
-              ["STRICT", "Blocage strict — revendication refusée si critères non remplis"],
-              ["MANUAL_REVIEW", "Validation manuelle systématique"],
+              ["RECOMMENDATION", "Critères affichés, aucun signalement ni blocage"],
+              ["WARNING", "Revendication acceptée, écarts signalés au tisseur"],
+              ["STRICT", "Revendication refusée au moindre écart"],
+              ["MANUAL_REVIEW", "Revendication acceptée mais toujours marquée à contrôler"],
             ] as const).map(([value, text]) => (
               <label key={value} className="flex items-start gap-2 text-sm text-ink-muted">
                 <input type="radio" value={value} {...register("eligibilityMode")} className="mt-1 accent-[var(--toile-gold)]" />
-                {text}
+                <span>
+                  <strong className="font-medium text-ink">{ELIGIBILITY_MODE_LABELS[value]}</strong>
+                  {` — ${text}`}
+                </span>
               </label>
             ))}
+            <p className="pt-2 text-xs leading-relaxed text-ink-faint">
+              L&rsquo;effectif et le niveau sont contrôlés sur les agents nommément
+              sélectionnés par le chef dans sa revendication.
+            </p>
           </fieldset>
         )}
 
@@ -411,11 +440,14 @@ export function CreateWizard({ levels }: { levels: { slug: string; label: string
           <div className="space-y-3">
             <label className="flex items-center gap-2 text-sm text-ink-muted">
               <input type="checkbox" {...register("notifyLeaders")} className="accent-[var(--toile-gold)]" />
-              Prévenir les chefs de faction par message privé Discord à la publication
+              {mode === "edit" && currentStatus !== "DRAFT"
+                ? "Prévenir automatiquement les groupes concernés"
+                : "Prévenir les chefs de groupe à la publication"}
             </label>
             <p className="text-xs text-ink-faint">
-              Chaque chef reste maître de ses préférences (rangs, catégories, fréquence,
-              période silencieuse) — la Toile ne spamme personne.
+              {mode === "edit" && currentStatus !== "DRAFT"
+                ? "Seuls les membres des groupes actuellement attribués recevront un écho public de la modification."
+                : "Chaque chef reste maître de ses préférences (rangs, catégories, fréquence, période silencieuse)."}
             </p>
           </div>
         )}
@@ -484,12 +516,20 @@ export function CreateWizard({ levels }: { levels: { slug: string; label: string
             )}
 
             <div className="flex flex-wrap justify-end gap-2 border-t border-border-default pt-4">
-              <Button variant="outline" onClick={() => submit(false)} disabled={isPending}>
-                Enregistrer en brouillon
-              </Button>
-              <Button variant="gold" onClick={() => submit(true)} disabled={isPending}>
-                {isPending ? "Tissage…" : "Publier sur la Toile"}
-              </Button>
+              {mode === "create" || currentStatus === "DRAFT" ? (
+                <>
+                  <Button variant="outline" onClick={() => submit(false)} disabled={isPending}>
+                    {mode === "edit" ? "Enregistrer le brouillon" : "Enregistrer en brouillon"}
+                  </Button>
+                  <Button variant="gold" onClick={() => submit(true)} disabled={isPending}>
+                    {isPending ? "Tissage…" : "Publier sur la Toile"}
+                  </Button>
+                </>
+              ) : (
+                <Button variant="gold" onClick={() => submit(true)} disabled={isPending}>
+                  {isPending ? "Modification…" : "Enregistrer les modifications"}
+                </Button>
+              )}
             </div>
           </div>
         )}
@@ -511,6 +551,14 @@ export function CreateWizard({ levels }: { levels: { slug: string; label: string
       </form>
     </div>
   );
+}
+
+function toLocalDateTime(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
 }
 
 function PreviewRow({ label, value }: { label: string; value: string }) {

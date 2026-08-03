@@ -7,6 +7,7 @@ import { isStreamerMode, maskValue } from "@/lib/streamer";
 import { serializeUsersForViewer } from "@/server/identity-server";
 import {
   GroupEditSection,
+  GroupFactionSelect,
   GroupImageUpload,
   PromoteButton,
 } from "@/components/groups/group-panels";
@@ -35,6 +36,14 @@ export default async function GroupePage({ params }: { params: Promise<{ id: str
   const myMembership = group.members.find((m) => m.userId === current.session.userId);
   const canManage =
     current.permissions.has(PERMISSIONS.GROUP_EDIT_ANY) || myMembership?.isLeader === true;
+  const canChangeFaction = current.permissions.has(PERMISSIONS.GROUP_EDIT_ANY);
+  const factionOptions = canChangeFaction
+    ? await prisma.faction.findMany({
+        where: { isActive: true },
+        select: { id: true, name: true },
+        orderBy: { name: "asc" },
+      })
+    : [];
 
   // Identités réelles : sérialisation centralisée — les prénoms/noms
   // n'atteignent JAMAIS le HTML d'un visiteur non autorisé.
@@ -74,7 +83,9 @@ export default async function GroupePage({ params }: { params: Promise<{ id: str
           )}
           <div className="min-w-0 flex-1">
             <p className="font-mono-toile text-[0.65rem] uppercase tracking-widest text-ink-faint">
-              {mask(group.faction.name, "FAC", group.factionId)}
+              {group.factionId && group.faction
+                ? mask(group.faction.name, "FAC", group.factionId)
+                : "Sans faction"}
             </p>
             <h1 className="font-display text-2xl text-ink">
               {mask(group.name, "GRP", group.id)}
@@ -115,6 +126,13 @@ export default async function GroupePage({ params }: { params: Promise<{ id: str
               specialties: group.specialties,
             }}
           />
+          {canChangeFaction && (
+            <GroupFactionSelect
+              groupId={group.id}
+              factionId={group.factionId}
+              factions={factionOptions}
+            />
+          )}
           <GroupImageUpload groupId={group.id} />
         </section>
       )}

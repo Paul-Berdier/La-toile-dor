@@ -10,11 +10,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const current = await requireUser();
   const streamer = await isStreamerMode();
 
-  const [discord, factionMembership, roles, unreadEchoes] = await Promise.all([
+  const [discord, groupMemberships, roles, unreadEchoes] = await Promise.all([
     prisma.discordAccount.findUnique({ where: { userId: current.session.userId } }),
-    prisma.factionMember.findFirst({
+    prisma.groupMember.findMany({
       where: { userId: current.session.userId },
-      include: { faction: true },
+      include: { group: { select: { name: true } } },
     }),
     prisma.userRole.findMany({
       where: { userId: current.session.userId },
@@ -47,10 +47,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   }
 
   const discordId = discord?.discordId ?? "";
+  const groupLabel = groupMemberships.map((membership) => membership.group.name).join(" / ") || null;
   const identity = {
     displayName: streamer ? "OPÉRATEUR" : current.session.user.displayName,
     partialId: discordId ? `${discordId.slice(0, 3)}···${discordId.slice(-2)}` : "———",
-    factionName: streamer ? null : factionMembership?.faction.name ?? null,
+    factionName: streamer ? null : groupLabel,
     sessionShortId: current.session.shortId,
   };
 

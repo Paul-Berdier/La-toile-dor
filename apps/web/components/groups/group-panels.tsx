@@ -4,6 +4,7 @@ import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   updateGroupAction,
+  setGroupFactionAction,
   uploadGroupImageAction,
   promoteToLeaderAction,
 } from "@/server/group-actions";
@@ -77,6 +78,50 @@ export function GroupEditSection({
         </Button>
       </div>
     </form>
+  );
+}
+
+export function GroupFactionSelect({
+  groupId,
+  factionId,
+  factions,
+}: {
+  groupId: string;
+  factionId: string | null;
+  factions: { id: string; name: string }[];
+}) {
+  const router = useRouter();
+  const [value, setValue] = useState(factionId ?? "");
+  const [message, setMessage] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  return (
+    <div className="flex flex-wrap items-end gap-2">
+      <label className="min-w-56 text-xs uppercase tracking-wider text-ink-faint">
+        Faction du groupe (facultatif)
+        <select
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          className="mt-1 block w-full border border-border-default bg-elevated px-3 py-2 text-sm normal-case tracking-normal text-ink"
+        >
+          <option value="">Sans faction</option>
+          {factions.map((faction) => <option key={faction.id} value={faction.id}>{faction.name}</option>)}
+        </select>
+      </label>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={isPending || value === (factionId ?? "")}
+        onClick={() => startTransition(async () => {
+          const result = await setGroupFactionAction({ groupId, factionId: value || null });
+          setMessage(result.ok ? "Rattachement enregistré." : result.error ?? "Échec.");
+          if (result.ok) router.refresh();
+        })}
+      >
+        Enregistrer le rattachement
+      </Button>
+      {message && <p className="text-xs text-ink-muted">{message}</p>}
+    </div>
   );
 }
 

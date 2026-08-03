@@ -65,13 +65,16 @@ export async function userIdsWithPermission(permissionKey: string): Promise<stri
   return [...new Set(users.map((u) => u.userId))];
 }
 
-/** Chefs de faction actifs (destinataires des annonces de missions). */
-export async function factionLeaderIds(factionId?: string): Promise<string[]> {
-  const leaders = await prisma.factionMember.findMany({
+/** Chefs de groupe actifs (destinataires des annonces de missions). */
+export async function groupLeaderIds(factionId?: string): Promise<string[]> {
+  const leaders = await prisma.groupMember.findMany({
     where: {
       isLeader: true,
       user: { status: "ACTIVE" },
-      ...(factionId ? { factionId } : {}),
+      group: {
+        isActive: true,
+        ...(factionId ? { factionId } : {}),
+      },
     },
     select: { userId: true },
   });

@@ -53,7 +53,7 @@ test("le modérateur tisse et publie un contrat", async ({ context, page }) => {
   await expect(page.getByRole("heading", { name: TITLE })).toBeVisible();
 });
 
-test("les chefs de faction sont notifiés en file", async () => {
+test("les chefs de groupe sont notifiés en file", async () => {
   const mission = await prisma.mission.findFirst({ where: { publicTitle: TITLE } });
   expect(mission).not.toBeNull();
   const queued = await prisma.notificationDelivery.count({
@@ -70,6 +70,12 @@ test("le chef revendique le contrat avec sa cellule", async ({ context, page }) 
   const html = await page.content();
   expect(html).not.toContain(TARGET);
 
+  const agents = page.getByRole("group", { name: /Agents engagés/ }).getByRole("checkbox");
+  const agentCount = await agents.count();
+  expect(agentCount).toBeGreaterThan(0);
+  for (let index = 0; index < Math.min(3, agentCount); index += 1) {
+    await agents.nth(index).check();
+  }
   await page.getByLabel(/Message au tisseur/).fill("Notre cellule est prête. (e2e)");
   await page.getByRole("button", { name: "Réclamer la mission" }).click();
   await expect(page.getByText(/Revendication déposée/)).toBeVisible();
@@ -87,6 +93,8 @@ test("le modérateur examine la revendication et attribue", async ({ context, pa
   const mission = await prisma.mission.findFirst({ where: { publicTitle: TITLE } });
   expect(mission?.status).toBe("ASSIGNED");
   expect(mission?.assignedGroupId).not.toBeNull();
+  const participants = await prisma.missionParticipant.count({ where: { missionId: mission!.id } });
+  expect(participants).toBeGreaterThan(0);
 });
 
 test("le groupe attribué voit désormais le dossier complet", async ({ context, page }) => {

@@ -6,6 +6,7 @@ import {
   InvitationForm,
   RevokeInvitationButton,
   type FactionOption,
+  type GroupOption,
 } from "@/components/admin/invitation-form";
 
 export const dynamic = "force-dynamic";
@@ -18,9 +19,9 @@ const STATUS_FR: Record<string, { label: string; style: string }> = {
 };
 
 const INVITE_TIERS: Record<string, string[]> = {
-  super_admin: ["super_admin", "moderator", "faction_leader", "faction_member"],
-  moderator: ["faction_leader", "faction_member"],
-  faction_leader: ["faction_member"],
+  super_admin: ["super_admin", "moderator", "group_leader", "group_member"],
+  moderator: ["group_leader", "group_member"],
+  group_leader: ["group_member"],
 };
 
 export default async function InvitationsPage() {
@@ -39,10 +40,15 @@ export default async function InvitationsPage() {
     ...new Set([...slugs].flatMap((slug) => INVITE_TIERS[slug] ?? [])),
   ];
   const isModOrAbove = slugs.has("super_admin") || slugs.has("moderator");
+  const levels = await prisma.playerLevel.findMany({
+    orderBy: { order: "asc" },
+    select: { id: true, label: true },
+  });
 
   // Chefs « purs » : seuls leurs groupes sont proposés
-  let leaderGroups: { id: string; name: string; factionName: string }[] | null = null;
+  let leaderGroups: GroupOption[] | null = null;
   let factions: FactionOption[] = [];
+  let groups: GroupOption[] = [];
   if (isModOrAbove) {
     factions = (
       await prisma.faction.findMany({
@@ -71,6 +77,8 @@ export default async function InvitationsPage() {
       groups: faction.groups.map((group) => ({
         id: group.id,
         name: group.name,
+        factionId: faction.id,
+        factionName: faction.name,
         primaryCountry: group.primaryCountry,
         primaryVillage: group.primaryVillage,
         specialties: group.specialties.map((s) => categoryLabel(s)),
@@ -78,6 +86,29 @@ export default async function InvitationsPage() {
         leaderNames: group.members.map((m) => m.user.displayName),
       })),
     }));
+    const unaffiliated = await prisma.group.findMany({
+      where: { isActive: true, factionId: null },
+      include: {
+        members: {
+          where: { isLeader: true },
+          select: { user: { select: { displayName: true } } },
+        },
+      },
+      orderBy: { name: "asc" },
+    });
+    groups = [
+      ...factions.flatMap((faction) => faction.groups ?? []),
+      ...unaffiliated.map((group) => ({
+        id: group.id,
+        name: group.name,
+        factionId: null,
+        factionName: null,
+        primaryCountry: group.primaryCountry,
+        primaryVillage: group.primaryVillage,
+        specialties: group.specialties.map((s) => categoryLabel(s)),
+        leaderNames: group.members.map((m) => m.user.displayName),
+      })),
+    ];
   } else {
     const led = await prisma.groupMember.findMany({
       where: { userId: current.session.userId, isLeader: true, group: { isActive: true } },
@@ -86,7 +117,12 @@ export default async function InvitationsPage() {
     leaderGroups = led.map((membership) => ({
       id: membership.groupId,
       name: membership.group.name,
-      factionName: membership.group.faction.name,
+      factionId: membership.group.factionId,
+      factionName: membership.group.faction?.name ?? null,
+      primaryCountry: membership.group.primaryCountry,
+      primaryVillage: membership.group.primaryVillage,
+      specialties: membership.group.specialties.map((s) => categoryLabel(s)),
+      leaderNames: [],
     }));
   }
 
@@ -101,6 +137,7 @@ export default async function InvitationsPage() {
       role: { select: { name: true } },
       faction: { select: { name: true } },
       group: { select: { name: true } },
+      playerLevel: { select: { label: true } },
     },
   });
 
@@ -121,7 +158,9 @@ export default async function InvitationsPage() {
         <InvitationForm
           allowedRoles={allowedRoles}
           factions={factions}
+          groups={groups}
           leaderGroups={leaderGroups}
+          levels={levels}
         />
 
         <div className="overflow-x-auto border border-border-default bg-raised">
@@ -166,6 +205,9 @@ export default async function InvitationsPage() {
                     </td>
                     <td className="px-4 py-2.5 text-xs text-ink-muted">
                       {invitation.role?.name ?? "—"}
+                      <p className="text-[0.65rem] text-ink-faint">
+                        Niveau : {invitation.playerLevel?.label ?? "ancien fil sans niveau"}
+                      </p>
                       {(invitation.faction || invitation.group) && (
                         <p className="text-[0.65rem] text-ink-faint">
                           {[invitation.faction?.name, invitation.group?.name]

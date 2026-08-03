@@ -56,9 +56,16 @@ docs/           conception, sécurité, identité, groupes, attributions, déplo
    propre identité, du même groupe ou de `identity.view.real`, ces clés
    n'existent pas dans le DTO.
 8. **Attribution normalisée et multi-groupes** — `MissionAssignment` est la
-   source des groupes actifs, de leur effectif et du groupe principal. Les
+   source des groupes actifs, de leur effectif et du groupe principal.
+   `MissionClaimParticipant` conserve les agents proposés avant validation et
+   `MissionParticipant` les agents effectivement engagés après validation. Les
    colonnes historiques de `Mission` restent synchronisées uniquement pour la
    compatibilité. Les index partiels PostgreSQL portent les invariants actifs.
+9. **Groupe d'abord, faction facultative** — `GroupMember` porte toute
+   appartenance et `GroupMember.isLeader` toute autorité locale. `Group.factionId`
+   peut être nul ; une faction sert au rattachement narratif et à l'agrégation,
+   jamais au contrôle d'accès. `FactionMember` n'est conservé que comme héritage
+   de migration et n'est plus lu par l'application.
 
 ## Cycle de vie d'une mission
 
@@ -74,13 +81,21 @@ Le passage vers « En cours » exige au moins une attribution active. Le retour
 vers « À prendre » demande explicitement de conserver ou retirer les
 attributions. Chaque transition écrit `MissionStatusHistory` + `AuditLog` et
 déclenche les notifications ; les transitions critiques exigent confirmation
-+ justification. À l'accomplissement, chaque groupe participant reçoit ses
-propres lignes de points.
++ justification. À l'accomplissement, points et ryō sont partagés entre les
+agents engagés ; les points de groupe sont répartis proportionnellement à leurs
+effectifs, sans duplication de la valeur totale de la mission.
+
+Les détenteurs de `mission.update` peuvent reprendre tous les champs d'un
+contrat depuis `/missions/[id]/modifier`. L'écriture relit le statut dans la
+transaction afin de ne pas écraser une transition concurrente. La suppression
+visible utilise `mission.cancel` et devient un archivage audité : la mission
+quitte le tableau, ses attributions actives sont libérées et ses candidatures
+en attente sont retirées, sans effacer l'historique nécessaire à l'audit.
 
 ## Parcours de première connexion
 
 ```
-Invitation → OAuth Discord → /bienvenue (identité + confidentialité)
+Invitation (rôle + niveau + groupe) → OAuth Discord → /bienvenue (identité + confidentialité)
                               └→ création de groupe si CREATE_NEW_GROUP
                                   → profileCompleted → /missions
 ```

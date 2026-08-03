@@ -18,7 +18,7 @@ export const PERMISSIONS = {
   // Points et classement
   POINTS_ADJUST: "points.adjust",
   LEADERBOARD_VIEW: "leaderboard.view",
-  // Groupes (au sein de sa faction)
+  // Groupes (sans autorité dérivée de la faction)
   GROUP_MANAGE: "group.manage",
   // Créer un groupe (modération ; les chefs ne créent que via une invitation
   // portant explicitement le mode CREATE_NEW_GROUP)
@@ -48,8 +48,8 @@ export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
 export const ROLE_SLUGS = {
   SUPER_ADMIN: "super_admin",
   MODERATOR: "moderator",
-  FACTION_LEADER: "faction_leader",
-  FACTION_MEMBER: "faction_member",
+  GROUP_LEADER: "group_leader",
+  GROUP_MEMBER: "group_member",
 } as const;
 
 export type RoleSlug = (typeof ROLE_SLUGS)[keyof typeof ROLE_SLUGS];
@@ -76,12 +76,12 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleSlug, PermissionKey[]> = {
     P.LEADERBOARD_VIEW,
     P.AUDIT_READ, // journaux liés aux missions
   ],
-  faction_leader: [
+  group_leader: [
     P.INVITE_CREATE,
     P.MISSION_CLAIM,
     P.MISSION_REPORT_SUBMIT,
     P.GROUP_MANAGE,
     P.LEADERBOARD_VIEW,
   ],
-  faction_member: [P.LEADERBOARD_VIEW],
+  group_member: [P.LEADERBOARD_VIEW],
 };

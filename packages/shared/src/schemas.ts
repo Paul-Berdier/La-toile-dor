@@ -106,7 +106,12 @@ export type MissionCreateInput = z.infer<typeof missionCreateSchema>;
 export const missionClaimSchema = z.object({
   missionId: z.string().cuid(),
   groupId: z.string().cuid(),
-  proposedHeadcount: z.number().int().min(1, "L'effectif minimal est 1.").max(200),
+  publicRoster: z.boolean().default(false),
+  participantIds: z
+    .array(z.string().cuid())
+    .min(1, "Sélectionnez au moins un agent.")
+    .max(50)
+    .refine((ids) => new Set(ids).size === ids.length, "Un agent ne peut être sélectionné qu'une fois."),
   message: z.string().max(2000).optional(),
 });
 
@@ -123,11 +128,13 @@ export const missionMoveSchema = z.object({
   // Retour vers « À prendre » d'une mission attribuée : true = retirer les
   // attributions et rouvrir, false = les conserver. Absent = demander le choix.
   releaseAssignments: z.boolean().optional(),
+  // Montant exact distribué à l'accomplissement (dans la fourchette du contrat).
+  awardedRyo: z.number().int().min(0).max(1_000_000_000).optional(),
 });
 
 export const scoreAdjustSchema = z.object({
-  factionId: z.string().cuid(),
-  groupId: z.string().cuid().optional(),
+  factionId: z.string().cuid().optional(),
+  groupId: z.string().cuid(),
   missionId: z.string().cuid().optional(),
   points: z.number().int().min(-100_000).max(100_000),
   reason: z.enum([
@@ -146,9 +153,10 @@ export const scoreAdjustSchema = z.object({
 });
 
 export const invitationCreateSchema = z.object({
-  roleSlug: z.enum(["super_admin", "moderator", "faction_leader", "faction_member"]),
+  roleSlug: z.enum(["super_admin", "moderator", "group_leader", "group_member"]),
   factionId: z.string().cuid().optional(),
   groupId: z.string().cuid().optional(),
+  playerLevelId: z.string().cuid("Niveau invalide."),
   // Parcours de groupe d'un chef invité :
   // EXISTING_GROUP → rejoint groupId ; CREATE_NEW_GROUP → fondera son groupe
   groupOnboardingMode: z
@@ -217,7 +225,7 @@ export const missionAssignSchema = z
       .array(
         z.object({
           groupId: z.string().min(1),
-          headcount: z.number().int().min(1, "L'effectif minimal est 1.").max(200),
+          participantIds: z.array(z.string().cuid()).min(1, "Sélectionnez au moins un agent.").max(50),
           isLead: z.boolean().default(false),
         }),
       )
@@ -228,6 +236,16 @@ export const missionAssignSchema = z
   })
   .refine((d) => d.assignments.filter((a) => a.isLead).length <= 1, {
     message: "Un seul groupe principal est autorisé.",
+  })
+  .refine(
+    (d) => {
+      const ids = d.assignments.flatMap((assignment) => assignment.participantIds);
+      return new Set(ids).size === ids.length;
+    },
+    { message: "Un agent ne peut représenter qu'un seul groupe sur une mission." },
+  )
+  .refine((d) => d.assignments.every((a) => new Set(a.participantIds).size === a.participantIds.length), {
+    message: "Un agent ne peut être sélectionné deux fois dans le même groupe.",
   });
 
 export type MissionAssignInput = z.infer<typeof missionAssignSchema>;

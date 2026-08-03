@@ -122,10 +122,70 @@ export async function setUserRoleAction(input: {
  *   groupes qu'ils dirigent.
  * Les règles sont appliquées CÔTÉ SERVEUR, quel que soit le formulaire.
  */
+/**
+ * Ajoute ou retire un utilisateur d'un groupe. Une personne peut appartenir
+ * à plusieurs groupes : la clé primaire est (groupId, userId), pas userId.
+ * Cette opération reste réservée à l'administration car l'appartenance ouvre
+ * l'accès aux identités réelles du groupe et à ses missions attribuées.
+ */
+export async function setUserGroupMembershipAction(input: {
+  userId: string;
+  groupId: string;
+  member: boolean;
+}): Promise<Result> {
+  const actor = await guard(PERMISSIONS.USER_MANAGE);
+  if (!actor) return { ok: false, error: "Permission refusée." };
+
+  const [user, group, existing] = await Promise.all([
+    prisma.user.findUnique({ where: { id: input.userId }, select: { status: true } }),
+    prisma.group.findUnique({ where: { id: input.groupId } }),
+    prisma.groupMember.findUnique({
+      where: { groupId_userId: { groupId: input.groupId, userId: input.userId } },
+    }),
+  ]);
+  if (!user) return { ok: false, error: "Utilisateur introuvable." };
+  if (input.member && user.status !== "ACTIVE") {
+    return { ok: false, error: "Seul un compte actif peut rejoindre un groupe." };
+  }
+  if (!group || !group.isActive) return { ok: false, error: "Groupe introuvable ou inactif." };
+
+  if (input.member) {
+    await prisma.groupMember.upsert({
+      where: { groupId_userId: { groupId: group.id, userId: input.userId } },
+      update: {},
+      create: { groupId: group.id, userId: input.userId, isLeader: false },
+    });
+  } else {
+    if (existing?.isLeader) {
+      return {
+        ok: false,
+        error: "Ce membre est chef du groupe : retirez d'abord sa responsabilité de chef.",
+      };
+    }
+    await prisma.groupMember.deleteMany({
+      where: { groupId: group.id, userId: input.userId, isLeader: false },
+    });
+  }
+
+  const meta = await requestMeta();
+  await audit({
+    actorId: actor.userId,
+    action: input.member ? "group.member_added" : "group.member_removed",
+    resourceType: "group",
+    resourceId: group.id,
+    newValues: { userId: input.userId },
+    ...meta,
+  });
+  revalidatePath("/admin/utilisateurs");
+  revalidatePath(`/groupes/${group.id}`);
+  return { ok: true };
+}
+
+/** Matrice des rôles qu'un rôle donné est autorisé à inviter. */
 const INVITE_TIERS: Record<string, string[]> = {
-  super_admin: ["super_admin", "moderator", "faction_leader", "faction_member"],
-  moderator: ["faction_leader", "faction_member"],
-  faction_leader: ["faction_member"],
+  super_admin: ["super_admin", "moderator", "group_leader", "group_member"],
+  moderator: ["group_leader", "group_member"],
+  group_leader: ["group_member"],
 };
 
 export async function createInvitationAction(raw: unknown): Promise<Result> {
@@ -158,7 +218,7 @@ export async function createInvitationAction(raw: unknown): Promise<Result> {
 
   // Le mode de rattachement ne concerne que les invitations de chef —
   // impossible à détourner en modifiant la requête.
-  if (data.roleSlug !== "faction_leader") {
+  if (data.roleSlug !== "group_leader") {
     groupOnboardingMode = "NONE";
   } else if (groupOnboardingMode === "CREATE_NEW_GROUP") {
     groupId = undefined; // le groupe naîtra à l'onboarding
@@ -166,6 +226,9 @@ export async function createInvitationAction(raw: unknown): Promise<Result> {
     return { ok: false, error: "Choisissez le groupe que rejoindra ce chef." };
   } else if (groupOnboardingMode === "NONE" && groupId) {
     groupOnboardingMode = "EXISTING_GROUP";
+  }
+  if (data.roleSlug === "group_leader" && groupOnboardingMode === "NONE" && !groupId) {
+    return { ok: false, error: "Choisissez un groupe existant ou autorisez-en la fondation." };
   }
 
   const isModOrAbove = slugs.has("super_admin") || slugs.has("moderator");
@@ -185,7 +248,7 @@ export async function createInvitationAction(raw: unknown): Promise<Result> {
     if (!led?.isLeader || !led.group.isActive) {
       return { ok: false, error: "Vous ne dirigez pas ce groupe." };
     }
-    factionId = led.group.factionId;
+    factionId = led.group.factionId ?? undefined;
   } else if (groupId) {
     // Cohérence groupe/faction pour la modération
     const group = await prisma.group.findUnique({ where: { id: groupId } });
@@ -193,29 +256,40 @@ export async function createInvitationAction(raw: unknown): Promise<Result> {
     if (factionId && group.factionId !== factionId) {
       return { ok: false, error: "Ce groupe n'appartient pas à cette faction." };
     }
-    factionId = group.factionId;
+    factionId = group.factionId ?? undefined;
+  }
+
+  if (data.roleSlug === "group_member" && !groupId) {
+    return { ok: false, error: "Choisissez le groupe que rejoindra cet agent." };
+  }
+  if (groupOnboardingMode === "CREATE_NEW_GROUP" && factionId) {
+    const faction = await prisma.faction.findFirst({ where: { id: factionId, isActive: true } });
+    if (!faction) return { ok: false, error: "Faction introuvable ou inactive." };
+  }
+  if (!groupId && groupOnboardingMode !== "CREATE_NEW_GROUP") {
+    factionId = undefined;
   }
 
   const role = await prisma.role.findUnique({ where: { slug: data.roleSlug } });
   if (!role) return { ok: false, error: "Rôle inconnu." };
+  const playerLevel = await prisma.playerLevel.findUnique({
+    where: { id: data.playerLevelId },
+    select: { id: true, label: true },
+  });
+  if (!playerLevel) return { ok: false, error: "Niveau de personnage inconnu." };
 
-  const { token, invitation } = await createInvitation({
+  const { token } = await createInvitation({
     createdById: current.session.userId,
     roleId: role.id,
     factionId,
     groupId,
+    playerLevelId: playerLevel.id,
+    groupOnboardingMode,
     expiresInHours: data.expiresInHours,
     requireApproval: data.requireApproval,
     restrictedDiscordId: data.restrictedDiscordId,
     note: data.note,
   });
-  if (groupOnboardingMode !== "NONE") {
-    await prisma.invitation.update({
-      where: { id: invitation.id },
-      data: { groupOnboardingMode },
-    });
-  }
-
   const meta = await requestMeta();
   await audit({
     actorId: current.session.userId,
@@ -225,6 +299,7 @@ export async function createInvitationAction(raw: unknown): Promise<Result> {
       roleSlug: data.roleSlug,
       factionId: factionId ?? null,
       groupId: groupId ?? null,
+      playerLevelId: playerLevel.id,
       expiresInHours: data.expiresInHours,
     },
     ...meta,
@@ -233,6 +308,42 @@ export async function createInvitationAction(raw: unknown): Promise<Result> {
   revalidatePath("/invitations");
   // Le jeton clair n'est montré qu'UNE fois, ici, au créateur.
   return { ok: true, inviteUrl: `${process.env.APP_URL ?? ""}/invitation/${token}` };
+}
+
+export async function setUserLevelAction(input: {
+  userId: string;
+  playerLevelId: string;
+}): Promise<Result> {
+  const actor = await guard(PERMISSIONS.USER_MANAGE);
+  if (!actor) return { ok: false, error: "Permission refusée." };
+
+  const level = await prisma.playerLevel.findUnique({
+    where: { id: input.playerLevelId },
+    select: { id: true, label: true },
+  });
+  if (!level) return { ok: false, error: "Niveau inconnu." };
+  const before = await prisma.user.findUnique({
+    where: { id: input.userId },
+    select: { playerLevelId: true },
+  });
+  if (!before) return { ok: false, error: "Utilisateur introuvable." };
+
+  await prisma.user.update({
+    where: { id: input.userId },
+    data: { playerLevelId: level.id },
+  });
+  const meta = await requestMeta();
+  await audit({
+    actorId: actor.userId,
+    action: "user.level_updated",
+    resourceType: "user",
+    resourceId: input.userId,
+    oldValues: { playerLevelId: before.playerLevelId },
+    newValues: { playerLevelId: level.id, label: level.label },
+    ...meta,
+  });
+  revalidatePath("/admin/utilisateurs");
+  return { ok: true };
 }
 
 export async function revokeInvitationAction(invitationId: string): Promise<Result> {
@@ -381,12 +492,19 @@ export async function adjustScoreAction(raw: unknown): Promise<Result> {
   const data = parsed.data;
   const season = await prisma.leaderboardSeason.findFirst({ where: { isActive: true } });
 
+  const group = await prisma.group.findFirst({
+    where: { id: data.groupId, isActive: true },
+    select: { factionId: true },
+  });
+  if (!group) return { ok: false, error: "Groupe introuvable ou inactif." };
+  const factionId = group.factionId;
+
   await prisma.missionScore.create({
     data: {
       missionId: data.missionId ?? null,
       seasonId: season?.id ?? null,
-      factionId: data.factionId,
-      groupId: data.groupId ?? null,
+      factionId,
+      groupId: data.groupId,
       points: data.points,
       reason: data.reason,
       justification: data.justification,
@@ -397,9 +515,9 @@ export async function adjustScoreAction(raw: unknown): Promise<Result> {
   await audit({
     actorId: actor.userId,
     action: "points.adjusted",
-    resourceType: "faction",
-    resourceId: data.factionId,
-    newValues: { points: data.points, reason: data.reason },
+    resourceType: "group",
+    resourceId: data.groupId,
+    newValues: { points: data.points, reason: data.reason, factionId },
     reason: data.justification,
     ...meta,
   });
@@ -433,34 +551,36 @@ export async function createFactionAction(input: { name: string }): Promise<Resu
 }
 
 export async function createGroupAction(input: {
-  factionId: string;
+  factionId?: string;
   name: string;
 }): Promise<Result> {
-  const current = await requireUser();
-  const isAdmin = current.permissions.has(PERMISSIONS.FACTION_MANAGE);
-  const isLeaderOfFaction =
-    current.permissions.has(PERMISSIONS.GROUP_MANAGE) &&
-    (await prisma.factionMember.findFirst({
-      where: { factionId: input.factionId, userId: current.session.userId, isLeader: true },
-    })) !== null;
-  if (!isAdmin && !isLeaderOfFaction) return { ok: false, error: "Permission refusée." };
+  const actor = await guard(PERMISSIONS.GROUP_CREATE);
+  if (!actor) return { ok: false, error: "Permission refusée." };
 
   const name = input.name.trim();
   if (!name || name.length > 80) return { ok: false, error: "Nom invalide." };
 
-  const existing = await prisma.group.findUnique({
-    where: { factionId_name: { factionId: input.factionId, name } },
+  const factionId = input.factionId || null;
+  if (factionId) {
+    const faction = await prisma.faction.findFirst({ where: { id: factionId, isActive: true } });
+    if (!faction) return { ok: false, error: "Faction introuvable ou inactive." };
+  }
+
+  const existing = await prisma.group.findFirst({
+    where: { factionId, name: { equals: name, mode: "insensitive" } },
   });
   if (existing) return { ok: false, error: "Ce groupe existe déjà." };
 
-  await prisma.group.create({ data: { factionId: input.factionId, name } });
+  const group = await prisma.group.create({
+    data: { factionId, name, createdById: actor.userId },
+  });
   const meta = await requestMeta();
   await audit({
-    actorId: current.session.userId,
+    actorId: actor.userId,
     action: "group.created",
-    resourceType: "faction",
-    resourceId: input.factionId,
-    newValues: { name },
+    resourceType: "group",
+    resourceId: group.id,
+    newValues: { name, factionId },
     ...meta,
   });
   revalidatePath("/admin/factions");

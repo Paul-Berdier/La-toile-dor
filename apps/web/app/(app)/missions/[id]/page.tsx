@@ -6,6 +6,9 @@ import {
   formatRyoRange,
   STATUS_LABELS,
   PERMISSIONS,
+  ELIGIBILITY_MODE_LABELS,
+  canViewAssignmentRoster,
+  toPublicRosterAgent,
 } from "@toile/shared";
 import { requireUser } from "@/lib/session";
 import { isStreamerMode, maskValue } from "@/lib/streamer";
@@ -15,6 +18,7 @@ import { ClaimPanel } from "@/components/missions/claim-panel";
 import { ClaimDecide } from "@/components/missions/claim-decide";
 import { ReportForm } from "@/components/missions/report-form";
 import { ManageTeamButton } from "@/components/missions/manage-team";
+import { MissionAdminActions } from "@/components/missions/mission-admin-actions";
 import { PanelWatermark } from "@/components/shell/watermark";
 
 export const dynamic = "force-dynamic";
@@ -32,6 +36,14 @@ export default async function MissionDetailPage({
   const { mission, view, level, ctx } = detail;
   const streamer = await isStreamerMode();
   const confidentialAccess = level === "assigned" || level === "moderator";
+  const visibleAssignments = mission.assignments.filter((assignment) =>
+    canViewAssignmentRoster({
+      isModerator: ctx.isModerator,
+      viewerGroupIds: ctx.groupIds,
+      assignmentGroupId: assignment.groupId,
+      publicRoster: assignment.publicRoster,
+    }),
+  );
 
   // Masquage serveur en mode Streamer : les valeurs sensibles ne partent
   // jamais en clair vers le navigateur pendant un stream.
@@ -57,8 +69,18 @@ export default async function MissionDetailPage({
     current.permissions.has(PERMISSIONS.MISSION_CLAIM) &&
     ["AVAILABLE", "CLAIM_PENDING"].includes(mission.status) &&
     ctx.ledGroups.length > 0;
+  const canEdit = current.permissions.has(PERMISSIONS.MISSION_UPDATE);
+  const canDelete = current.permissions.has(PERMISSIONS.MISSION_CANCEL);
 
   const minLevelLabel = mission.minRecommendedLevel?.label ?? null;
+  const eligibilityNotice =
+    mission.eligibilityMode === "RECOMMENDATION"
+      ? null
+      : mission.eligibilityMode === "WARNING"
+        ? "La revendication restera possible ; les écarts d'effectif ou de niveau seront signalés au tisseur."
+        : mission.eligibilityMode === "STRICT"
+          ? "La revendication sera refusée si l'effectif ou le niveau demandé n'est pas respecté."
+          : "La revendication restera possible mais sera toujours marquée pour un contrôle manuel.";
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-6 lg:px-6">
@@ -104,6 +126,9 @@ export default async function MissionDetailPage({
           )}
           {minLevelLabel && <MetaItem label="Niveau minimal conseillé" value={minLevelLabel} />}
           <MetaItem label="Délai" value={view.timeRemaining.realLabel} />
+          {mission.awardedRyo !== null && (
+            <MetaItem label="Ryō distribués" value={`${mission.awardedRyo.toLocaleString("fr-FR")} ryō`} gold />
+          )}
           {view.timeRemaining.rpLabel && (
             <MetaItem label="Temps RP" value={view.timeRemaining.rpLabel} />
           )}
@@ -111,6 +136,15 @@ export default async function MissionDetailPage({
             <MetaItem label="Candidatures" value={String(view.claimCount)} />
           )}
         </dl>
+        {(canEdit || canDelete) && mission.status !== "ARCHIVED" && (
+          <div className="mt-4 border-t border-border-default pt-4">
+            <MissionAdminActions
+              missionId={mission.id}
+              canEdit={canEdit}
+              canDelete={canDelete}
+            />
+          </div>
+        )}
       </header>
 
       <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_20rem]">
@@ -227,7 +261,7 @@ export default async function MissionDetailPage({
                 {view.moderatorNotes ?? "Aucune note."}
               </p>
               <p className="mt-2 font-mono-toile text-[0.65rem] text-ink-faint">
-                Éligibilité : {view.eligibilityMode}
+                Éligibilité : {ELIGIBILITY_MODE_LABELS[mission.eligibilityMode]}
               </p>
             </section>
           )}
@@ -243,7 +277,8 @@ export default async function MissionDetailPage({
                   <li key={claim.id} className="border border-border-default bg-elevated p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="text-sm text-ink">
-                        {claim.group.faction.name} — {claim.group.name}
+                        {claim.group.name}
+                        {claim.group.faction ? ` · ${claim.group.faction.name}` : ""}
                         <span className="ml-2 text-xs text-ink-faint">
                           chef : {claim.leader.displayName}
                         </span>
@@ -252,9 +287,23 @@ export default async function MissionDetailPage({
                         {claim.status}
                       </span>
                     </div>
+                    <p className="mt-1 font-mono-toile text-[0.65rem] text-ink-faint">
+                      Visibilité choisie : {claim.publicRoster ? "groupe et pseudonymes publics" : "équipe invisible"}
+                    </p>
                     {claim.message && (
                       <p className="mt-2 border-l-2 border-gold-dim pl-3 text-xs text-ink-muted italic">
                         {claim.message}
+                      </p>
+                    )}
+                    {claim.participants.length > 0 && (
+                      <p className="mt-2 text-xs text-ink-muted">
+                        Agents engagés :{" "}
+                        {claim.participants
+                          .map(
+                            (participant) =>
+                              `${participant.user.displayName}${participant.user.playerLevel ? ` (${participant.user.playerLevel.label})` : ""}`,
+                          )
+                          .join(", ")}
                       </p>
                     )}
                     {Array.isArray(claim.warnings) && claim.warnings.length > 0 && (
@@ -322,15 +371,21 @@ export default async function MissionDetailPage({
                     .map((claim) => ({
                       groupId: claim.groupId,
                       groupName: claim.group.name,
-                      factionName: claim.group.faction.name,
-                      headcount: claim.proposedHeadcount ?? 1,
+                      factionName: claim.group.faction?.name ?? null,
+                      headcount: claim.participants.length,
+                      participantIds: claim.participants.map((participant) => participant.userId),
+                      publicRoster: claim.publicRoster,
                     }))}
                   assignments={mission.assignments.map((assignment) => ({
                     groupId: assignment.groupId,
                     groupName: assignment.group.name,
-                    factionName: assignment.faction.name,
+                    factionName: assignment.faction?.name ?? null,
                     headcount: assignment.assignedHeadcount,
                     isLead: assignment.isLeadGroup,
+                    publicRoster: assignment.publicRoster,
+                    participantIds: mission.participants
+                      .filter((participant) => participant.groupId === assignment.groupId)
+                      .map((participant) => participant.userId),
                   }))}
                   catalog={detail.groupsCatalog}
                   canStart={mission.status !== "IN_PROGRESS"}
@@ -349,64 +404,88 @@ export default async function MissionDetailPage({
                   id: g.id,
                   name: g.name,
                   memberCount: g.memberCount,
+                  members: g.members.map(({ id, displayName, levelLabel }) => ({
+                    id,
+                    displayName,
+                    levelLabel,
+                  })),
                 }))}
-                levelWarning={
-                  minLevelLabel
-                    ? `Niveau minimal conseillé : ${minLevelLabel}. Les cellules sous ce niveau seront signalées au tisseur.`
-                    : null
-                }
+                eligibilityNotice={eligibilityNotice}
               />
             </section>
           )}
 
-          {/* Équipe assignée — multi-groupes, effectifs, groupe principal */}
-          {confidentialAccess && (mission.assignments.length > 0 || mission.participants.length > 0) && (
+          {/* Roster par groupe : privé par défaut, public sur choix explicite du chef. */}
+          {visibleAssignments.length > 0 && (
             <section className="border border-border-default bg-raised p-4">
               <h2 className="mb-2 font-display text-xs tracking-widest text-gold uppercase">
-                Équipe assignée
+                {confidentialAccess ? "Équipe assignée" : "Équipe déclarée publiquement"}
               </h2>
-              {mission.assignments.length === 0 && (
-                <p className="text-xs text-ink-faint italic">Aucune attribution.</p>
-              )}
               <ul className="space-y-2">
-                {mission.assignments.map((assignment) => (
-                  <li key={assignment.id} className="border border-border-default bg-elevated p-2.5">
-                    <p className="text-sm text-ink">
-                      {streamer
-                        ? maskValue("GRP", assignment.groupId)
-                        : `${assignment.faction.name} — ${assignment.group.name}`}
-                    </p>
-                    <p className="text-xs text-ink-muted">
-                      {assignment.assignedHeadcount} participant
-                      {assignment.assignedHeadcount > 1 ? "s" : ""}
-                      {assignment.isLeadGroup && (
-                        <span className="ml-2 border border-gold-dim px-1.5 py-0.5 text-[0.65rem] text-gold uppercase">
-                          Groupe principal
-                        </span>
+                {visibleAssignments.map((assignment) => {
+                  const fullRosterAccess =
+                    ctx.isModerator || ctx.groupIds.has(assignment.groupId);
+                  const roster = mission.participants.filter(
+                    (participant) => participant.groupId === assignment.groupId,
+                  );
+                  return (
+                    <li key={assignment.id} className="border border-border-default bg-elevated p-2.5">
+                      <p className="text-sm text-ink">
+                        {streamer
+                          ? maskValue("GRP", assignment.groupId)
+                          : `${assignment.group.name}${fullRosterAccess && assignment.faction ? ` · ${assignment.faction.name}` : ""}`}
+                      </p>
+                      {fullRosterAccess && (
+                        <p className="text-xs text-ink-muted">
+                          {assignment.assignedHeadcount} participant
+                          {assignment.assignedHeadcount > 1 ? "s" : ""}
+                          {assignment.isLeadGroup && (
+                            <span className="ml-2 border border-gold-dim px-1.5 py-0.5 text-[0.65rem] text-gold uppercase">
+                              Groupe principal
+                            </span>
+                          )}
+                        </p>
                       )}
-                    </p>
-                    <p className="font-mono-toile text-[0.6rem] text-ink-faint">
-                      Attribuée le {new Date(assignment.assignedAt).toLocaleString("fr-FR")}
-                    </p>
-                  </li>
-                ))}
+                      <ul className="mt-2 space-y-1 border-t border-border-default pt-2 text-xs text-ink-muted">
+                        {roster.map((participant) => (
+                          <li key={participant.userId}>
+                            {streamer
+                              ? maskValue("OPR", participant.userId)
+                              : fullRosterAccess
+                                ? participant.user.displayName
+                                : toPublicRosterAgent(participant.user).displayName}
+                            {fullRosterAccess && !streamer && participant.user.playerLevel && (
+                              <span className="text-ink-faint">
+                                {" "}· {participant.user.playerLevel.label}
+                              </span>
+                            )}
+                            {fullRosterAccess && mission.status === "COMPLETED" && (
+                              <span className="ml-2 text-gold">
+                                +{participant.pointsAwarded} pts · {participant.ryoAwarded.toLocaleString("fr-FR")} ryō
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                      {fullRosterAccess && (
+                        <p className="mt-2 font-mono-toile text-[0.6rem] text-ink-faint">
+                          Attribuée le {new Date(assignment.assignedAt).toLocaleString("fr-FR")}
+                        </p>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
-              {mission.assignments.length > 1 && (
+              {confidentialAccess && visibleAssignments.length > 1 && (
                 <p className="mt-2 font-mono-toile text-xs text-gold">
                   Effectif total :{" "}
-                  {mission.assignments.reduce((sum, a) => sum + a.assignedHeadcount, 0)}
+                  {visibleAssignments.reduce((sum, assignment) => {
+                    const visibleCount = mission.participants.filter(
+                      (participant) => participant.groupId === assignment.groupId,
+                    ).length;
+                    return sum + visibleCount;
+                  }, 0)}
                 </p>
-              )}
-              {mission.participants.length > 0 && (
-                <ul className="mt-3 space-y-1 border-t border-border-default pt-2 text-xs text-ink-muted">
-                  {mission.participants.map((participant) => (
-                    <li key={participant.userId}>
-                      {streamer
-                        ? maskValue("OPR", participant.userId)
-                        : participant.user.displayName}
-                    </li>
-                  ))}
-                </ul>
               )}
             </section>
           )}

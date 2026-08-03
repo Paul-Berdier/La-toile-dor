@@ -49,10 +49,14 @@ export async function updateGroupAction(input: {
   const name = data.name.trim();
 
   if (name !== group.name) {
-    const taken = await prisma.group.findUnique({
-      where: { factionId_name: { factionId: group.factionId, name } },
+    const taken = await prisma.group.findFirst({
+      where: {
+        id: { not: group.id },
+        factionId: group.factionId,
+        name: { equals: name, mode: "insensitive" },
+      },
     });
-    if (taken) return { ok: false, error: "Un groupe porte déjà ce nom dans cette faction." };
+    if (taken) return { ok: false, error: "Un groupe porte déjà ce nom dans ce rattachement." };
   }
 
   const oldValues = {
@@ -83,6 +87,72 @@ export async function updateGroupAction(input: {
 
   revalidatePath(`/groupes/${group.id}`);
   revalidatePath("/groupes");
+  return { ok: true };
+}
+
+/** Le rattachement à une faction reste facultatif et ne peut être modifié que
+ * par la modération ; il n'accorde aucun droit aux membres du groupe. */
+export async function setGroupFactionAction(input: {
+  groupId: string;
+  factionId: string | null;
+}): Promise<Result> {
+  const current = await requireUser();
+  if (!current.permissions.has(PERMISSIONS.GROUP_EDIT_ANY)) {
+    return { ok: false, error: "Permission refusée." };
+  }
+
+  const group = await prisma.group.findFirst({ where: { id: input.groupId, isActive: true } });
+  if (!group) return { ok: false, error: "Groupe introuvable." };
+  if (input.factionId) {
+    const faction = await prisma.faction.findFirst({
+      where: { id: input.factionId, isActive: true },
+    });
+    if (!faction) return { ok: false, error: "Faction introuvable ou inactive." };
+  }
+
+  const taken = await prisma.group.findFirst({
+    where: {
+      id: { not: group.id },
+      factionId: input.factionId,
+      name: { equals: group.name, mode: "insensitive" },
+    },
+  });
+  if (taken) return { ok: false, error: "Un groupe de même nom existe déjà dans ce rattachement." };
+
+  await prisma.$transaction([
+    prisma.group.update({
+      where: { id: group.id },
+      data: { factionId: input.factionId },
+    }),
+    prisma.missionAssignment.updateMany({
+      where: { groupId: group.id, active: true },
+      data: { factionId: input.factionId },
+    }),
+    prisma.mission.updateMany({
+      where: {
+        assignedGroupId: group.id,
+        status: { in: ["AVAILABLE", "CLAIM_PENDING", "ASSIGNED", "IN_PROGRESS"] },
+      },
+      data: { assignedFactionId: input.factionId },
+    }),
+    prisma.invitation.updateMany({
+      where: { groupId: group.id, status: "ACTIVE" },
+      data: { factionId: input.factionId },
+    }),
+  ]);
+  const meta = await requestMeta();
+  await audit({
+    actorId: current.session.userId,
+    action: "group.faction_changed",
+    resourceType: "group",
+    resourceId: group.id,
+    oldValues: { factionId: group.factionId },
+    newValues: { factionId: input.factionId },
+    ...meta,
+  });
+  revalidatePath(`/groupes/${group.id}`);
+  revalidatePath("/groupes");
+  revalidatePath("/admin/factions");
   return { ok: true };
 }
 
@@ -172,18 +242,13 @@ export async function promoteToLeaderAction(input: {
     return { ok: false, error: "Ce compte n'est pas actif." };
   }
 
-  const leaderRole = await prisma.role.findUnique({ where: { slug: "faction_leader" } });
+  const leaderRole = await prisma.role.findUnique({ where: { slug: "group_leader" } });
 
   await prisma.$transaction(async (tx) => {
     // La promotion conserve l'historique : on ne recrée pas l'appartenance
     await tx.groupMember.update({
       where: { groupId_userId: { groupId: group.id, userId: input.userId } },
       data: { isLeader: true },
-    });
-    await tx.factionMember.upsert({
-      where: { factionId_userId: { factionId: group.factionId, userId: input.userId } },
-      update: { isLeader: true },
-      create: { factionId: group.factionId, userId: input.userId, isLeader: true },
     });
     // Rôle applicatif de chef → nouvelles permissions effectives immédiatement
     // (elles sont relues à chaque requête, pas figées dans la session)

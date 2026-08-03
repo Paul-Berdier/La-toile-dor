@@ -48,6 +48,7 @@ export function MissionBoard({ board }: { board: BoardData }) {
   // Retour « À prendre » d'une mission attribuée : choix conserver/retirer
   const [releaseCard, setReleaseCard] = useState<BoardCard | null>(null);
   const [reason, setReason] = useState("");
+  const [completionRyo, setCompletionRyo] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -62,6 +63,7 @@ export function MissionBoard({ board }: { board: BoardData }) {
         missionId: move.card.view.id,
         toStatus: move.toStatus,
         reason: justification || undefined,
+        awardedRyo: move.toStatus === "COMPLETED" ? completionRyo : undefined,
       });
       if (!result.ok) {
         setError(result.error ?? "Le déplacement a échoué.");
@@ -70,6 +72,7 @@ export function MissionBoard({ board }: { board: BoardData }) {
       }
       setPendingMove(null);
       setReason("");
+      setCompletionRyo(0);
       router.refresh();
     });
   };
@@ -102,6 +105,7 @@ export function MissionBoard({ board }: { board: BoardData }) {
       toStatus: COLUMN_TARGET_STATUS[overColumn],
     };
     if (CRITICAL_COLUMNS.includes(overColumn)) {
+      if (overColumn === "accomplies") setCompletionRyo(card.view.rewardRyoMin);
       setPendingMove(move); // confirmation demandée
     } else {
       executeMove(move);
@@ -128,6 +132,27 @@ export function MissionBoard({ board }: { board: BoardData }) {
         <p role="alert" className="mb-3 border border-blood bg-blood/10 px-4 py-2 text-sm text-blood-bright">
           {error}
         </p>
+      )}
+
+      {board.isModerator && board.drafts.length > 0 && (
+        <section className="mb-5 border border-border-gold bg-raised p-3 sm:p-4" aria-label="Brouillons">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="font-display text-xs tracking-[0.2em] text-gold uppercase">
+                Brouillons
+              </h2>
+              <p className="mt-1 text-xs text-ink-faint">
+                Visibles uniquement par la modération. Ouvrez un contrat pour le modifier ou le publier.
+              </p>
+            </div>
+            <span className="font-mono-toile text-xs text-ink-muted">{board.drafts.length}</span>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            {board.drafts.map((card) => (
+              <MissionCard key={card.view.id} card={card} />
+            ))}
+          </div>
+        </section>
       )}
 
       <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
@@ -244,6 +269,24 @@ export function MissionBoard({ board }: { board: BoardData }) {
                   ` (effectif total : ${pendingMove.card.team.totalHeadcount})`}
               </p>
             )}
+            {pendingMove.toColumn === "accomplies" && (
+              <label className="mt-4 block text-xs text-ink-faint" htmlFor="completion-ryo">
+                Ryō à partager entre les agents engagés
+                <input
+                  id="completion-ryo"
+                  type="number"
+                  min={pendingMove.card.view.rewardRyoMin}
+                  max={pendingMove.card.view.rewardRyoMax}
+                  value={completionRyo}
+                  onChange={(event) => setCompletionRyo(Number(event.target.value))}
+                  className="mt-1 w-full border border-border-default bg-elevated p-2 text-sm text-ink focus:border-gold"
+                />
+                <span className="mt-1 block text-[0.65rem] text-ink-faint">
+                  Fourchette du contrat : {pendingMove.card.view.rewardRyoMin.toLocaleString("fr-FR")} à{" "}
+                  {pendingMove.card.view.rewardRyoMax.toLocaleString("fr-FR")} ryō
+                </span>
+              </label>
+            )}
             <label className="mt-4 block text-xs text-ink-faint" htmlFor="move-reason">
               {pendingMove.toColumn === "echouees"
                 ? "Motif de l'échec (visible dans l'historique)"
@@ -265,7 +308,12 @@ export function MissionBoard({ board }: { board: BoardData }) {
               <Button
                 variant={pendingMove.toColumn === "accomplies" ? "gold" : "seal"}
                 onClick={() => executeMove(pendingMove, reason)}
-                disabled={isPending}
+                disabled={
+                  isPending ||
+                  (pendingMove.toColumn === "accomplies" &&
+                    (completionRyo < pendingMove.card.view.rewardRyoMin ||
+                      completionRyo > pendingMove.card.view.rewardRyoMax))
+                }
               >
                 {isPending ? "Scellement…" : "Apposer le sceau"}
               </Button>

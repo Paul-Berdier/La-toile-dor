@@ -63,6 +63,7 @@ model User {
   missionsCreated    Mission[]               @relation("MissionCreator")
   missionsModerated  Mission[]               @relation("MissionModerator")
   claims             MissionClaim[]          @relation("ClaimLeader")
+  claimParticipations MissionClaimParticipant[]
   participations     MissionParticipant[]
   notificationPrefs  NotificationPreference[]
   notifications      NotificationDelivery[]
@@ -132,6 +133,8 @@ model Invitation {
   roleId    String?
   factionId String?
   groupId   String?
+  // Niveau attribué par l'inviteur et appliqué à la création du compte.
+  playerLevelId String?
   // Parcours de groupe à la première connexion d'un chef :
   // EXISTING_GROUP → rattaché à groupId ; CREATE_NEW_GROUP → formulaire de création
   groupOnboardingMode GroupOnboardingMode @default(NONE)
@@ -148,6 +151,7 @@ model Invitation {
   role        Role?    @relation(fields: [roleId], references: [id])
   faction     Faction? @relation(fields: [factionId], references: [id])
   group       Group?   @relation(fields: [groupId], references: [id])
+  playerLevel PlayerLevel? @relation(fields: [playerLevelId], references: [id])
 
   @@index([status, expiresAt])
   @@index([createdById])
@@ -159,7 +163,7 @@ model Invitation {
 
 model Role {
   id       String  @id @default(cuid())
-  slug     String  @unique // super_admin, moderator, faction_leader, faction_member
+  slug     String  @unique // super_admin, moderator, group_leader, group_member
   name     String
   isSystem Boolean @default(false)
 
@@ -221,6 +225,8 @@ model Faction {
 }
 
 model FactionMember {
+  // Compatibilité historique. L'autorité et les accès passent désormais par
+  // GroupMember ; une faction classe des groupes, elle ne dirige pas les utilisateurs.
   factionId String
   userId    String
   isLeader  Boolean  @default(false)
@@ -235,7 +241,8 @@ model FactionMember {
 
 model Group {
   id        String   @id @default(cuid())
-  factionId String
+  // Rattachement facultatif : un groupe peut être indépendant.
+  factionId String?
   name      String
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -251,10 +258,11 @@ model Group {
   imageData Bytes?
   imageMime String?
 
-  faction     Faction             @relation(fields: [factionId], references: [id], onDelete: Cascade)
+  faction     Faction?            @relation(fields: [factionId], references: [id], onDelete: SetNull)
   members     GroupMember[]
   claims      MissionClaim[]
   assignments MissionAssignment[]
+  missionParticipants MissionParticipant[]
   scores      MissionScore[]
   missionsAssigned Mission[] @relation("MissionAssignedGroup")
   invitations Invitation[]
@@ -289,6 +297,7 @@ model PlayerLevel {
   missionsMin    Mission[] @relation("MissionMinLevel")
   ranksMin       RankConfig[]
   users          User[]       @relation("UserLevel")
+  invitations    Invitation[]
 }
 
 enum MissionRank {
@@ -368,6 +377,8 @@ model Mission {
   publicSummary        String?
   rewardRyoMin         Int
   rewardRyoMax         Int
+  // Montant exact choisi à l'accomplissement puis partagé entre participants.
+  awardedRyo           Int?
   basePoints           Int
   targetLevelId        String?
   minRecommendedLevelId String?
@@ -433,7 +444,7 @@ model Mission {
   @@index([publishedAt])
 }
 
-// Ce que les chefs de faction voient AVANT attribution.
+// Ce que les chefs de groupe voient AVANT attribution.
 // Le rang, la récompense, le temps restant et les tailles de groupe sont toujours publics.
 model MissionVisibility {
   missionId       String  @id
@@ -467,15 +478,32 @@ model MissionClaim {
   proposedHeadcount Int?
   // Avertissements d'éligibilité calculés au moment de la revendication
   warnings  Json?
+  // Le chef autorise l'affichage public du nom du groupe et des pseudonymes
+  // des agents proposés. Faux par défaut : la modération voit toujours tout.
+  publicRoster Boolean @default(false)
 
   mission Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
   group   Group   @relation(fields: [groupId], references: [id], onDelete: Cascade)
   leader  User    @relation("ClaimLeader", fields: [leaderId], references: [id])
+  participants MissionClaimParticipant[]
 
   // Empêche les revendications dupliquées d'un même groupe sur une mission
   @@unique([missionId, groupId])
   @@index([status])
   @@index([missionId, status])
+}
+
+// Agents nommément engagés par le chef lors d'une revendication.
+// Ils n'obtiennent l'accès à la mission qu'après acceptation.
+model MissionClaimParticipant {
+  claimId String
+  userId  String
+
+  claim MissionClaim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  user  User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([claimId, userId])
+  @@index([userId])
 }
 
 // Une mission peut être menée par PLUSIEURS groupes (attributions actives
@@ -484,7 +512,7 @@ model MissionClaim {
 model MissionAssignment {
   id           String    @id @default(cuid())
   missionId    String
-  factionId    String
+  factionId    String?
   groupId      String
   assignedById String
   assignedAt   DateTime  @default(now())
@@ -495,10 +523,13 @@ model MissionAssignment {
   assignedHeadcount Int @default(1)
   // Groupe principal / coordinateur (au plus un par mission)
   isLeadGroup Boolean @default(false)
+  // Copié depuis la revendication du chef. N'expose que le groupe et les
+  // pseudonymes publics, jamais les identités réelles ou le dossier mission.
+  publicRoster Boolean @default(false)
   notes       String?
 
   mission Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
-  faction Faction @relation(fields: [factionId], references: [id])
+  faction Faction? @relation(fields: [factionId], references: [id], onDelete: SetNull)
   group   Group   @relation(fields: [groupId], references: [id])
 
   @@index([missionId, active])
@@ -508,15 +539,21 @@ model MissionAssignment {
 model MissionParticipant {
   missionId String
   userId    String
+  groupId   String?
   addedById String
   addedAt   DateTime @default(now())
   note      String?
+  // Parts finales attribuées à cet agent à la résolution.
+  pointsAwarded Int @default(0)
+  ryoAwarded    Int @default(0)
 
   mission Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group   Group?  @relation(fields: [groupId], references: [id], onDelete: SetNull)
 
   @@id([missionId, userId])
   @@index([userId])
+  @@index([missionId, groupId])
 }
 
 model MissionAttachment {
@@ -595,7 +632,7 @@ model MissionScore {
   id          String      @id @default(cuid())
   missionId   String?
   seasonId    String?
-  factionId   String
+  factionId   String?
   groupId     String?
   points      Int // positif ou négatif
   reason      ScoreReason
@@ -605,7 +642,7 @@ model MissionScore {
 
   mission Mission?           @relation(fields: [missionId], references: [id], onDelete: SetNull)
   season  LeaderboardSeason? @relation(fields: [seasonId], references: [id])
-  faction Faction            @relation(fields: [factionId], references: [id])
+  faction Faction?           @relation(fields: [factionId], references: [id], onDelete: SetNull)
   group   Group?             @relation(fields: [groupId], references: [id])
 
   @@index([factionId, seasonId])

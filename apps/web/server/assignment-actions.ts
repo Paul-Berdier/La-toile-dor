@@ -8,8 +8,6 @@ import { PERMISSIONS, missionAssignSchema } from "@toile/shared";
 import { requireUser, requestMeta } from "@/lib/session";
 import {
   enqueueNotifications,
-  factionLeaderIds,
-  groupMemberIds,
   userIdsWithPermission,
 } from "@/server/notifications";
 
@@ -43,25 +41,31 @@ export async function assignMissionAction(raw: unknown): Promise<AssignResult> {
   // Vérification des groupes (existence, activité, effectif réel)
   const groups = await prisma.group.findMany({
     where: { id: { in: assignments.map((a) => a.groupId) }, isActive: true },
-    include: { faction: true, _count: { select: { members: true } } },
+    include: {
+      faction: true,
+      members: {
+        where: { user: { status: "ACTIVE" } },
+        select: { userId: true },
+      },
+    },
   });
   if (groups.length !== assignments.length) {
     return { ok: false, error: "Un des groupes sélectionnés est introuvable ou inactif." };
   }
   for (const entry of assignments) {
     const group = groups.find((g) => g.id === entry.groupId)!;
-    if (group._count.members > 0 && entry.headcount > group._count.members) {
+    const memberIds = new Set(group.members.map((member) => member.userId));
+    if (entry.participantIds.some((userId) => !memberIds.has(userId))) {
       return {
         ok: false,
-        error: `${group.name} ne compte que ${group._count.members} membre(s).`,
+        error: `Un agent sélectionné n'appartient plus à ${group.name} ou n'est plus actif.`,
       };
     }
   }
 
   const meta = await requestMeta();
   const leadEntry = assignments.find((a) => a.isLead) ?? assignments[0]!;
-  const leadGroup = groups.find((g) => g.id === leadEntry.groupId)!;
-  const totalHeadcount = assignments.reduce((sum, a) => sum + a.headcount, 0);
+  const totalHeadcount = assignments.reduce((sum, a) => sum + a.participantIds.length, 0);
 
   let fromStatus: MissionStatus = "AVAILABLE";
   try {
@@ -77,6 +81,39 @@ export async function assignMissionAction(raw: unknown): Promise<AssignResult> {
       }
       fromStatus = mission.status;
 
+      // Les membres et l'état des groupes sont relus dans la transaction :
+      // une ancienne modale ne peut pas engager un agent parti depuis.
+      const liveGroups = await tx.group.findMany({
+        where: { id: { in: assignments.map((assignment) => assignment.groupId) }, isActive: true },
+        select: {
+          id: true,
+          factionId: true,
+          members: {
+            where: { user: { status: "ACTIVE" } },
+            select: { userId: true },
+          },
+        },
+      });
+      if (liveGroups.length !== assignments.length) throw new Error("GROUPS_CHANGED");
+      for (const entry of assignments) {
+        const liveGroup = liveGroups.find((group) => group.id === entry.groupId)!;
+        const liveMemberIds = new Set(liveGroup.members.map((member) => member.userId));
+        if (entry.participantIds.some((userId) => !liveMemberIds.has(userId))) {
+          throw new Error("GROUPS_CHANGED");
+        }
+      }
+      const liveLeadGroup = liveGroups.find((group) => group.id === leadEntry.groupId)!;
+      const groupClaims = await tx.missionClaim.findMany({
+        where: {
+          missionId,
+          groupId: { in: assignments.map((assignment) => assignment.groupId) },
+        },
+        select: { groupId: true, publicRoster: true },
+      });
+      const publicRosterByGroup = new Map(
+        groupClaims.map((claim) => [claim.groupId, claim.publicRoster]),
+      );
+
       // Les groupes retirés de la sélection sont libérés (historique conservé)
       await tx.missionAssignment.updateMany({
         where: { missionId, active: true, groupId: { notIn: assignments.map((a) => a.groupId) } },
@@ -87,19 +124,28 @@ export async function assignMissionAction(raw: unknown): Promise<AssignResult> {
         },
       });
 
+      const selectedParticipantIds = assignments.flatMap((assignment) => assignment.participantIds);
+      await tx.missionParticipant.deleteMany({
+        where: { missionId, userId: { notIn: selectedParticipantIds } },
+      });
+
       for (const entry of assignments) {
-        const group = groups.find((g) => g.id === entry.groupId)!;
+        const group = liveGroups.find((g) => g.id === entry.groupId)!;
         const existing = await tx.missionAssignment.findFirst({
           where: { missionId, groupId: entry.groupId, active: true },
           select: { id: true },
         });
         if (existing) {
+          const claimedVisibility = publicRosterByGroup.get(entry.groupId);
           await tx.missionAssignment.update({
             where: { id: existing.id },
             data: {
-              assignedHeadcount: entry.headcount,
+              assignedHeadcount: entry.participantIds.length,
               isLeadGroup: entry.groupId === leadEntry.groupId,
               notes: reason ?? null,
+              ...(claimedVisibility === undefined
+                ? {}
+                : { publicRoster: claimedVisibility }),
             },
           });
         } else {
@@ -109,9 +155,22 @@ export async function assignMissionAction(raw: unknown): Promise<AssignResult> {
               factionId: group.factionId,
               groupId: entry.groupId,
               assignedById: current.session.userId,
-              assignedHeadcount: entry.headcount,
+              assignedHeadcount: entry.participantIds.length,
               isLeadGroup: entry.groupId === leadEntry.groupId,
+              publicRoster: publicRosterByGroup.get(entry.groupId) ?? false,
               notes: reason ?? null,
+            },
+          });
+        }
+        for (const userId of entry.participantIds) {
+          await tx.missionParticipant.upsert({
+            where: { missionId_userId: { missionId, userId } },
+            update: { groupId: entry.groupId, addedById: current.session.userId },
+            create: {
+              missionId,
+              userId,
+              groupId: entry.groupId,
+              addedById: current.session.userId,
             },
           });
         }
@@ -136,8 +195,8 @@ export async function assignMissionAction(raw: unknown): Promise<AssignResult> {
         data: {
           status: toStatus,
           // Colonnes héritées : groupe principal (compatibilité lecture)
-          assignedFactionId: leadGroup.factionId,
-          assignedGroupId: leadGroup.id,
+          assignedFactionId: liveLeadGroup.factionId,
+          assignedGroupId: liveLeadGroup.id,
           assignedAt: new Date(),
         },
       });
@@ -154,7 +213,7 @@ export async function assignMissionAction(raw: unknown): Promise<AssignResult> {
           },
         });
       }
-    });
+    }, { isolationLevel: "Serializable" });
   } catch (error) {
     if (error instanceof Error) {
       if (error.message === "NOT_FOUND") return { ok: false, error: "Mission introuvable." };
@@ -162,6 +221,18 @@ export async function assignMissionAction(raw: unknown): Promise<AssignResult> {
         return { ok: false, error: "Cette mission n'est plus attribuable." };
       if (error.message === "CONCURRENT")
         return { ok: false, error: "La mission vient d'être modifiée — rechargez le tableau." };
+      if (error.message === "GROUPS_CHANGED") {
+        return {
+          ok: false,
+          error: "Un groupe ou sa liste d'agents a changé ; rechargez l'attribution.",
+        };
+      }
+    }
+    if ((error as { code?: string }).code === "P2034") {
+      return {
+        ok: false,
+        error: "Une attribution simultanée a eu lieu ; rechargez puis réessayez.",
+      };
     }
     throw error;
   }
@@ -181,7 +252,7 @@ export async function assignMissionAction(raw: unknown): Promise<AssignResult> {
       status: start ? "IN_PROGRESS" : "ASSIGNED",
       groups: assignments.map((a) => ({
         groupId: a.groupId,
-        headcount: a.headcount,
+        headcount: a.participantIds.length,
         isLead: a.groupId === leadEntry.groupId,
       })),
       totalHeadcount,
@@ -201,22 +272,11 @@ export async function assignMissionAction(raw: unknown): Promise<AssignResult> {
     totalHeadcount,
   };
   for (const entry of assignments) {
-    const members = await groupMemberIds(entry.groupId);
     await enqueueNotifications({
-      userIds: members.filter((id) => id !== current.session.userId),
+      userIds: entry.participantIds.filter((id) => id !== current.session.userId),
       event: "CLAIM_ACCEPTED",
       payload,
       missionId,
-    });
-    const group = groups.find((g) => g.id === entry.groupId)!;
-    await enqueueNotifications({
-      userIds: (await factionLeaderIds(group.factionId)).filter(
-        (id) => id !== current.session.userId,
-      ),
-      event: "MISSION_STATUS_CHANGED",
-      payload: { ...payload, fromStatus, toStatus: start ? "IN_PROGRESS" : "ASSIGNED" },
-      missionId,
-      batchKey: `assign:${missionId}`,
     });
   }
   const moderators = await userIdsWithPermission(PERMISSIONS.CLAIM_REVIEW);

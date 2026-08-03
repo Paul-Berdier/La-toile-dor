@@ -14,14 +14,15 @@ export const dynamic = "force-dynamic";
 export default async function AdminConfigurationPage() {
   await requireUserWith(PERMISSIONS.SETTINGS_MANAGE);
 
-  const [rpSetting, ranks, levels, seasons, factions] = await Promise.all([
+  const [rpSetting, ranks, levels, seasons, groups] = await Promise.all([
     prisma.appSetting.findUnique({ where: { key: "rp_time" } }),
     prisma.rankConfig.findMany({ orderBy: { dangerLevel: "asc" } }),
     prisma.playerLevel.findMany({ orderBy: { order: "asc" } }),
     prisma.leaderboardSeason.findMany({ orderBy: { startsAt: "desc" } }),
-    prisma.faction.findMany({
+    prisma.group.findMany({
       where: { isActive: true },
-      include: { groups: { where: { isActive: true }, select: { id: true, name: true } } },
+      select: { id: true, name: true, faction: { select: { name: true } } },
+      orderBy: { name: "asc" },
     }),
   ]);
 
@@ -96,10 +97,10 @@ export default async function AdminConfigurationPage() {
           Registre des points — ajustement manuel
         </h2>
         <ScoreAdjustForm
-          factions={factions.map((faction) => ({
-            id: faction.id,
-            name: faction.name,
-            groups: faction.groups,
+          groups={groups.map((group) => ({
+            id: group.id,
+            name: group.name,
+            factionName: group.faction?.name ?? null,
           }))}
         />
       </section>

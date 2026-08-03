@@ -197,34 +197,28 @@ const SCORE_REASONS = [
 ] as const;
 
 export function ScoreAdjustForm({
-  factions,
+  groups,
 }: {
-  factions: { id: string; name: string; groups: { id: string; name: string }[] }[];
+  groups: { id: string; name: string; factionName: string | null }[];
 }) {
-  const [factionId, setFactionId] = useState(factions[0]?.id ?? "");
-  const [groupId, setGroupId] = useState("");
+  const [groupId, setGroupId] = useState(groups[0]?.id ?? "");
   const [points, setPoints] = useState(0);
   const [reason, setReason] = useState<string>("MANUAL_ADJUSTMENT");
   const [justification, setJustification] = useState("");
   const { run, message, isPending } = useAction();
 
-  const faction = factions.find((f) => f.id === factionId);
-
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       <label className="text-xs text-ink-faint">
-        Faction
-        <select value={factionId} onChange={(e) => { setFactionId(e.target.value); setGroupId(""); }}
-          className={`${input} mt-1 block w-full`}>
-          {factions.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-        </select>
-      </label>
-      <label className="text-xs text-ink-faint">
-        Groupe (facultatif)
+        Groupe
         <select value={groupId} onChange={(e) => setGroupId(e.target.value)}
           className={`${input} mt-1 block w-full`}>
           <option value="">—</option>
-          {faction?.groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+          {groups.map((group) => (
+            <option key={group.id} value={group.id}>
+              {group.name}{group.factionName ? ` · ${group.factionName}` : " · Sans faction"}
+            </option>
+          ))}
         </select>
       </label>
       <label className="text-xs text-ink-faint">
@@ -245,13 +239,12 @@ export function ScoreAdjustForm({
           rows={2} className={`${input} mt-1 block w-full`} />
       </label>
       <div className="sm:col-span-2">
-        <Button size="sm" variant="gold" disabled={isPending || points === 0 || justification.trim().length < 3}
+        <Button size="sm" variant="gold" disabled={isPending || !groupId || points === 0 || justification.trim().length < 3}
           onClick={() =>
             run(
               () =>
                 adjustScoreAction({
-                  factionId,
-                  groupId: groupId || undefined,
+                  groupId,
                   points,
                   reason,
                   justification,
@@ -285,7 +278,7 @@ export function FactionCreateForm() {
   );
 }
 
-export function GroupCreateForm({ factionId }: { factionId: string }) {
+export function GroupCreateForm({ factionId }: { factionId?: string }) {
   const [name, setName] = useState("");
   const { run, message, isPending } = useAction();
   return (

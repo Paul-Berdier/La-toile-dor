@@ -10,7 +10,7 @@ import { loginAs, setStreamerCookie, ssMissionId } from "./helpers";
 
 const SECRETS = ["Kaimon", "Forteresse des marées", "commanditaire voilé"];
 
-test("un chef de faction non attribué ne reçoit RIEN du dossier scellé", async ({
+test("un chef de groupe non attribué ne reçoit RIEN du dossier scellé", async ({
   context,
   page,
 }) => {

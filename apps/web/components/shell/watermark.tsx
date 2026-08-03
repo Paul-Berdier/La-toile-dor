@@ -1,5 +1,5 @@
 /**
- * Filigrane dynamique anti-fuite : pseudonyme, identifiant partiel, faction,
+ * Filigrane dynamique anti-fuite : pseudonyme, identifiant partiel, groupes,
  * horodatage et identifiant de session répétés en diagonale.
  *
  * Intégré à plusieurs niveaux (coquille + panneaux confidentiels) et rendu

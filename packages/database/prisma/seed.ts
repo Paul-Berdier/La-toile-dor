@@ -51,11 +51,11 @@ const ROLE_PERMS: Record<string, { name: string; perms: string[] | "all" }> = {
       "claim.review", "points.adjust", "leaderboard.view", "audit.read",
     ],
   },
-  faction_leader: {
-    name: "Chef de faction",
+  group_leader: {
+    name: "Chef de groupe",
     perms: ["invite.create", "mission.claim", "mission.report.submit", "group.manage", "leaderboard.view"],
   },
-  faction_member: { name: "Membre de faction", perms: ["leaderboard.view"] },
+  group_member: { name: "Membre de groupe", perms: ["leaderboard.view"] },
 };
 
 const LEVELS = [
@@ -196,8 +196,8 @@ async function main() {
     );
   }
 
-  const leaderRole = await prisma.role.findUniqueOrThrow({ where: { slug: "faction_leader" } });
-  const memberRole = await prisma.role.findUniqueOrThrow({ where: { slug: "faction_member" } });
+  const leaderRole = await prisma.role.findUniqueOrThrow({ where: { slug: "group_leader" } });
+  const memberRole = await prisma.role.findUniqueOrThrow({ where: { slug: "group_member" } });
   const modRole = await prisma.role.findUniqueOrThrow({ where: { slug: "moderator" } });
 
   // Super administrateur fictif (tests locaux)
@@ -239,12 +239,6 @@ async function main() {
       update: {},
       create: { userId: chief.id, roleId: leaderRole.id },
     });
-    await prisma.factionMember.upsert({
-      where: { factionId_userId: { factionId: faction.id, userId: chief.id } },
-      update: { isLeader: true },
-      create: { factionId: faction.id, userId: chief.id, isLeader: true },
-    });
-
     for (let g = 0; g < 2; g++) {
       const group = await prisma.group.upsert({
         where: { factionId_name: { factionId: faction.id, name: `Cellule ${g + 1}` } },
@@ -273,11 +267,6 @@ async function main() {
           where: { userId_roleId: { userId: member.id, roleId: memberRole.id } },
           update: {},
           create: { userId: member.id, roleId: memberRole.id },
-        });
-        await prisma.factionMember.upsert({
-          where: { factionId_userId: { factionId: faction.id, userId: member.id } },
-          update: {},
-          create: { factionId: faction.id, userId: member.id },
         });
         await prisma.groupMember.upsert({
           where: { groupId_userId: { groupId: group.id, userId: member.id } },
@@ -504,6 +493,7 @@ async function main() {
             tokenHash: createHash("sha256").update(`${token}${pepper}`).digest("hex"),
             createdById: system.id,
             roleId: superAdminRole.id,
+            playerLevelId: levelId("genin_apprenti"),
             expiresAt: new Date(now + 7 * day),
             requireApproval: false,
             note: inv.note,

@@ -43,6 +43,10 @@ La création de groupe depuis l'onboarding est autorisée par le mode porté par
 l'invitation consommée, et non par un simple bouton côté client. Une invitation
 ne peut produire qu'un premier groupe.
 
+La faction éventuellement portée par cette invitation est seulement le
+rattachement facultatif du futur groupe. Aucune faction n'est créée
+automatiquement et aucune autorité n'en découle.
+
 ## Matrice de visibilité
 
 | Visiteur | Identité réelle de la cible |

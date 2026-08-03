@@ -7,14 +7,19 @@ avec le groupe principal pour la compatibilité des lectures historiques.
 
 ## Revendication par un chef
 
-Un chef choisit l'un de ses groupes et propose un effectif avec sa
-revendication. L'effectif :
+Un chef choisit l'un de ses groupes puis sélectionne nominativement les agents
+engagés. L'effectif est toujours déduit de cette sélection :
 
-- est un entier d'au moins 1 ;
-- ne peut pas dépasser l'effectif réel du groupe ;
+- au moins un agent actif est obligatoire ;
+- chaque identifiant est revérifié côté serveur comme membre actuel du groupe ;
+- le niveau minimal est calculé uniquement sur les agents sélectionnés ;
 - reste modifiable, avec le message, tant que la revendication est `PENDING`
   ou `INFO_REQUESTED` ;
-- est repris comme effectif attribué lors de l'acceptation.
+- est conservée dans `MissionClaimParticipant`, puis copiée dans
+  `MissionParticipant` lors de l'acceptation.
+- reste invisible aux autres joueurs par défaut. Le chef peut décocher la case
+  d'invisibilité ; ce consentement est alors copié dans
+  `MissionAssignment.publicRoster` lors de l'attribution.
 
 Une revendication n'accorde aucun accès confidentiel. Seule une attribution
 active le fait.
@@ -26,15 +31,16 @@ déplaçant sa carte vers « En cours ». La modale :
 
 - pré-liste les revendications en attente ;
 - permet d'ajouter d'autres groupes depuis le catalogue ;
-- demande un effectif par groupe ;
+- affiche les agents proposés par chaque revendication ;
+- permet de sélectionner nominativement les agents d'un groupe ajouté manuellement ;
 - affiche l'effectif total ;
 - permet de désigner au plus un groupe principal ;
 - permet d'ajouter une note ;
 - n'actualise la carte qu'après le succès serveur.
 
 Le serveur exige `mission.assign` et `mission.move`, vérifie l'existence et
-l'activité de chaque groupe, puis borne chaque effectif à son nombre réel de
-membres. L'action peut attribuer sans démarrer (`ASSIGNED`) ou attribuer et
+l'activité de chaque groupe et l'appartenance active de chaque agent. L'action
+peut attribuer sans démarrer (`ASSIGNED`) ou attribuer et
 démarrer (`IN_PROGRESS`). Une mission ne peut pas passer « En cours » sans au
 moins une attribution.
 
@@ -71,16 +77,34 @@ Ont accès aux détails confidentiels :
 - un membre de l'un des groupes attribués activement ;
 - un participant explicite à la mission.
 
-Les membres d'une faction concernée peuvent voir le résumé d'attribution prévu
-par l'interface, sans obtenir pour autant le DTO confidentiel. Les candidats
-non retenus restent au niveau public.
+Le partage d'une faction n'accorde aucune visibilité supplémentaire, même sur
+le résumé d'attribution. Les candidats non retenus restent au niveau public.
 
-## Accomplissement et points
+La visibilité du roster est indépendante pour chaque groupe participant :
 
-Au premier passage à `COMPLETED`, chaque groupe participant reçoit ses propres
-lignes de `MissionScore` pour le barème automatique. Le registre reste
-ajustable ensuite par la modération. La présence d'un score d'accomplissement
-existant empêche un double crédit lors d'un nouveau déplacement de statut.
+- la modération voit toujours tous les groupes et tous les agents ;
+- un membre voit toujours le roster de son propre groupe ;
+- les autres ne voient rien si le chef a conservé « Équipe invisible » ;
+- si le chef a décoché cette case, la vue publique contient uniquement le nom
+  du groupe et les `displayName` publics des agents. Niveau, récompenses,
+  faction, identité réelle et contenu confidentiel ne sont pas exposés.
+
+## Accomplissement, points et ryō
+
+Au passage à `COMPLETED`, le tisseur choisit le montant exact de ryō dans la
+fourchette publique du contrat. La transaction :
+
+- partage les points totaux et les ryō à parts égales entre tous les agents
+  engagés, sans perte d'unité lors des arrondis ;
+- enregistre chaque part dans `MissionParticipant.pointsAwarded` et
+  `MissionParticipant.ryoAwarded` ;
+- partage chaque ligne de `MissionScore` entre les groupes proportionnellement
+  au nombre de leurs agents engagés ;
+- garantit que la somme des parts individuelles et collectives reste exactement
+  égale au montant initial.
+
+Le registre reste ajustable par la modération. Un score d'accomplissement
+existant empêche tout double crédit.
 
 ## Migration des anciennes missions
 
@@ -94,5 +118,6 @@ ne perd son groupe historique.
 
 L'audit `mission.assigned` contient les identifiants de groupe, effectifs,
 groupe principal et total. Les notifications sont émises après la transaction
-et ne contiennent que les champs publics de la mission, le nombre de groupes et
-l'effectif total.
+et ne sont envoyées qu'aux agents engagés (plus le chef concerné lors de
+l'acceptation). Elles ne contiennent que les champs publics de la mission, le
+nombre de groupes et l'effectif total.

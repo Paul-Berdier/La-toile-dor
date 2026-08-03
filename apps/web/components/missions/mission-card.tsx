@@ -71,12 +71,22 @@ export function MissionCard({ card, dragging = false }: { card: BoardCard; dragg
           </div>
         )}
         {card.team && (
-          <div className="flex justify-between gap-2">
-            <dt className="whitespace-nowrap text-ink-faint">
-              {card.team.groupsCount > 1 ? "Équipe" : "Attribuée à"}
-            </dt>
-            <dd className="min-w-0 truncate text-copper">{card.team.label}</dd>
-          </div>
+          <>
+            <div className="flex justify-between gap-2">
+              <dt className="whitespace-nowrap text-ink-faint">
+                {card.team.groupsCount > 1 ? "Groupes visibles" : "Attribuée à"}
+              </dt>
+              <dd className="min-w-0 truncate text-copper">{card.team.label}</dd>
+            </div>
+            {card.team.rosters.map((roster) => (
+              <div key={roster.groupName} className="flex justify-between gap-2">
+                <dt className="min-w-0 truncate text-ink-faint">Agents · {roster.groupName}</dt>
+                <dd className="max-w-[60%] truncate text-right text-ink-muted">
+                  {roster.agentNames.length > 0 ? roster.agentNames.join(", ") : "—"}
+                </dd>
+              </div>
+            ))}
+          </>
         )}
       </dl>
     </Link>

@@ -41,10 +41,10 @@ export async function maybeExpireMissions(): Promise<void> {
         }),
       ]);
 
-      // Prévenir tous les groupes assignés et les chefs des factions concernées
+      // Prévenir les membres des groupes assignés. Une faction ne confère
+      // aucun droit et ne reçoit donc aucune notification d'autorité.
       const targets = new Set<string>();
       const groupIds = mission.assignments.map((a) => a.groupId);
-      const factionIds = mission.assignments.map((a) => a.factionId);
       if (groupIds.length > 0) {
         const members = await prisma.groupMember.findMany({
           where: { groupId: { in: groupIds }, user: { status: "ACTIVE" } },
@@ -52,16 +52,6 @@ export async function maybeExpireMissions(): Promise<void> {
         });
         members.forEach((m) => targets.add(m.userId));
       }
-      const leaders = await prisma.factionMember.findMany({
-        where: {
-          isLeader: true,
-          user: { status: "ACTIVE" },
-          ...(factionIds.length > 0 ? { factionId: { in: factionIds } } : {}),
-        },
-        select: { userId: true },
-      });
-      leaders.forEach((l) => targets.add(l.userId));
-
       if (targets.size > 0) {
         await prisma.notificationDelivery.createMany({
           data: [...targets].map((userId) => ({

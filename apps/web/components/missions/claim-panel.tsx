@@ -9,21 +9,23 @@ interface GroupOption {
   id: string;
   name: string;
   memberCount: number;
+  members: { id: string; displayName: string; levelLabel: string | null }[];
 }
 
-/** Panneau « Réclamer la mission » — réservé aux chefs de faction. */
+/** Panneau « Réclamer la mission » — réservé aux chefs de groupe. */
 export function ClaimPanel({
   missionId,
   groups,
-  levelWarning,
+  eligibilityNotice,
 }: {
   missionId: string;
   groups: GroupOption[];
-  levelWarning: string | null;
+  eligibilityNotice: string | null;
 }) {
   const router = useRouter();
   const [groupId, setGroupId] = useState(groups[0]?.id ?? "");
-  const [headcount, setHeadcount] = useState(groups[0]?.memberCount ?? 1);
+  const [participantIds, setParticipantIds] = useState<string[]>([]);
+  const [hiddenFromOthers, setHiddenFromOthers] = useState(true);
   const [message, setMessage] = useState("");
   const [result, setResult] = useState<{ error?: string; warnings?: string[]; ok?: boolean } | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -37,14 +39,15 @@ export function ClaimPanel({
   }
 
   const selectedGroup = groups.find((g) => g.id === groupId);
-  const maxHeadcount = Math.max(1, selectedGroup?.memberCount ?? 1);
+  const selectedMembers = selectedGroup?.members ?? [];
 
   const submit = () => {
     startTransition(async () => {
       const res = await claimMissionAction({
         missionId,
         groupId,
-        proposedHeadcount: headcount,
+        participantIds,
+        publicRoster: !hiddenFromOthers,
         message: message || undefined,
       });
       setResult(res);
@@ -54,9 +57,9 @@ export function ClaimPanel({
 
   return (
     <div className="space-y-3">
-      {levelWarning && (
+      {eligibilityNotice && (
         <p className="border border-warning/50 bg-warning/10 px-3 py-2 text-xs text-warning">
-          {levelWarning}
+          {eligibilityNotice}
         </p>
       )}
 
@@ -69,8 +72,8 @@ export function ClaimPanel({
           value={groupId}
           onChange={(e) => {
             setGroupId(e.target.value);
-            const group = groups.find((g) => g.id === e.target.value);
-            if (group) setHeadcount(group.memberCount || 1);
+            setParticipantIds([]);
+            setHiddenFromOthers(true);
           }}
           className="w-full border border-border-default bg-elevated px-3 py-2 text-sm text-ink focus:border-gold"
         >
@@ -82,20 +85,61 @@ export function ClaimPanel({
         </select>
       </div>
 
-      <div>
-        <label htmlFor="claim-headcount" className="mb-1 block text-xs text-ink-faint uppercase tracking-wider">
-          Effectif proposé (max {maxHeadcount})
-        </label>
+      <fieldset>
+        <legend className="mb-1 block text-xs text-ink-faint uppercase tracking-wider">
+          Agents engagés *
+        </legend>
+        <div className="max-h-56 space-y-1 overflow-y-auto border border-border-default bg-elevated p-2">
+          {selectedMembers.map((member) => {
+            const selected = participantIds.includes(member.id);
+            return (
+              <label
+                key={member.id}
+                className="flex cursor-pointer items-center gap-2 px-2 py-1.5 text-sm text-ink-muted hover:bg-hover-bg"
+              >
+                <input
+                  type="checkbox"
+                  checked={selected}
+                  onChange={() =>
+                    setParticipantIds((current) =>
+                      selected
+                        ? current.filter((id) => id !== member.id)
+                        : [...current, member.id],
+                    )
+                  }
+                  className="accent-[var(--toile-gold)]"
+                />
+                <span className="min-w-0 flex-1 truncate">{member.displayName}</span>
+                <span className={member.levelLabel ? "text-xs text-ink-faint" : "text-xs text-warning"}>
+                  {member.levelLabel ?? "niveau manquant"}
+                </span>
+              </label>
+            );
+          })}
+          {selectedMembers.length === 0 && (
+            <p className="px-2 py-3 text-xs text-ink-faint italic">Aucun agent actif dans ce groupe.</p>
+          )}
+        </div>
+        <p className="mt-1 font-mono-toile text-xs text-gold">
+          Effectif proposé : {participantIds.length}
+        </p>
+      </fieldset>
+
+      <label className="flex cursor-pointer items-start gap-2 border border-border-default bg-elevated px-3 py-2.5">
         <input
-          id="claim-headcount"
-          type="number"
-          min={1}
-          max={maxHeadcount}
-          value={headcount}
-          onChange={(e) => setHeadcount(Number(e.target.value) || 1)}
-          className="w-24 border border-border-default bg-elevated px-3 py-2 text-sm text-ink focus:border-gold"
+          type="checkbox"
+          checked={hiddenFromOthers}
+          onChange={(event) => setHiddenFromOthers(event.target.checked)}
+          className="mt-0.5 accent-[var(--toile-gold)]"
         />
-      </div>
+        <span>
+          <span className="block text-sm text-ink">Équipe invisible pour les autres joueurs</span>
+          <span className="mt-0.5 block text-xs text-ink-faint">
+            La modération voit toujours l’équipe. Si cette case est décochée, les autres
+            verront uniquement le nom du groupe et les pseudonymes/titres publics des agents.
+          </span>
+        </span>
+      </label>
 
       <div>
         <label htmlFor="claim-message" className="mb-1 block text-xs text-ink-faint uppercase tracking-wider">
@@ -131,7 +175,13 @@ export function ClaimPanel({
       )}
 
       {!result?.ok && (
-        <Button variant="gold" size="lg" onClick={submit} disabled={isPending} className="w-full">
+        <Button
+          variant="gold"
+          size="lg"
+          onClick={submit}
+          disabled={isPending || participantIds.length === 0}
+          className="w-full"
+        >
           {isPending ? "Le fil se tend…" : "Réclamer la mission"}
         </Button>
       )}

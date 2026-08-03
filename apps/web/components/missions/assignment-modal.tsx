@@ -9,14 +9,15 @@ import { Button } from "@/components/ui/button";
 export interface GroupCatalogEntry {
   id: string;
   name: string;
-  factionName: string;
+  factionName: string | null;
   memberCount: number;
+  members: { id: string; displayName: string; levelLabel: string | null }[];
 }
 
 interface SelectedGroup {
   groupId: string;
   label: string;
-  headcount: number;
+  participantIds: string[];
   fromClaim: boolean;
 }
 
@@ -54,8 +55,8 @@ export function AssignmentModal({
     assignments.length > 0
       ? assignments.map((a) => ({
           groupId: a.groupId,
-          label: `${a.factionName} — ${a.groupName}`,
-          headcount: a.headcount,
+          label: `${a.groupName}${a.factionName ? ` · ${a.factionName}` : ""}`,
+          participantIds: a.participantIds,
           fromClaim: false,
         }))
       : [],
@@ -78,8 +79,8 @@ export function AssignmentModal({
             ...prev,
             {
               groupId: claim.groupId,
-              label: `${claim.factionName} — ${claim.groupName}`,
-              headcount: claim.headcount,
+              label: `${claim.groupName}${claim.factionName ? ` · ${claim.factionName}` : ""}`,
+              participantIds: claim.participantIds,
               fromClaim: true,
             },
           ],
@@ -93,27 +94,36 @@ export function AssignmentModal({
       ...prev,
       {
         groupId: entry.id,
-        label: `${entry.factionName} — ${entry.name}`,
-        headcount: Math.max(1, Math.min(entry.memberCount || 1, 2)),
+        label: `${entry.name}${entry.factionName ? ` · ${entry.factionName}` : ""}`,
+        participantIds: [],
         fromClaim: false,
       },
     ]);
     setAddingId("");
   };
 
-  const setHeadcount = (groupId: string, headcount: number) =>
+  const toggleParticipant = (groupId: string, userId: string) =>
     setSelected((prev) =>
-      prev.map((s) => (s.groupId === groupId ? { ...s, headcount } : s)),
+      prev.map((entry) =>
+        entry.groupId === groupId
+          ? {
+              ...entry,
+              participantIds: entry.participantIds.includes(userId)
+                ? entry.participantIds.filter((id) => id !== userId)
+                : [...entry.participantIds, userId],
+            }
+          : entry,
+      ),
     );
 
   const total = useMemo(
-    () => selected.reduce((sum, s) => sum + (s.headcount > 0 ? s.headcount : 0), 0),
+    () => selected.reduce((sum, entry) => sum + entry.participantIds.length, 0),
     [selected],
   );
-  const invalidHeadcount = selected.some((s) => !Number.isInteger(s.headcount) || s.headcount < 1);
+  const missingParticipants = selected.some((entry) => entry.participantIds.length === 0);
 
   const confirm = () => {
-    if (isPending || selected.length === 0 || invalidHeadcount) return;
+    if (isPending || selected.length === 0 || missingParticipants) return;
     startTransition(async () => {
       const res = await assignMissionAction({
         missionId,
@@ -121,7 +131,7 @@ export function AssignmentModal({
         reason: reason || undefined,
         assignments: selected.map((s) => ({
           groupId: s.groupId,
-          headcount: s.headcount,
+          participantIds: s.participantIds,
           isLead: s.groupId === leadId,
         })),
       });
@@ -171,7 +181,7 @@ export function AssignmentModal({
                     className="accent-[var(--toile-gold)]"
                   />
                   <span className="min-w-0 flex-1 truncate">
-                    {claim.factionName} — {claim.groupName}
+                    {claim.groupName}{claim.factionName ? ` · ${claim.factionName}` : ""}
                   </span>
                   <span className="font-mono-toile text-xs text-ink-faint">
                     propose {claim.headcount}
@@ -198,7 +208,7 @@ export function AssignmentModal({
               .filter((entry) => !isSelected(entry.id))
               .map((entry) => (
                 <option key={entry.id} value={entry.id}>
-                  {entry.factionName} — {entry.name} ({entry.memberCount} membres)
+                  {entry.name}{entry.factionName ? ` · ${entry.factionName}` : ""} ({entry.memberCount} membres)
                 </option>
               ))}
           </select>
@@ -209,44 +219,57 @@ export function AssignmentModal({
 
         {/* Effectifs par groupe + groupe principal */}
         {selected.length > 0 && (
-          <div className="mt-4 space-y-2">
+          <div className="mt-4 space-y-3">
             <p className="text-xs uppercase tracking-wider text-ink-faint">
-              Effectif par groupe · groupe principal
+              Agents par groupe · groupe principal
             </p>
-            {selected.map((entry) => (
-              <div
-                key={entry.groupId}
-                className="flex flex-wrap items-center gap-2 border border-border-default bg-elevated px-3 py-2"
-              >
-                <span className="min-w-0 flex-1 truncate text-sm text-ink">{entry.label}</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={entry.headcount}
-                  onChange={(e) => setHeadcount(entry.groupId, Number(e.target.value))}
-                  aria-label={`Effectif de ${entry.label}`}
-                  className="w-16 border border-border-default bg-raised px-2 py-1 text-sm text-ink"
-                />
-                <label className="flex items-center gap-1 text-[0.7rem] text-ink-muted">
-                  <input
-                    type="radio"
-                    name="lead-group"
-                    checked={leadId === entry.groupId}
-                    onChange={() => setLeadId(entry.groupId)}
-                    className="accent-[var(--toile-gold)]"
-                  />
-                  principal
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setSelected((prev) => prev.filter((s) => s.groupId !== entry.groupId))}
-                  aria-label={`Retirer ${entry.label}`}
-                  className="text-ink-faint hover:text-blood-bright"
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
+            {selected.map((entry) => {
+              const agents = catalog.find((group) => group.id === entry.groupId)?.members ?? [];
+              return (
+                <fieldset key={entry.groupId} className="border border-border-default bg-elevated p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <legend className="min-w-0 flex-1 truncate text-sm text-ink">{entry.label}</legend>
+                    <span className="font-mono-toile text-xs text-gold">
+                      {entry.participantIds.length} agent{entry.participantIds.length > 1 ? "s" : ""}
+                    </span>
+                    <label className="flex items-center gap-1 text-[0.7rem] text-ink-muted">
+                      <input
+                        type="radio"
+                        name="lead-group"
+                        checked={leadId === entry.groupId}
+                        onChange={() => setLeadId(entry.groupId)}
+                        className="accent-[var(--toile-gold)]"
+                      />
+                      principal
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setSelected((prev) => prev.filter((s) => s.groupId !== entry.groupId))}
+                      aria-label={`Retirer ${entry.label}`}
+                      className="text-ink-faint hover:text-blood-bright"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <div className="mt-2 max-h-40 space-y-1 overflow-y-auto border-t border-border-default pt-2">
+                    {agents.map((agent) => (
+                      <label key={agent.id} className="flex cursor-pointer items-center gap-2 text-xs text-ink-muted">
+                        <input
+                          type="checkbox"
+                          checked={entry.participantIds.includes(agent.id)}
+                          onChange={() => toggleParticipant(entry.groupId, agent.id)}
+                          className="accent-[var(--toile-gold)]"
+                        />
+                        <span className="min-w-0 flex-1 truncate">{agent.displayName}</span>
+                        <span className={agent.levelLabel ? "text-ink-faint" : "text-warning"}>
+                          {agent.levelLabel ?? "niveau manquant"}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              );
+            })}
           </div>
         )}
 
@@ -259,7 +282,7 @@ export function AssignmentModal({
               <ul className="space-y-0.5 text-xs text-ink-muted">
                 {selected.map((entry) => (
                   <li key={entry.groupId}>
-                    · {entry.label} : {entry.headcount} membre{entry.headcount > 1 ? "s" : ""}
+                    · {entry.label} : {entry.participantIds.length} agent{entry.participantIds.length > 1 ? "s" : ""}
                     {leadId === entry.groupId ? " — principal" : ""}
                   </li>
                 ))}
@@ -295,7 +318,7 @@ export function AssignmentModal({
           <Button
             variant="gold"
             onClick={confirm}
-            disabled={isPending || selected.length === 0 || invalidHeadcount}
+            disabled={isPending || selected.length === 0 || missingParticipants}
           >
             {isPending
               ? "Tissage…"

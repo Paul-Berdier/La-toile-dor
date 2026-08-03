@@ -155,23 +155,28 @@ export async function handleToileCommand(interaction: ChatInputCommandInteractio
 
   if (sub === "classement") {
     const scores = await prisma.missionScore.groupBy({
-      by: ["factionId"],
+      by: ["groupId"],
+      where: { groupId: { not: null } },
       _sum: { points: true },
     });
-    const factions = await prisma.faction.findMany({
-      where: { id: { in: scores.map((s) => s.factionId) } },
-      select: { id: true, name: true },
+    const groupIds = scores.flatMap((score) => score.groupId ? [score.groupId] : []);
+    const groups = await prisma.group.findMany({
+      where: { id: { in: groupIds } },
+      select: { id: true, name: true, faction: { select: { name: true } } },
     });
     const rows = scores
       .map((score) => ({
-        name: factions.find((f) => f.id === score.factionId)?.name ?? "?",
+        name: (() => {
+          const group = groups.find((candidate) => candidate.id === score.groupId);
+          return group ? `${group.name}${group.faction ? ` · ${group.faction.name}` : ""}` : "?";
+        })(),
         points: score._sum.points ?? 0,
       }))
       .sort((a, b) => b.points - a.points)
       .slice(0, 8);
     await interaction.reply({
       content:
-        "🕸️ **La constellation :**\n" +
+        "🕸️ **Classement des groupes :**\n" +
         rows.map((row, i) => `${i + 1}. ${row.name} — **${row.points} pts**`).join("\n") +
         `\n→ ${appUrl}/classement`,
       flags,
