@@ -26,8 +26,12 @@ npm run db:seed   # affiche UNE FOIS le lien d'invitation du super admin
 
 # 5. Lancer
 npm run dev       # web sur http://localhost:3000
-npm run dev:bot   # bot Discord (exige DISCORD_BOT_TOKEN)
+# (optionnel — non utilisé dans la configuration retenue :)
+# npm run dev:bot # bot Discord, exige DISCORD_BOT_TOKEN + bot sur le serveur
 ```
+
+Notifications : sans bot, les joueurs reçoivent leurs « Échos » directement
+dans l&rsquo;application (page 響, pastille de non-lus).
 
 En développement, `DEV_LOGIN="1"` permet d'incarner un utilisateur du seed :
 `/api/dev/login?as=demo-admin|demo-mod|demo-chief-0|demo-member-0-0-0`

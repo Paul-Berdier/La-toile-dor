@@ -10,7 +10,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const current = await requireUser();
   const streamer = await isStreamerMode();
 
-  const [discord, factionMembership, roles] = await Promise.all([
+  const [discord, factionMembership, roles, unreadEchoes] = await Promise.all([
     prisma.discordAccount.findUnique({ where: { userId: current.session.userId } }),
     prisma.factionMember.findFirst({
       where: { userId: current.session.userId },
@@ -20,6 +20,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       where: { userId: current.session.userId },
       include: { role: true },
     }),
+    prisma.notificationDelivery.count({
+      where: { userId: current.session.userId, status: "PENDING" },
+    }),
   ]);
 
   const items: NavItem[] = [{ href: "/missions", label: "Missions", glyph: "契" }];
@@ -27,6 +30,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     items.push({ href: "/revendications", label: "Revendications", glyph: "願" });
   }
   items.push({ href: "/classement", label: "Classement", glyph: "位" });
+  items.push({ href: "/notifications", label: "Échos", glyph: "響", badge: unreadEchoes });
   if (
     current.permissions.has(PERMISSIONS.INVITE_CREATE) ||
     current.permissions.has(PERMISSIONS.INVITE_MANAGE)

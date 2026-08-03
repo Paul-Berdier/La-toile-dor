@@ -74,8 +74,16 @@ const RANKS: {
   { rank: "SS", symbol: "禁", colorToken: "rank-ss", danger: 6, min: 5_000_000, max: 20_000_000, points: 700, level: "kage", size: 5 },
 ];
 
+// SEED_DEMO=0 (production) : uniquement les référentiels (permissions, rôles,
+// niveaux, rangs, réglages) + les invitations initiales — AUCUNE donnée fictive.
+const seedDemo = process.env.SEED_DEMO !== "0";
+
 async function main() {
-  console.log("— Seed La Toile d'Or (données 100% fictives) —");
+  console.log(
+    seedDemo
+      ? "— Seed La Toile d'Or (référentiels + démonstration fictive) —"
+      : "— Seed La Toile d'Or (référentiels seuls, mode production) —",
+  );
 
   // Permissions et rôles
   for (const [key, description] of PERMISSION_DEFS) {
@@ -162,6 +170,8 @@ async function main() {
     },
   });
 
+  // ── Données de démonstration (ignorées avec SEED_DEMO=0) ──
+  if (seedDemo) {
   // ── Factions et groupes fictifs ──
   const factionDefs = [
     { slug: "kumogakure", name: "[FICTIF] Kumogakure", colorToken: "info" },

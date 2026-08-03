@@ -15,6 +15,7 @@ import {
 import type { CurrentUser } from "@/lib/session";
 import { maskValue } from "@/lib/streamer";
 import { getRpTimeConfig } from "@/server/rp-config";
+import { maybeExpireMissions } from "@/server/expiration";
 
 /** Carte Kanban : la vue sérialisée + méta d'affichage non confidentielles. */
 export interface BoardCard {
@@ -123,6 +124,9 @@ export async function getBoard(
   filters: MissionFilters,
   streamer: boolean,
 ): Promise<BoardData> {
+  // Sans bot Discord, l'expiration automatique est balayée ici (throttlée à 1/min)
+  await maybeExpireMissions();
+
   const [ctx, rpConfig] = await Promise.all([getAccessContext(current), getRpTimeConfig()]);
   const now = new Date();
 

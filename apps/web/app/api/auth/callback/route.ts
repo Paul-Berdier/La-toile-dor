@@ -67,6 +67,15 @@ export async function GET(req: NextRequest) {
     return redirectTo(req, "/connexion?erreur=acces");
   }
 
+  // Sans bot sur le serveur, le contrôle des rôles critiques se fait ICI,
+  // à chaque connexion : un joueur qui les a tous perdus est suspendu.
+  const requiredRoles = (process.env.DISCORD_REQUIRED_ROLE_IDS ?? "")
+    .split(",")
+    .map((r) => r.trim())
+    .filter(Boolean);
+  const hasRequiredRole =
+    requiredRoles.length === 0 || requiredRoles.some((r) => guildRoles!.includes(r));
+
   const existing = await prisma.discordAccount.findUnique({
     where: { discordId: discordUser.id },
     include: { user: true },
@@ -86,6 +95,30 @@ export async function GET(req: NextRequest) {
         syncedAt: new Date(),
       },
     });
+    // Rôle critique perdu → suspension immédiate + sessions coupées
+    if (!hasRequiredRole && existing.user.status === "ACTIVE") {
+      await prisma.user.update({
+        where: { id: existing.userId },
+        data: {
+          status: "SUSPENDED",
+          revokedReason: "Rôle Discord critique perdu (contrôle à la connexion)",
+        },
+      });
+      await prisma.session.updateMany({
+        where: { userId: existing.userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      await audit({
+        actorId: existing.userId,
+        action: "access.suspended",
+        resourceType: "user",
+        resourceId: existing.userId,
+        reason: "Rôles Discord critiques perdus",
+        ...meta,
+      });
+      return redirectTo(req, "/connexion?erreur=acces");
+    }
+
     const status = existing.user.status;
     if (status === "REVOKED" || status === "SUSPENDED") {
       await audit({
@@ -99,6 +132,17 @@ export async function GET(req: NextRequest) {
     if (status === "PENDING") return redirectTo(req, "/attente");
     userId = existing.userId;
   } else {
+    // Nouveau venu sans le rôle critique : refus net
+    if (!hasRequiredRole) {
+      await audit({
+        action: "auth.login_failed",
+        reason: "missing_required_role",
+        newValues: { discordId: discordUser.id },
+        ...meta,
+      });
+      return redirectTo(req, "/connexion?erreur=acces");
+    }
+
     // Nouveau compte : exige une invitation valide (aucune inscription publique)
     const inviteToken = req.cookies.get("toile_invite")?.value;
     if (!inviteToken) {

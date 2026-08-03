@@ -1,7 +1,11 @@
 # La Toile d'Or — Déploiement Railway
 
-Trois éléments : **PostgreSQL** (plugin Railway), **service web** (Next.js),
-**service bot** (Discord). Les deux services partagent la même base.
+Deux éléments suffisent dans la configuration retenue (« sans bot ») :
+**PostgreSQL** (plugin Railway) et le **service web** (Next.js).
+Le **service bot** (§4, §9-10) est OPTIONNEL : ne le créez que si vous
+décidez un jour d'envoyer des DM Discord — il exige alors que le bot
+rejoigne le serveur RP. Sans lui : notifications in-app (« Échos »),
+expiration automatique côté web, contrôle des rôles à la connexion.
 
 ## 1. Création du projet Railway
 

@@ -65,16 +65,28 @@ IN_PROGRESS) · Accomplies · Échouées (FAILED, EXPIRED) · Annulées.
 Chaque transition écrit `MissionStatusHistory` + `AuditLog` et déclenche les
 notifications ; les transitions critiques exigent confirmation + justification.
 
-## Flux bot
+## Notifications et automatisations — mode « sans bot » (configuration retenue)
 
-- **Dispatcher** (15 s) : lit `NotificationDelivery` PENDING échues, regroupe
-  par utilisateur (fenêtre 60 s, digest), respecte préférences/sourdine/heures
-  silencieuses, DM, retries ×5 backoff 1 min→4 h.
-- **Sync rôles** (10 min) : membres du serveur Discord ; départ ou perte des
-  rôles critiques (`DISCORD_REQUIRED_ROLE_IDS`) → SUSPENDED + sessions
-  révoquées + audit.
-- **Expirations** (1 min) : missions au-delà de `expiresAt` (délai non
-  suspendu) → EXPIRED + historique + notifications ; alerte « délai proche »
-  à 24 h.
-- **Slash commands** `/toile missions|mission|classement|notifications|statut`
-  — réponses éphémères, données publiques uniquement.
+Le serveur a choisi de ne PAS placer le bot sur Discord. Tout est assuré par
+le service web :
+
+- **Échos in-app** (`/notifications`) : la file `NotificationDelivery`
+  alimente une page d'échos par utilisateur, avec pastille de non-lus dans la
+  navigation ; l'affichage marque les échos comme lus.
+- **Expirations** : balayage paresseux throttlé (1/min) au chargement du
+  tableau (`apps/web/server/expiration.ts`) — EXPIRED + historique + échos ;
+  alerte « délai proche » à 24 h.
+- **Contrôle des rôles Discord À LA CONNEXION** : perte de tous les rôles
+  critiques (`DISCORD_REQUIRED_ROLE_IDS`) → SUSPENDED + sessions révoquées +
+  audit. (Le jeton OAuth du joueur suffit ; aucun bot requis.)
+  Limite assumée : le contrôle a lieu à la connexion, pas en continu — une
+  session déjà ouverte reste valide jusqu'à 7 jours ou révocation manuelle.
+
+## Flux bot (OPTIONNEL — non déployé dans la configuration retenue)
+
+`apps/bot` reste dans le dépôt si un jour les DM Discord sont souhaités —
+Discord n'autorise les DM de bot qu'avec un serveur en commun :
+
+- **Dispatcher** (15 s) : DM depuis `NotificationDelivery`, digest, retries.
+- **Sync rôles** (10 min) : suspension continue au lieu de « à la connexion ».
+- **Slash commands** `/toile …` — réponses éphémères, données publiques.

@@ -8,6 +8,8 @@ export interface NavItem {
   href: string;
   label: string;
   glyph: string;
+  /** Compteur (ex. échos non lus) affiché en pastille or */
+  badge?: number;
 }
 
 export function Sidebar({
@@ -58,6 +60,14 @@ export function Sidebar({
                   {item.glyph}
                 </span>
                 {item.label}
+                {item.badge != null && item.badge > 0 && (
+                  <span
+                    className="ml-auto border border-gold bg-gold-faint px-1.5 font-mono-toile text-[0.6rem] text-gold"
+                    aria-label={`${item.badge} non lu${item.badge > 1 ? "s" : ""}`}
+                  >
+                    {item.badge > 99 ? "99+" : item.badge}
+                  </span>
+                )}
               </Link>
             );
           })}
@@ -95,8 +105,11 @@ export function Sidebar({
                 active ? "text-gold" : "text-ink-faint"
               }`}
             >
-              <span aria-hidden className="font-display text-base">
+              <span aria-hidden className="relative font-display text-base">
                 {item.glyph}
+                {item.badge != null && item.badge > 0 && (
+                  <span className="absolute -top-1 -right-2 h-1.5 w-1.5 rounded-full bg-gold" />
+                )}
               </span>
               {item.label}
             </Link>

@@ -96,6 +96,18 @@ test("le groupe attribué voit désormais le dossier complet", async ({ context,
   await expect(page.getByText("Briefing confidentiel e2e.")).toBeVisible();
 });
 
+test("le chef reçoit l'écho in-app de l'acceptation (mode sans bot)", async ({
+  context,
+  page,
+}) => {
+  await loginAs(context, "demo-chief-2");
+  await page.goto("/notifications");
+  await expect(
+    page.getByText("Votre revendication a été acceptée", { exact: false }).first(),
+  ).toBeVisible();
+  await expect(page.getByText(TITLE).first()).toBeVisible();
+});
+
 test("chaque étape est consignée au journal d'audit", async () => {
   const mission = await prisma.mission.findFirst({ where: { publicTitle: TITLE } });
   const actions = (
