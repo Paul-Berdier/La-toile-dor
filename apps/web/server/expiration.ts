@@ -21,6 +21,7 @@ export async function maybeExpireMissions(): Promise<void> {
         timerSuspendedAt: null,
         status: { in: ["AVAILABLE", "CLAIM_PENDING", "ASSIGNED", "IN_PROGRESS"] },
       },
+      include: { assignments: { where: { active: true }, select: { groupId: true, factionId: true } } },
     });
 
     for (const mission of expired) {
@@ -40,11 +41,13 @@ export async function maybeExpireMissions(): Promise<void> {
         }),
       ]);
 
-      // Prévenir le groupe attribué et les chefs de la faction concernée
+      // Prévenir tous les groupes assignés et les chefs des factions concernées
       const targets = new Set<string>();
-      if (mission.assignedGroupId) {
+      const groupIds = mission.assignments.map((a) => a.groupId);
+      const factionIds = mission.assignments.map((a) => a.factionId);
+      if (groupIds.length > 0) {
         const members = await prisma.groupMember.findMany({
-          where: { groupId: mission.assignedGroupId, user: { status: "ACTIVE" } },
+          where: { groupId: { in: groupIds }, user: { status: "ACTIVE" } },
           select: { userId: true },
         });
         members.forEach((m) => targets.add(m.userId));
@@ -53,7 +56,7 @@ export async function maybeExpireMissions(): Promise<void> {
         where: {
           isLeader: true,
           user: { status: "ACTIVE" },
-          ...(mission.assignedFactionId ? { factionId: mission.assignedFactionId } : {}),
+          ...(factionIds.length > 0 ? { factionId: { in: factionIds } } : {}),
         },
         select: { userId: true },
       });
@@ -78,8 +81,9 @@ export async function maybeExpireMissions(): Promise<void> {
         expiresAt: { gt: new Date(now), lte: soonThreshold },
         timerSuspendedAt: null,
         status: { in: ["ASSIGNED", "IN_PROGRESS"] },
-        assignedGroupId: { not: null },
+        assignments: { some: { active: true } },
       },
+      include: { assignments: { where: { active: true }, select: { groupId: true } } },
     });
     for (const mission of closing) {
       const alreadyWarned = await prisma.notificationDelivery.findFirst({
@@ -88,7 +92,10 @@ export async function maybeExpireMissions(): Promise<void> {
       });
       if (alreadyWarned) continue;
       const members = await prisma.groupMember.findMany({
-        where: { groupId: mission.assignedGroupId!, user: { status: "ACTIVE" } },
+        where: {
+          groupId: { in: mission.assignments.map((a) => a.groupId) },
+          user: { status: "ACTIVE" },
+        },
         select: { userId: true },
       });
       if (members.length > 0) {

@@ -13,6 +13,10 @@ export const missionCategorySchema = z.enum([
   "SABOTAGE",
   "MERCENARIAT",
   "SPECIALE",
+  "INFILTRATION",
+  "TRAQUE",
+  "CONTRE_ESPIONNAGE",
+  "GUERRE",
 ]);
 
 export const missionRankSchema = z.enum(["D", "C", "B", "A", "S", "SS"]);
@@ -102,6 +106,7 @@ export type MissionCreateInput = z.infer<typeof missionCreateSchema>;
 export const missionClaimSchema = z.object({
   missionId: z.string().cuid(),
   groupId: z.string().cuid(),
+  proposedHeadcount: z.number().int().min(1, "L'effectif minimal est 1.").max(200),
   message: z.string().max(2000).optional(),
 });
 
@@ -115,6 +120,9 @@ export const missionMoveSchema = z.object({
   missionId: z.string().cuid(),
   toStatus: missionStatusSchema,
   reason: z.string().max(1000).optional(),
+  // Retour vers « À prendre » d'une mission attribuée : true = retirer les
+  // attributions et rouvrir, false = les conserver. Absent = demander le choix.
+  releaseAssignments: z.boolean().optional(),
 });
 
 export const scoreAdjustSchema = z.object({
@@ -141,6 +149,11 @@ export const invitationCreateSchema = z.object({
   roleSlug: z.enum(["super_admin", "moderator", "faction_leader", "faction_member"]),
   factionId: z.string().cuid().optional(),
   groupId: z.string().cuid().optional(),
+  // Parcours de groupe d'un chef invité :
+  // EXISTING_GROUP → rejoint groupId ; CREATE_NEW_GROUP → fondera son groupe
+  groupOnboardingMode: z
+    .enum(["NONE", "EXISTING_GROUP", "CREATE_NEW_GROUP"])
+    .default("NONE"),
   expiresInHours: z.number().int().min(1).max(24 * 30).default(72),
   requireApproval: z.boolean().default(true),
   restrictedDiscordId: z
@@ -149,6 +162,75 @@ export const invitationCreateSchema = z.object({
     .optional(),
   note: z.string().max(500).optional(),
 });
+
+// ── Onboarding d'identité ──
+
+// Lettres (accents inclus), espaces, apostrophes (droite/typographique), traits d'union
+const NAME_PATTERN = /^[\p{L}][\p{L}\s'’-]*$/u;
+
+export const onboardingIdentitySchema = z.object({
+  firstName: z
+    .string()
+    .trim()
+    .min(1, "Le prénom est obligatoire.")
+    .max(60)
+    .regex(NAME_PATTERN, "Le prénom contient des caractères non autorisés."),
+  lastName: z
+    .string()
+    .trim()
+    .max(60)
+    .regex(NAME_PATTERN, "Le nom contient des caractères non autorisés.")
+    .optional()
+    .or(z.literal("")),
+  displayName: z
+    .string()
+    .trim()
+    .min(2, "Le pseudonyme doit compter au moins 2 caractères.")
+    .max(60)
+    .refine((v) => v.replace(/\s+/g, "").length > 0, "Le pseudonyme ne peut pas être vide."),
+  privacyAcknowledged: z
+    .boolean()
+    .refine((v) => v === true, "Vous devez confirmer avoir compris la confidentialité."),
+});
+
+export type OnboardingIdentityInput = z.infer<typeof onboardingIdentitySchema>;
+
+// ── Groupes ──
+
+export const groupUpsertSchema = z.object({
+  name: z.string().trim().min(2).max(80),
+  primaryCountry: z.string().trim().max(80).optional().or(z.literal("")),
+  primaryVillage: z.string().trim().max(80).optional().or(z.literal("")),
+  specialties: z.array(missionCategorySchema).max(14).default([]),
+});
+
+export type GroupUpsertInput = z.infer<typeof groupUpsertSchema>;
+
+// ── Attribution multi-groupes ──
+
+export const missionAssignSchema = z
+  .object({
+    missionId: z.string().cuid(),
+    start: z.boolean().default(true), // passer la mission « en cours »
+    reason: z.string().max(1000).optional(),
+    assignments: z
+      .array(
+        z.object({
+          groupId: z.string().min(1),
+          headcount: z.number().int().min(1, "L'effectif minimal est 1.").max(200),
+          isLead: z.boolean().default(false),
+        }),
+      )
+      .min(1, "Sélectionnez au moins un groupe."),
+  })
+  .refine((d) => new Set(d.assignments.map((a) => a.groupId)).size === d.assignments.length, {
+    message: "Un même groupe ne peut être sélectionné qu'une fois.",
+  })
+  .refine((d) => d.assignments.filter((a) => a.isLead).length <= 1, {
+    message: "Un seul groupe principal est autorisé.",
+  });
+
+export type MissionAssignInput = z.infer<typeof missionAssignSchema>;
 
 export const missionFiltersSchema = z.object({
   q: z.string().max(200).optional(),

@@ -17,20 +17,47 @@ import { maskValue } from "@/lib/streamer";
 import { getRpTimeConfig } from "@/server/rp-config";
 import { maybeExpireMissions } from "@/server/expiration";
 
+/** Équipe assignée, visible selon les mêmes règles que l'attribution. */
+export interface TeamSummary {
+  groupsCount: number;
+  totalHeadcount: number;
+  label: string; // « Faction — Groupe » (1 groupe) ou « 2 groupes · 7 participants »
+}
+
+export interface CardClaimInfo {
+  groupId: string;
+  groupName: string;
+  factionName: string;
+  headcount: number;
+}
+
+export interface CardAssignmentInfo {
+  groupId: string;
+  groupName: string;
+  factionName: string;
+  headcount: number;
+  isLead: boolean;
+}
+
 /** Carte Kanban : la vue sérialisée + méta d'affichage non confidentielles. */
 export interface BoardCard {
   view: MissionView;
   column: KanbanColumnKey;
-  assignedLabel: string | null; // faction/groupe si l'utilisateur peut le voir
+  team: TeamSummary | null; // null si non autorisé
   targetLevelLabel: string | null;
   pendingNotifications: number;
   canOpen: boolean;
+  /** Modération uniquement : alimentent la modale d'attribution */
+  pendingClaims?: CardClaimInfo[];
+  activeAssignments?: CardAssignmentInfo[];
 }
 
 export interface BoardData {
   columns: { key: KanbanColumnKey; label: string; cards: BoardCard[] }[];
   isModerator: boolean;
   myGroups: { id: string; name: string; factionId: string; memberCount: number }[];
+  /** Modération uniquement : catalogue pour l'ajout manuel d'un groupe */
+  groupsCatalog: { id: string; name: string; factionName: string; memberCount: number }[];
 }
 
 function columnOf(status: string): KanbanColumnKey | null {
@@ -75,14 +102,40 @@ export async function getAccessContext(current: CurrentUser) {
 
 export type AccessContext = Awaited<ReturnType<typeof getAccessContext>>;
 
+/**
+ * Niveau de vue sur une mission. L'accès confidentiel passe par les
+ * ATTRIBUTIONS ACTIVES (multi-groupes) — un groupe simplement candidat
+ * n'obtient rien ; l'ancienne colonne assignedGroupId sert de filet
+ * de compatibilité.
+ */
 export function viewLevelFor(
   ctx: AccessContext,
-  mission: { id: string; assignedGroupId: string | null },
+  mission: {
+    id: string;
+    assignedGroupId: string | null;
+    assignments?: { groupId: string; active: boolean }[];
+  },
 ): MissionViewLevel {
   if (ctx.isModerator) return "moderator";
+  const assignedGroupIds = (mission.assignments ?? [])
+    .filter((a) => a.active)
+    .map((a) => a.groupId);
+  if (assignedGroupIds.some((groupId) => ctx.groupIds.has(groupId))) return "assigned";
   if (mission.assignedGroupId && ctx.groupIds.has(mission.assignedGroupId)) return "assigned";
   if (ctx.participantMissionIds.has(mission.id)) return "assigned";
   return "public";
+}
+
+/** Vrai si l'utilisateur peut voir les détails confidentiels de la mission. */
+export function canViewMissionConfidentialDetails(
+  ctx: AccessContext,
+  mission: {
+    id: string;
+    assignedGroupId: string | null;
+    assignments?: { groupId: string; active: boolean }[];
+  },
+): boolean {
+  return viewLevelFor(ctx, mission) !== "public";
 }
 
 const missionInclude = {
@@ -90,6 +143,17 @@ const missionInclude = {
   assignedFaction: { select: { name: true } },
   assignedGroup: { select: { name: true, factionId: true } },
   targetLevel: { select: { label: true, slug: true } },
+  assignments: {
+    where: { active: true },
+    include: {
+      group: { select: { name: true, factionId: true } },
+      faction: { select: { name: true } },
+    },
+  },
+  claims: {
+    where: { status: { in: ["PENDING", "INFO_REQUESTED"] } },
+    include: { group: { select: { name: true, factionId: true, faction: { select: { name: true } } } } },
+  },
   _count: { select: { claims: { where: { status: "PENDING" } } } },
 } satisfies Prisma.MissionInclude;
 
@@ -167,28 +231,67 @@ export async function getBoard(
       if (!fits) continue;
     }
 
-    // Étiquette du groupe attribué : modérateurs, membres de la faction concernée
-    let assignedLabel: string | null = null;
+    // Équipe assignée : modérateurs, membres attribués, factions concernées
+    let team: TeamSummary | null = null;
     const maySeeAssignee =
       ctx.isModerator ||
       level === "assigned" ||
-      (mission.assignedGroup && ctx.factionIds.has(mission.assignedGroup.factionId));
-    if (maySeeAssignee && mission.assignedFaction && mission.assignedGroup) {
-      assignedLabel = streamer
-        ? maskValue("GRP", mission.assignedGroupId ?? "")
-        : `${mission.assignedFaction.name} — ${mission.assignedGroup.name}`;
+      mission.assignments.some((a) => ctx.factionIds.has(a.group.factionId));
+    if (maySeeAssignee && mission.assignments.length > 0) {
+      const totalHeadcount = mission.assignments.reduce((sum, a) => sum + a.assignedHeadcount, 0);
+      const label =
+        mission.assignments.length === 1
+          ? streamer
+            ? maskValue("GRP", mission.assignments[0]!.groupId)
+            : `${mission.assignments[0]!.faction.name} — ${mission.assignments[0]!.group.name}`
+          : `${mission.assignments.length} groupes · ${totalHeadcount} participants`;
+      team = { groupsCount: mission.assignments.length, totalHeadcount, label };
     }
 
     cards.push({
       view,
       column,
-      assignedLabel,
+      team,
       targetLevelLabel:
         "targetLevelId" in view && view.targetLevelId ? mission.targetLevel?.label ?? null : null,
       pendingNotifications: 0,
       canOpen: true,
+      // Données d'attribution : STRICTEMENT réservées à la modération
+      ...(ctx.isModerator
+        ? {
+            pendingClaims: mission.claims.map((claim) => ({
+              groupId: claim.groupId,
+              groupName: claim.group.name,
+              factionName: claim.group.faction.name,
+              headcount: claim.proposedHeadcount ?? 1,
+            })),
+            activeAssignments: mission.assignments.map((assignment) => ({
+              groupId: assignment.groupId,
+              groupName: assignment.group.name,
+              factionName: assignment.faction.name,
+              headcount: assignment.assignedHeadcount,
+              isLead: assignment.isLeadGroup,
+            })),
+          }
+        : {}),
     });
   }
+
+  // Catalogue des groupes pour l'attribution manuelle (modération)
+  const groupsCatalog = ctx.isModerator
+    ? (
+        await prisma.group.findMany({
+          where: { isActive: true },
+          include: { faction: { select: { name: true } }, _count: { select: { members: true } } },
+          orderBy: [{ faction: { name: "asc" } }, { name: "asc" }],
+        })
+      ).map((group) => ({
+        id: group.id,
+        name: group.name,
+        factionName: group.faction.name,
+        memberCount: group._count.members,
+      }))
+    : [];
 
   return {
     columns: KANBAN_COLUMNS.map((col) => ({
@@ -198,6 +301,7 @@ export async function getBoard(
     })),
     isModerator: ctx.isModerator,
     myGroups: ctx.ledGroups,
+    groupsCatalog,
   };
 }
 
@@ -229,7 +333,24 @@ export async function getMissionDetail(current: CurrentUser, missionId: string) 
     claimCount: mission.claims.filter((c) => c.status === "PENDING").length,
   });
 
-  return { mission, view, level, ctx };
+  // Catalogue des groupes pour la modale d'attribution (modération uniquement)
+  const groupsCatalog =
+    level === "moderator"
+      ? (
+          await prisma.group.findMany({
+            where: { isActive: true },
+            include: { faction: { select: { name: true } }, _count: { select: { members: true } } },
+            orderBy: [{ faction: { name: "asc" } }, { name: "asc" }],
+          })
+        ).map((group) => ({
+          id: group.id,
+          name: group.name,
+          factionName: group.faction.name,
+          memberCount: group._count.members,
+        }))
+      : [];
+
+  return { mission, view, level, ctx, groupsCatalog };
 }
 
 /** Vue publique d'une mission arbitraire (aperçus de création). */

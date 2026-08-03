@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { prisma } from "@toile/database";
-import { PERMISSIONS } from "@toile/shared";
+import { PERMISSIONS, categoryLabel } from "@toile/shared";
 import { requireUser } from "@/lib/session";
 import {
   InvitationForm,
@@ -47,10 +47,37 @@ export default async function InvitationsPage() {
     factions = (
       await prisma.faction.findMany({
         where: { isActive: true },
-        include: { groups: { where: { isActive: true }, select: { id: true, name: true } } },
+        include: {
+          groups: {
+            where: { isActive: true },
+            select: {
+              id: true,
+              name: true,
+              primaryCountry: true,
+              primaryVillage: true,
+              specialties: true,
+              members: {
+                where: { isLeader: true },
+                select: { user: { select: { displayName: true } } },
+              },
+            },
+          },
+        },
         orderBy: { name: "asc" },
       })
-    ).map((faction) => ({ id: faction.id, name: faction.name, groups: faction.groups }));
+    ).map((faction) => ({
+      id: faction.id,
+      name: faction.name,
+      groups: faction.groups.map((group) => ({
+        id: group.id,
+        name: group.name,
+        primaryCountry: group.primaryCountry,
+        primaryVillage: group.primaryVillage,
+        specialties: group.specialties.map((s) => categoryLabel(s)),
+        // Pseudonymes publics uniquement — jamais l'identité réelle ici
+        leaderNames: group.members.map((m) => m.user.displayName),
+      })),
+    }));
   } else {
     const led = await prisma.groupMember.findMany({
       where: { userId: current.session.userId, isLeader: true, group: { isActive: true } },

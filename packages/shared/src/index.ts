@@ -4,3 +4,4 @@ export * from "./ranks";
 export * from "./mission-views";
 export * from "./schemas";
 export * from "./points";
+export * from "./identity";

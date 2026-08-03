@@ -24,8 +24,20 @@ enum UserStatus {
 
 model User {
   id            String     @id @default(cuid())
+  // Pseudonyme public — seul nom visible hors du groupe et de la modération
   displayName   String
-  // Fiche RP enregistrée à l'invitation : titre (pseudo RP) et village/pays
+  // Forme normalisée (minuscules, espaces réduits) garantissant l'unicité
+  // insensible à la casse. Nullable : rempli à l'onboarding, backfillé au mieux.
+  displayNameNorm String?  @unique
+  // ── Identité réelle du personnage : CONFIDENTIELLE ──
+  // Visible uniquement par la modération et les membres du même groupe
+  // (voir apps/web/server/identity.ts — jamais envoyée aux autres).
+  firstName     String?
+  lastName      String? // certains personnages n'ont pas de nom de famille
+  // Onboarding de première connexion
+  profileCompleted     Boolean   @default(false)
+  privacyAcknowledgedAt DateTime?
+  // Fiche RP héritée (ancien onboarding) : titre (pseudo RP) et village/pays
   rpTitle       String?
   village       String?
   status        UserStatus @default(PENDING)
@@ -100,6 +112,12 @@ enum InvitationStatus {
   EXPIRED
 }
 
+enum GroupOnboardingMode {
+  NONE
+  EXISTING_GROUP
+  CREATE_NEW_GROUP
+}
+
 model Invitation {
   id        String           @id @default(cuid())
   // Hash SHA-256(token + INVITE_TOKEN_PEPPER) — jamais le jeton clair
@@ -114,6 +132,9 @@ model Invitation {
   roleId    String?
   factionId String?
   groupId   String?
+  // Parcours de groupe à la première connexion d'un chef :
+  // EXISTING_GROUP → rattaché à groupId ; CREATE_NEW_GROUP → formulaire de création
+  groupOnboardingMode GroupOnboardingMode @default(NONE)
   // Approbation manuelle exigée après l'OAuth Discord
   requireApproval Boolean @default(true)
   // Restriction facultative à un identifiant Discord précis
@@ -218,6 +239,17 @@ model Group {
   name      String
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+  createdById String?
+  // ── Fiche du groupe ──
+  primaryCountry String?
+  primaryVillage String?
+  // Spécialités : même référentiel que les catégories de mission (source unique)
+  specialties MissionCategory[] @default([])
+  // Image stockée en base (Railway a un système de fichiers éphémère) —
+  // limitée à 500 Ko, servie par une route authentifiée.
+  imageData Bytes?
+  imageMime String?
 
   faction     Faction             @relation(fields: [factionId], references: [id], onDelete: Cascade)
   members     GroupMember[]
@@ -297,6 +329,10 @@ enum MissionCategory {
   SABOTAGE
   MERCENARIAT
   SPECIALE
+  INFILTRATION
+  TRAQUE
+  CONTRE_ESPIONNAGE
+  GUERRE
 }
 
 enum MissionStatus {
@@ -427,6 +463,8 @@ model MissionClaim {
   resolvedAt DateTime?
   moderatorId String?
   moderatorNote String?
+  // Effectif proposé par le chef (validé côté serveur, borné à l'effectif réel)
+  proposedHeadcount Int?
   // Avertissements d'éligibilité calculés au moment de la revendication
   warnings  Json?
 
@@ -440,6 +478,9 @@ model MissionClaim {
   @@index([missionId, status])
 }
 
+// Une mission peut être menée par PLUSIEURS groupes (attributions actives
+// simultanées). L'unicité mission+groupe active est garantie par un index
+// partiel PostgreSQL (voir migration identity_groups_multiassign).
 model MissionAssignment {
   id           String    @id @default(cuid())
   missionId    String
@@ -450,6 +491,11 @@ model MissionAssignment {
   active       Boolean   @default(true)
   releasedAt   DateTime?
   releasedReason String?
+  // Effectif engagé par ce groupe sur la mission
+  assignedHeadcount Int @default(1)
+  // Groupe principal / coordinateur (au plus un par mission)
+  isLeadGroup Boolean @default(false)
+  notes       String?
 
   mission Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
   faction Faction @relation(fields: [factionId], references: [id])
@@ -572,6 +618,7 @@ model MissionScore {
 // ─────────────────────────────────────────────────────────────
 
 enum NotificationEvent {
+  MEMBER_PROMOTED
   MISSION_AVAILABLE
   CLAIM_ACCEPTED
   CLAIM_REJECTED

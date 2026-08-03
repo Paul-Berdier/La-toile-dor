@@ -29,6 +29,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (current.permissions.has(PERMISSIONS.CLAIM_REVIEW)) {
     items.push({ href: "/revendications", label: "Revendications", glyph: "願" });
   }
+  items.push({ href: "/groupes", label: "Groupes", glyph: "組" });
   items.push({ href: "/classement", label: "Classement", glyph: "位" });
   items.push({ href: "/notifications", label: "Échos", glyph: "響", badge: unreadEchoes });
   if (

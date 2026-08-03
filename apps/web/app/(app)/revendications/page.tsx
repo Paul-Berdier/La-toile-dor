@@ -110,6 +110,12 @@ export default async function RevendicationsPage() {
                   </h2>
                   <dl className="mt-1 space-y-1 text-xs text-ink-muted">
                     <div className="flex justify-between">
+                      <dt>Effectif proposé</dt>
+                      <dd className="font-mono-toile text-gold">
+                        {claim.proposedHeadcount ?? "—"}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between">
                       <dt>Niveau moyen</dt>
                       <dd>{avgOrder ? avgOrder.toFixed(1).replace(".", ",") : "—"} / 10</dd>
                     </div>

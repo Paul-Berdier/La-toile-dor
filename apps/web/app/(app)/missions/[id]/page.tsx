@@ -14,6 +14,7 @@ import { RankSeal } from "@/components/missions/rank-seal";
 import { ClaimPanel } from "@/components/missions/claim-panel";
 import { ClaimDecide } from "@/components/missions/claim-decide";
 import { ReportForm } from "@/components/missions/report-form";
+import { ManageTeamButton } from "@/components/missions/manage-team";
 import { PanelWatermark } from "@/components/shell/watermark";
 
 export const dynamic = "force-dynamic";
@@ -305,6 +306,38 @@ export default async function MissionDetailPage({
 
         {/* Colonne latérale */}
         <aside className="space-y-5">
+          {/* Modération : attribution / gestion de l'équipe multi-groupes */}
+          {level === "moderator" &&
+            ["AVAILABLE", "CLAIM_PENDING", "ASSIGNED", "IN_PROGRESS"].includes(mission.status) && (
+              <section className="border border-border-gold bg-raised p-4">
+                <h2 className="mb-3 font-display text-sm tracking-widest text-gold uppercase">
+                  Attribution
+                </h2>
+                <ManageTeamButton
+                  missionId={mission.id}
+                  missionCode={mission.code}
+                  missionRank={mission.rank}
+                  claims={mission.claims
+                    .filter((claim) => ["PENDING", "INFO_REQUESTED"].includes(claim.status))
+                    .map((claim) => ({
+                      groupId: claim.groupId,
+                      groupName: claim.group.name,
+                      factionName: claim.group.faction.name,
+                      headcount: claim.proposedHeadcount ?? 1,
+                    }))}
+                  assignments={mission.assignments.map((assignment) => ({
+                    groupId: assignment.groupId,
+                    groupName: assignment.group.name,
+                    factionName: assignment.faction.name,
+                    headcount: assignment.assignedHeadcount,
+                    isLead: assignment.isLeadGroup,
+                  }))}
+                  catalog={detail.groupsCatalog}
+                  canStart={mission.status !== "IN_PROGRESS"}
+                />
+              </section>
+            )}
+
           {canClaim && level === "public" && (
             <section className="border border-border-gold bg-raised p-4">
               <h2 className="mb-3 font-display text-sm tracking-widest text-gold uppercase">
@@ -326,23 +359,46 @@ export default async function MissionDetailPage({
             </section>
           )}
 
-          {/* Participants — masqué tant qu'aucune attribution ni participant */}
-          {confidentialAccess && (mission.assignedGroup || mission.participants.length > 0) && (
+          {/* Équipe assignée — multi-groupes, effectifs, groupe principal */}
+          {confidentialAccess && (mission.assignments.length > 0 || mission.participants.length > 0) && (
             <section className="border border-border-default bg-raised p-4">
               <h2 className="mb-2 font-display text-xs tracking-widest text-gold uppercase">
-                Participants
+                Équipe assignée
               </h2>
-              {mission.assignedGroup ? (
-                <p className="text-sm text-ink-muted">
-                  {streamer
-                    ? maskValue("GRP", mission.assignedGroupId ?? "")
-                    : `${mission.assignedFaction?.name} — ${mission.assignedGroup.name}`}
-                </p>
-              ) : (
+              {mission.assignments.length === 0 && (
                 <p className="text-xs text-ink-faint italic">Aucune attribution.</p>
               )}
+              <ul className="space-y-2">
+                {mission.assignments.map((assignment) => (
+                  <li key={assignment.id} className="border border-border-default bg-elevated p-2.5">
+                    <p className="text-sm text-ink">
+                      {streamer
+                        ? maskValue("GRP", assignment.groupId)
+                        : `${assignment.faction.name} — ${assignment.group.name}`}
+                    </p>
+                    <p className="text-xs text-ink-muted">
+                      {assignment.assignedHeadcount} participant
+                      {assignment.assignedHeadcount > 1 ? "s" : ""}
+                      {assignment.isLeadGroup && (
+                        <span className="ml-2 border border-gold-dim px-1.5 py-0.5 text-[0.65rem] text-gold uppercase">
+                          Groupe principal
+                        </span>
+                      )}
+                    </p>
+                    <p className="font-mono-toile text-[0.6rem] text-ink-faint">
+                      Attribuée le {new Date(assignment.assignedAt).toLocaleString("fr-FR")}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+              {mission.assignments.length > 1 && (
+                <p className="mt-2 font-mono-toile text-xs text-gold">
+                  Effectif total :{" "}
+                  {mission.assignments.reduce((sum, a) => sum + a.assignedHeadcount, 0)}
+                </p>
+              )}
               {mission.participants.length > 0 && (
-                <ul className="mt-2 space-y-1 text-xs text-ink-muted">
+                <ul className="mt-3 space-y-1 border-t border-border-default pt-2 text-xs text-ink-muted">
                   {mission.participants.map((participant) => (
                     <li key={participant.userId}>
                       {streamer

@@ -1,0 +1,310 @@
+"use client";
+
+import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { assignMissionAction } from "@/server/assignment-actions";
+import type { CardAssignmentInfo, CardClaimInfo } from "@/server/missions";
+import { Button } from "@/components/ui/button";
+
+export interface GroupCatalogEntry {
+  id: string;
+  name: string;
+  factionName: string;
+  memberCount: number;
+}
+
+interface SelectedGroup {
+  groupId: string;
+  label: string;
+  headcount: number;
+  fromClaim: boolean;
+}
+
+/**
+ * Modale d'attribution multi-groupes : ouverte AVANT tout passage
+ * « en cours » (et depuis le détail d'une mission). Le statut n'est modifié
+ * qu'après confirmation ; en cas d'échec la carte reste dans sa colonne.
+ */
+export function AssignmentModal({
+  missionCode,
+  missionRank,
+  missionId,
+  claims,
+  assignments,
+  catalog,
+  start,
+  onClose,
+  onDone,
+}: {
+  missionCode: string;
+  missionRank: string;
+  missionId: string;
+  claims: CardClaimInfo[];
+  assignments: CardAssignmentInfo[];
+  catalog: GroupCatalogEntry[];
+  /** true : confirmer démarre la mission (En cours) */
+  start: boolean;
+  onClose: () => void;
+  onDone?: () => void;
+}) {
+  const router = useRouter();
+
+  // Pré-sélection : attributions actives, sinon revendications en attente
+  const [selected, setSelected] = useState<SelectedGroup[]>(() =>
+    assignments.length > 0
+      ? assignments.map((a) => ({
+          groupId: a.groupId,
+          label: `${a.factionName} — ${a.groupName}`,
+          headcount: a.headcount,
+          fromClaim: false,
+        }))
+      : [],
+  );
+  const [leadId, setLeadId] = useState<string | null>(
+    assignments.find((a) => a.isLead)?.groupId ?? null,
+  );
+  const [addingId, setAddingId] = useState("");
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  const isSelected = (groupId: string) => selected.some((s) => s.groupId === groupId);
+
+  const toggleClaim = (claim: CardClaimInfo) => {
+    setSelected((prev) =>
+      prev.some((s) => s.groupId === claim.groupId)
+        ? prev.filter((s) => s.groupId !== claim.groupId)
+        : [
+            ...prev,
+            {
+              groupId: claim.groupId,
+              label: `${claim.factionName} — ${claim.groupName}`,
+              headcount: claim.headcount,
+              fromClaim: true,
+            },
+          ],
+    );
+  };
+
+  const addFromCatalog = () => {
+    const entry = catalog.find((c) => c.id === addingId);
+    if (!entry || isSelected(entry.id)) return;
+    setSelected((prev) => [
+      ...prev,
+      {
+        groupId: entry.id,
+        label: `${entry.factionName} — ${entry.name}`,
+        headcount: Math.max(1, Math.min(entry.memberCount || 1, 2)),
+        fromClaim: false,
+      },
+    ]);
+    setAddingId("");
+  };
+
+  const setHeadcount = (groupId: string, headcount: number) =>
+    setSelected((prev) =>
+      prev.map((s) => (s.groupId === groupId ? { ...s, headcount } : s)),
+    );
+
+  const total = useMemo(
+    () => selected.reduce((sum, s) => sum + (s.headcount > 0 ? s.headcount : 0), 0),
+    [selected],
+  );
+  const invalidHeadcount = selected.some((s) => !Number.isInteger(s.headcount) || s.headcount < 1);
+
+  const confirm = () => {
+    if (isPending || selected.length === 0 || invalidHeadcount) return;
+    startTransition(async () => {
+      const res = await assignMissionAction({
+        missionId,
+        start,
+        reason: reason || undefined,
+        assignments: selected.map((s) => ({
+          groupId: s.groupId,
+          headcount: s.headcount,
+          isLead: s.groupId === leadId,
+        })),
+      });
+      if (!res.ok) {
+        setError(res.error ?? "L'attribution a échoué.");
+      } else {
+        onDone?.();
+        onClose();
+        router.refresh();
+      }
+    });
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Attribuer la mission ${missionCode}`}
+      className="fixed inset-0 z-[90] flex items-end justify-center bg-obsidian/80 sm:items-center sm:px-4"
+    >
+      <div className="max-h-[92dvh] w-full max-w-lg overflow-y-auto border border-border-gold bg-raised p-5 shadow-modal sm:max-h-[85dvh]">
+        <h2 className="font-display text-base tracking-widest text-gold uppercase">
+          Constituer l&rsquo;équipe — [{missionRank}] {missionCode}
+        </h2>
+        <p className="mt-1 text-xs text-ink-faint">
+          {start
+            ? "La mission ne passera « en cours » qu'après confirmation."
+            : "Les groupes sélectionnés recevront l'accès au dossier."}
+        </p>
+
+        {/* Revendications en attente, mises en avant */}
+        {claims.length > 0 && (
+          <fieldset className="mt-4">
+            <legend className="mb-1 text-xs uppercase tracking-wider text-ink-faint">
+              Groupes ayant revendiqué
+            </legend>
+            <div className="space-y-1.5">
+              {claims.map((claim) => (
+                <label
+                  key={claim.groupId}
+                  className="flex cursor-pointer items-center gap-2 border border-border-default bg-elevated px-3 py-2 text-sm text-ink-muted has-[:checked]:border-gold"
+                >
+                  <input
+                    type="checkbox"
+                    checked={isSelected(claim.groupId)}
+                    onChange={() => toggleClaim(claim)}
+                    className="accent-[var(--toile-gold)]"
+                  />
+                  <span className="min-w-0 flex-1 truncate">
+                    {claim.factionName} — {claim.groupName}
+                  </span>
+                  <span className="font-mono-toile text-xs text-ink-faint">
+                    propose {claim.headcount}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        )}
+
+        {/* Ajout manuel */}
+        <div className="mt-4 flex gap-2">
+          <label htmlFor="assign-add" className="sr-only">
+            Ajouter un autre groupe
+          </label>
+          <select
+            id="assign-add"
+            value={addingId}
+            onChange={(e) => setAddingId(e.target.value)}
+            className="min-w-0 flex-1 border border-border-default bg-elevated px-2 py-1.5 text-sm text-ink"
+          >
+            <option value="">Ajouter un autre groupe…</option>
+            {catalog
+              .filter((entry) => !isSelected(entry.id))
+              .map((entry) => (
+                <option key={entry.id} value={entry.id}>
+                  {entry.factionName} — {entry.name} ({entry.memberCount} membres)
+                </option>
+              ))}
+          </select>
+          <Button variant="outline" size="sm" onClick={addFromCatalog} disabled={!addingId}>
+            Ajouter
+          </Button>
+        </div>
+
+        {/* Effectifs par groupe + groupe principal */}
+        {selected.length > 0 && (
+          <div className="mt-4 space-y-2">
+            <p className="text-xs uppercase tracking-wider text-ink-faint">
+              Effectif par groupe · groupe principal
+            </p>
+            {selected.map((entry) => (
+              <div
+                key={entry.groupId}
+                className="flex flex-wrap items-center gap-2 border border-border-default bg-elevated px-3 py-2"
+              >
+                <span className="min-w-0 flex-1 truncate text-sm text-ink">{entry.label}</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={entry.headcount}
+                  onChange={(e) => setHeadcount(entry.groupId, Number(e.target.value))}
+                  aria-label={`Effectif de ${entry.label}`}
+                  className="w-16 border border-border-default bg-raised px-2 py-1 text-sm text-ink"
+                />
+                <label className="flex items-center gap-1 text-[0.7rem] text-ink-muted">
+                  <input
+                    type="radio"
+                    name="lead-group"
+                    checked={leadId === entry.groupId}
+                    onChange={() => setLeadId(entry.groupId)}
+                    className="accent-[var(--toile-gold)]"
+                  />
+                  principal
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setSelected((prev) => prev.filter((s) => s.groupId !== entry.groupId))}
+                  aria-label={`Retirer ${entry.label}`}
+                  className="text-ink-faint hover:text-blood-bright"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Résumé de confirmation */}
+        <div className="mt-4 border-t border-border-default pt-3 text-sm">
+          {selected.length === 0 ? (
+            <p className="text-ink-faint italic">Aucun groupe sélectionné.</p>
+          ) : (
+            <>
+              <ul className="space-y-0.5 text-xs text-ink-muted">
+                {selected.map((entry) => (
+                  <li key={entry.groupId}>
+                    · {entry.label} : {entry.headcount} membre{entry.headcount > 1 ? "s" : ""}
+                    {leadId === entry.groupId ? " — principal" : ""}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 font-mono-toile text-gold">
+                Effectif total : {total}
+              </p>
+            </>
+          )}
+        </div>
+
+        <label htmlFor="assign-reason" className="mt-3 block text-xs text-ink-faint">
+          Note (facultative, journalisée)
+        </label>
+        <input
+          id="assign-reason"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          maxLength={1000}
+          className="mt-1 w-full border border-border-default bg-elevated px-2 py-1.5 text-sm text-ink"
+        />
+
+        {error && (
+          <p role="alert" className="mt-3 border border-blood bg-blood/10 px-3 py-2 text-xs text-blood-bright">
+            {error}
+          </p>
+        )}
+
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
+          <Button variant="ghost" onClick={onClose} disabled={isPending}>
+            Annuler
+          </Button>
+          <Button
+            variant="gold"
+            onClick={confirm}
+            disabled={isPending || selected.length === 0 || invalidHeadcount}
+          >
+            {isPending
+              ? "Tissage…"
+              : start
+                ? "Confirmer l'attribution et démarrer la mission"
+                : "Confirmer l'attribution"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}

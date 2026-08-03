@@ -25,6 +25,10 @@ export interface ActionResult {
   ok: boolean;
   error?: string;
   warnings?: string[];
+  /** Le passage « en cours » exige d'abord l'attribution (modale côté client) */
+  needsAssignment?: boolean;
+  /** Retour « À prendre » d'une mission attribuée : choix conserver/retirer requis */
+  needsReleaseChoice?: boolean;
 }
 
 /** Payload de notification : UNIQUEMENT des champs publics. */
@@ -52,6 +56,7 @@ export async function moveMissionAction(input: {
   missionId: string;
   toStatus: string;
   reason?: string;
+  releaseAssignments?: boolean;
 }): Promise<ActionResult> {
   const current = await requireUser();
   if (!current.permissions.has(PERMISSIONS.MISSION_MOVE)) {
@@ -59,36 +64,94 @@ export async function moveMissionAction(input: {
   }
   const parsed = missionMoveSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Requête invalide." };
-  const { missionId, toStatus, reason } = parsed.data;
+  const { missionId, toStatus, reason, releaseAssignments } = parsed.data;
 
-  const mission = await prisma.mission.findUnique({ where: { id: missionId } });
+  const mission = await prisma.mission.findUnique({
+    where: { id: missionId },
+    include: {
+      assignments: { where: { active: true }, select: { id: true, groupId: true, factionId: true } },
+    },
+  });
   if (!mission) return { ok: false, error: "Mission introuvable." };
   if (mission.status === toStatus) return { ok: true };
+
+  // Passage « en cours » : IMPOSSIBLE sans équipe — la modale d'attribution
+  // (assignMissionAction) est le seul chemin.
+  if (toStatus === "IN_PROGRESS" && mission.assignments.length === 0) {
+    return {
+      ok: false,
+      needsAssignment: true,
+      error: "Attribuez d'abord la mission à un ou plusieurs groupes.",
+    };
+  }
+
+  // Retour « À prendre » d'une mission qui possède des groupes assignés :
+  // le modérateur doit choisir conserver / retirer (jamais implicite).
+  const releasing =
+    toStatus === "AVAILABLE" && mission.assignments.length > 0;
+  if (releasing && releaseAssignments === undefined) {
+    return {
+      ok: false,
+      needsReleaseChoice: true,
+      error: "La mission possède des groupes assignés : conserver ou retirer les attributions ?",
+    };
+  }
 
   const meta = await requestMeta();
   const fromStatus = mission.status;
 
-  await prisma.$transaction([
-    prisma.mission.update({
-      where: { id: missionId },
+  try {
+    await prisma.$transaction(async (tx) => {
+    // Protection contre les mises à jour concurrentes : le statut doit être
+    // inchangé au moment de l'écriture.
+    const updated = await tx.mission.updateMany({
+      where: { id: missionId, status: fromStatus },
       data: {
         status: toStatus,
         resolvedAt: AUTO_RESOLVED.includes(toStatus) ? new Date() : null,
         failureReason: toStatus === "FAILED" ? reason ?? mission.failureReason : mission.failureReason,
         cancellationReason:
           toStatus === "CANCELLED" ? reason ?? mission.cancellationReason : mission.cancellationReason,
+        ...(releasing && releaseAssignments
+          ? { assignedFactionId: null, assignedGroupId: null, assignedAt: null }
+          : {}),
       },
-    }),
-    prisma.missionStatusHistory.create({
-      data: {
-        missionId,
-        fromStatus,
-        toStatus,
-        changedById: current.session.userId,
-        reason: reason ?? null,
-      },
-    }),
-  ]);
+    });
+    if (updated.count === 0) throw new Error("CONCURRENT_MOVE");
+
+    if (releasing && releaseAssignments) {
+      await tx.missionAssignment.updateMany({
+        where: { missionId, active: true },
+        data: {
+          active: false,
+          releasedAt: new Date(),
+          releasedReason: reason ?? "Mission rouverte par la modération",
+        },
+      });
+    }
+
+      await tx.missionStatusHistory.create({
+        data: {
+          missionId,
+          fromStatus,
+          toStatus,
+          changedById: current.session.userId,
+          reason:
+            releasing
+              ? `${reason ?? ""}${reason ? " — " : ""}attributions ${releaseAssignments ? "retirées" : "conservées"}`.trim()
+              : reason ?? null,
+        },
+      });
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === "CONCURRENT_MOVE") {
+      return {
+        ok: false,
+        error: "La mission vient d'être modifiée par quelqu'un d'autre — rechargez le tableau.",
+      };
+    }
+    throw error;
+  }
 
   await audit({
     actorId: current.session.userId,
@@ -96,43 +159,47 @@ export async function moveMissionAction(input: {
     resourceType: "mission",
     resourceId: missionId,
     oldValues: { status: fromStatus },
-    newValues: { status: toStatus },
+    newValues: {
+      status: toStatus,
+      ...(releasing ? { releaseAssignments } : {}),
+    },
     reason,
     ...meta,
   });
 
-  // Points automatiques à l'accomplissement (ligne de registre justifiée)
-  if (toStatus === "COMPLETED" && mission.assignedFactionId) {
+  // Points automatiques à l'accomplissement : une ligne de registre par
+  // groupe participant (ajustable ensuite par la modération)
+  if (toStatus === "COMPLETED" && mission.assignments.length > 0) {
     const alreadyScored = await prisma.missionScore.findFirst({
       where: { missionId, reason: "MISSION_COMPLETED" },
     });
     if (!alreadyScored) {
       const season = await prisma.leaderboardSeason.findFirst({ where: { isActive: true } });
       const { breakdown } = computeMissionScore(mission.rank as Rank, "COMPLETED", {}, mission.basePoints);
-      for (const line of breakdown) {
-        await prisma.missionScore.create({
-          data: {
-            missionId,
-            seasonId: season?.id ?? null,
-            factionId: mission.assignedFactionId,
-            groupId: mission.assignedGroupId,
-            points: line.points,
-            reason: line.reason as never,
-            justification: "Attribution automatique à l'accomplissement (ajustable).",
-            createdById: current.session.userId,
-          },
-        });
+      for (const assignment of mission.assignments) {
+        for (const line of breakdown) {
+          await prisma.missionScore.create({
+            data: {
+              missionId,
+              seasonId: season?.id ?? null,
+              factionId: assignment.factionId,
+              groupId: assignment.groupId,
+              points: line.points,
+              reason: line.reason as never,
+              justification: "Attribution automatique à l'accomplissement (ajustable).",
+              createdById: current.session.userId,
+            },
+          });
+        }
       }
     }
   }
 
-  // Notifications : groupe attribué + chefs de faction concernés
+  // Notifications : tous les groupes assignés + chefs des factions concernées
   const targets = new Set<string>();
-  if (mission.assignedGroupId) {
-    for (const id of await groupMemberIds(mission.assignedGroupId)) targets.add(id);
-  }
-  if (mission.assignedFactionId) {
-    for (const id of await factionLeaderIds(mission.assignedFactionId)) targets.add(id);
+  for (const assignment of mission.assignments) {
+    for (const id of await groupMemberIds(assignment.groupId)) targets.add(id);
+    for (const id of await factionLeaderIds(assignment.factionId)) targets.add(id);
   }
   targets.delete(current.session.userId);
   if (targets.size > 0) {
@@ -161,6 +228,7 @@ export async function moveMissionAction(input: {
 export async function claimMissionAction(input: {
   missionId: string;
   groupId: string;
+  proposedHeadcount: number;
   message?: string;
 }): Promise<ActionResult> {
   const current = await requireUser();
@@ -169,11 +237,19 @@ export async function claimMissionAction(input: {
   }
   const parsed = missionClaimSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Requête invalide." };
-  const { missionId, groupId, message } = parsed.data;
+  const { missionId, groupId, message, proposedHeadcount } = parsed.data;
 
   const ctx = await getAccessContext(current);
   const ledGroup = ctx.ledGroups.find((g) => g.id === groupId);
   if (!ledGroup) return { ok: false, error: "Vous ne dirigez pas ce groupe." };
+
+  // L'effectif proposé est borné à l'effectif réel du groupe
+  if (proposedHeadcount > ledGroup.memberCount) {
+    return {
+      ok: false,
+      error: `Votre cellule ne compte que ${ledGroup.memberCount} membre(s).`,
+    };
+  }
 
   const mission = await prisma.mission.findUnique({
     where: { id: missionId },
@@ -221,9 +297,11 @@ export async function claimMissionAction(input: {
   const existing = await prisma.missionClaim.findUnique({
     where: { missionId_groupId: { missionId, groupId } },
   });
-  if (existing && ["PENDING", "ACCEPTED", "INFO_REQUESTED"].includes(existing.status)) {
-    return { ok: false, error: "Ce groupe a déjà une revendication en cours sur cette mission." };
+  if (existing?.status === "ACCEPTED") {
+    return { ok: false, error: "Cette revendication a déjà été acceptée." };
   }
+  // PENDING / INFO_REQUESTED : la revendication reste modifiable (effectif,
+  // message) tant qu'elle n'a pas été traitée — on la met à jour en place.
 
   const meta = await requestMeta();
   await prisma.$transaction(async (tx) => {
@@ -233,6 +311,7 @@ export async function claimMissionAction(input: {
         data: {
           status: "PENDING",
           message: message ?? null,
+          proposedHeadcount,
           leaderId: current.session.userId,
           warnings,
           resolvedAt: null,
@@ -248,6 +327,7 @@ export async function claimMissionAction(input: {
           groupId,
           leaderId: current.session.userId,
           message: message ?? null,
+          proposedHeadcount,
           warnings,
         },
       });
@@ -317,10 +397,12 @@ export async function decideClaimAction(input: {
   const mission = claim.mission;
 
   if (decision === "ACCEPTED") {
-    if (!["AVAILABLE", "CLAIM_PENDING"].includes(mission.status)) {
+    // Accepter une revendication AJOUTE le groupe à l'équipe de la mission.
+    // Les autres revendications restent en attente : plusieurs groupes
+    // peuvent être acceptés et faire équipe.
+    if (!["AVAILABLE", "CLAIM_PENDING", "ASSIGNED"].includes(mission.status)) {
       return { ok: false, error: "La mission n'est plus attribuable." };
     }
-    const rejectedLeaders: string[] = [];
     await prisma.$transaction(async (tx) => {
       await tx.missionClaim.update({
         where: { id: claimId },
@@ -331,51 +413,52 @@ export async function decideClaimAction(input: {
           resolvedAt: new Date(),
         },
       });
-      // Les autres revendications en attente sont refusées automatiquement
-      const others = await tx.missionClaim.findMany({
-        where: { missionId: mission.id, id: { not: claimId }, status: { in: ["PENDING", "INFO_REQUESTED"] } },
-      });
-      rejectedLeaders.push(...others.map((o) => o.leaderId));
-      await tx.missionClaim.updateMany({
-        where: { id: { in: others.map((o) => o.id) } },
-        data: {
-          status: "REJECTED",
-          moderatorId: current.session.userId,
-          moderatorNote: "La mission a été attribuée à un autre groupe.",
-          resolvedAt: new Date(),
-        },
-      });
-      // Une seule attribution active par mission
-      await tx.missionAssignment.updateMany({
+      const activeCount = await tx.missionAssignment.count({
         where: { missionId: mission.id, active: true },
-        data: { active: false, releasedAt: new Date(), releasedReason: "Réattribution" },
       });
-      await tx.missionAssignment.create({
-        data: {
-          missionId: mission.id,
-          factionId: claim.group.factionId,
-          groupId: claim.groupId,
-          assignedById: current.session.userId,
-        },
+      const existingAssignment = await tx.missionAssignment.findFirst({
+        where: { missionId: mission.id, groupId: claim.groupId, active: true },
+        select: { id: true },
       });
+      if (existingAssignment) {
+        await tx.missionAssignment.update({
+          where: { id: existingAssignment.id },
+          data: { assignedHeadcount: claim.proposedHeadcount ?? 1 },
+        });
+      } else {
+        // L'index partiel (missionId, groupId) WHERE active protège des courses
+        await tx.missionAssignment.create({
+          data: {
+            missionId: mission.id,
+            factionId: claim.group.factionId,
+            groupId: claim.groupId,
+            assignedById: current.session.userId,
+            assignedHeadcount: claim.proposedHeadcount ?? 1,
+            isLeadGroup: activeCount === 0, // premier groupe accepté = principal
+          },
+        });
+      }
       await tx.mission.update({
         where: { id: mission.id },
         data: {
           status: "ASSIGNED",
-          assignedFactionId: claim.group.factionId,
-          assignedGroupId: claim.groupId,
-          assignedAt: new Date(),
+          // Colonnes héritées maintenues pour compatibilité (lecture = attributions)
+          assignedFactionId: mission.assignedFactionId ?? claim.group.factionId,
+          assignedGroupId: mission.assignedGroupId ?? claim.groupId,
+          assignedAt: mission.assignedAt ?? new Date(),
         },
       });
-      await tx.missionStatusHistory.create({
-        data: {
-          missionId: mission.id,
-          fromStatus: mission.status,
-          toStatus: "ASSIGNED",
-          changedById: current.session.userId,
-          reason: `Attribuée à ${claim.group.faction.name} — ${claim.group.name}`,
-        },
-      });
+      if (mission.status !== "ASSIGNED") {
+        await tx.missionStatusHistory.create({
+          data: {
+            missionId: mission.id,
+            fromStatus: mission.status,
+            toStatus: "ASSIGNED",
+            changedById: current.session.userId,
+            reason: `Attribuée à ${claim.group.faction.name} — ${claim.group.name}`,
+          },
+        });
+      }
     });
 
     await audit({
@@ -383,7 +466,11 @@ export async function decideClaimAction(input: {
       action: "mission.assigned",
       resourceType: "mission",
       resourceId: mission.id,
-      newValues: { groupId: claim.groupId, factionId: claim.group.factionId },
+      newValues: {
+        groupId: claim.groupId,
+        factionId: claim.group.factionId,
+        headcount: claim.proposedHeadcount ?? 1,
+      },
       reason: note,
       ...meta,
     });
@@ -395,14 +482,6 @@ export async function decideClaimAction(input: {
       payload: publicPayload(mission),
       missionId: mission.id,
     });
-    if (rejectedLeaders.length > 0) {
-      await enqueueNotifications({
-        userIds: rejectedLeaders,
-        event: "CLAIM_REJECTED",
-        payload: publicPayload(mission),
-        missionId: mission.id,
-      });
-    }
   } else {
     await prisma.missionClaim.update({
       where: { id: claimId },

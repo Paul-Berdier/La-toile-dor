@@ -26,10 +26,15 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   return { session, permissions };
 });
 
-/** Garde de page : redirige vers la connexion si non authentifié. */
+/**
+ * Garde de page : redirige vers la connexion si non authentifié, et vers
+ * l'onboarding tant que le profil (identité + confidentialité) n'est pas
+ * complété — aucune page sensible n'est accessible avant.
+ */
 export async function requireUser(): Promise<CurrentUser> {
   const current = await getCurrentUser();
   if (!current) redirect("/connexion");
+  if (!current.session.user.profileCompleted) redirect("/bienvenue");
   return current;
 }
 

@@ -36,53 +36,16 @@ export default async function InvitationPage({
                   Un fil vous a été tendu
                 </p>
                 <p className="text-sm leading-relaxed text-ink-muted">
-                  Cette invitation est authentique. Déclinez votre identité de l&rsquo;ombre :
-                  elle sera liée à votre compte Discord, puis examinée par la Toile.
+                  Cette invitation est authentique. Liez votre compte Discord, puis
+                  déclinez votre identité de l&rsquo;ombre : prénom, nom éventuel et
+                  pseudonyme public vous seront demandés juste après.
                 </p>
-
-                {/* La fiche RP part avec la connexion (cookies éphémères côté serveur) */}
-                <form
-                  action="/api/auth/login"
-                  method="get"
-                  className="w-full space-y-3 text-left"
+                <Link
+                  href={`/api/auth/login?invite=${encodeURIComponent(token)}`}
+                  className={`${buttonClasses("gold", "lg")} w-full`}
                 >
-                  <input type="hidden" name="invite" value={token} />
-                  <div>
-                    <label
-                      htmlFor="rp-titre"
-                      className="mb-1 block text-xs uppercase tracking-wider text-ink-faint"
-                    >
-                      Titre — votre pseudonyme dans le RP *
-                    </label>
-                    <input
-                      id="rp-titre"
-                      name="titre"
-                      required
-                      maxLength={60}
-                      placeholder="ex. La Lame Silencieuse"
-                      className="w-full border border-border-default bg-elevated px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold"
-                    />
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="rp-village"
-                      className="mb-1 block text-xs uppercase tracking-wider text-ink-faint"
-                    >
-                      Village ou pays d&rsquo;appartenance *
-                    </label>
-                    <input
-                      id="rp-village"
-                      name="village"
-                      required
-                      maxLength={60}
-                      placeholder="ex. Kumogakure"
-                      className="w-full border border-border-default bg-elevated px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold"
-                    />
-                  </div>
-                  <button type="submit" className={`${buttonClasses("gold", "lg")} w-full`}>
-                    Saisir le fil — continuer avec Discord
-                  </button>
-                </form>
+                  Saisir le fil — continuer avec Discord
+                </Link>
                 <p className="text-xs text-ink-faint">
                   Ce lien est à usage unique et expirera. Ne le partagez avec personne.
                 </p>

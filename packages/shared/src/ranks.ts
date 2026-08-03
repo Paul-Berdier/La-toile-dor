@@ -92,6 +92,10 @@ export const PLAYER_LEVELS: { slug: string; label: string; order: number }[] = [
   { slug: "sanin", label: "Sanin", order: 10 },
 ];
 
+/**
+ * Catégories de mission — servent AUSSI de spécialités de groupe
+ * (source unique : même enum PostgreSQL `MissionCategory`).
+ */
 export const MISSION_CATEGORIES = [
   { value: "COLLECTE_INFORMATIONS", label: "Collecte d'informations" },
   { value: "SURVEILLANCE_ESPIONNAGE", label: "Surveillance & espionnage" },
@@ -103,6 +107,10 @@ export const MISSION_CATEGORIES = [
   { value: "SABOTAGE", label: "Sabotage" },
   { value: "MERCENARIAT", label: "Mercenariat" },
   { value: "SPECIALE", label: "Mission spéciale" },
+  { value: "INFILTRATION", label: "Infiltration" },
+  { value: "TRAQUE", label: "Traque" },
+  { value: "CONTRE_ESPIONNAGE", label: "Contre-espionnage" },
+  { value: "GUERRE", label: "Guerre" },
 ] as const;
 
 export type MissionCategoryValue = (typeof MISSION_CATEGORIES)[number]["value"];

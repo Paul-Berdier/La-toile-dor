@@ -20,6 +20,14 @@ export const PERMISSIONS = {
   LEADERBOARD_VIEW: "leaderboard.view",
   // Groupes (au sein de sa faction)
   GROUP_MANAGE: "group.manage",
+  // Créer un groupe (modération ; les chefs ne créent que via une invitation
+  // portant explicitement le mode CREATE_NEW_GROUP)
+  GROUP_CREATE: "group.create",
+  // Modifier n'importe quel groupe (modération) — un chef ne modifie que le sien
+  GROUP_EDIT_ANY: "group.edit.any",
+  // Identité réelle (prénom/nom) : modération uniquement — les membres d'un
+  // même groupe passent par la règle de co-appartenance, pas par ce droit
+  IDENTITY_VIEW_REAL: "identity.view.real",
   // Invitations
   // invite.create : tendre un fil selon sa position dans la hiérarchie
   // (modérateur → chefs/agents ; chef → agents de ses groupes).
@@ -53,6 +61,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleSlug, PermissionKey[]> = {
   super_admin: Object.values(P),
   moderator: [
     P.INVITE_CREATE,
+    P.GROUP_CREATE,
+    P.GROUP_EDIT_ANY,
+    P.IDENTITY_VIEW_REAL,
     P.MISSION_CREATE,
     P.MISSION_UPDATE,
     P.MISSION_CANCEL,

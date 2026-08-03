@@ -70,10 +70,12 @@ export function MissionCard({ card, dragging = false }: { card: BoardCard; dragg
             <dd className="text-warning">{view.claimCount}</dd>
           </div>
         )}
-        {card.assignedLabel && (
+        {card.team && (
           <div className="flex justify-between gap-2">
-            <dt className="whitespace-nowrap text-ink-faint">Attribuée à</dt>
-            <dd className="min-w-0 truncate text-copper">{card.assignedLabel}</dd>
+            <dt className="whitespace-nowrap text-ink-faint">
+              {card.team.groupsCount > 1 ? "Équipe" : "Attribuée à"}
+            </dt>
+            <dd className="min-w-0 truncate text-copper">{card.team.label}</dd>
           </div>
         )}
       </dl>

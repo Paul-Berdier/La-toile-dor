@@ -25,6 +25,9 @@ const PERMISSION_DEFS: [string, string][] = [
   ["mission.report.submit", "Soumettre un rapport de mission"],
   ["claim.review", "Accepter ou refuser une revendication"],
   ["invite.create", "Tendre un fil selon sa position dans la hiérarchie"],
+  ["group.create", "Créer un groupe"],
+  ["group.edit.any", "Modifier n'importe quel groupe"],
+  ["identity.view.real", "Consulter les identités réelles (prénom/nom)"],
   ["points.adjust", "Modifier les points"],
   ["leaderboard.view", "Consulter le classement"],
   ["group.manage", "Gérer les groupes de sa faction"],
@@ -42,7 +45,7 @@ const ROLE_PERMS: Record<string, { name: string; perms: string[] | "all" }> = {
   moderator: {
     name: "Modérateur",
     perms: [
-      "invite.create",
+      "invite.create", "group.create", "group.edit.any", "identity.view.real",
       "mission.create", "mission.update", "mission.cancel", "mission.move",
       "mission.assign", "mission.view.all", "mission.view.confidential",
       "claim.review", "points.adjust", "leaderboard.view", "audit.read",
@@ -390,7 +393,12 @@ async function main() {
         leaderId: claimGroup.chief.id,
         message: "Notre cellule connaît bien la Bibliothèque des Trois Lunes. (fiction RP)",
         status: "PENDING",
+        proposedHeadcount: 3,
       },
+    });
+    await prisma.missionClaim.update({
+      where: { missionId_groupId: { missionId: claimMission.id, groupId: claimGroup.group.id } },
+      data: { proposedHeadcount: 3 },
     });
   }
 
@@ -420,6 +428,58 @@ async function main() {
       });
     }
   }
+
+  // ── Fiches de groupe fictives (pays, village, spécialités) ──
+  const groupFiches: [number, string, string, MissionCategory[]][] = [
+    [0, "Pays de la Foudre", "Kumogakure", ["COLLECTE_INFORMATIONS", "SURVEILLANCE_ESPIONNAGE"]],
+    [1, "Pays de la Foudre", "Kumogakure", ["ESCORTE", "PROTECTION"]],
+    [2, "Pays de l'Eau", "Kirigakure", ["ELIMINATION", "TRAQUE"]],
+    [3, "Pays de l'Eau", "Kirigakure", ["INFILTRATION", "SABOTAGE"]],
+  ];
+  for (const [index, country, village, specialties] of groupFiches) {
+    const entry = groups[index];
+    if (!entry) continue;
+    await prisma.group.update({
+      where: { id: entry.group.id },
+      data: {
+        primaryCountry: country,
+        primaryVillage: village,
+        specialties,
+        createdById: demoMod.id,
+      },
+    });
+  }
+
+  // ── Identités fictives complétées (l'onboarding est testé via demo-incomplete) ──
+  const FIRST_NAMES = ["Akira", "Rin", "Sota", "Yumi", "Kaede", "Hiro", "Mei", "Ren"];
+  const LAST_NAMES = ["Uzumori", null, "Kagesawa", null, "Hoshigaki", "Yanagi", null, "Kurotsuki"];
+  const demoUsers = await prisma.user.findMany({ where: { id: { startsWith: "demo-" } } });
+  for (let i = 0; i < demoUsers.length; i++) {
+    const user = demoUsers[i]!;
+    const norm = user.displayName.trim().replace(/\s+/g, " ").toLowerCase();
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        firstName: user.firstName ?? FIRST_NAMES[i % FIRST_NAMES.length],
+        lastName: user.lastName ?? LAST_NAMES[i % LAST_NAMES.length],
+        displayNameNorm: norm,
+        profileCompleted: true,
+        privacyAcknowledgedAt: new Date(),
+      },
+    });
+  }
+
+  // Compte fictif au profil INCOMPLET : sert aux tests de l'onboarding
+  await prisma.user.upsert({
+    where: { id: "demo-incomplete" },
+    update: { profileCompleted: false, firstName: null, privacyAcknowledgedAt: null },
+    create: {
+      id: "demo-incomplete",
+      displayName: "[FICTIF] Nouveau Fil",
+      status: "ACTIVE",
+      profileCompleted: false,
+    },
+  });
   }
 
   // Invitations super_admin initiales si aucune invitation n'existe :

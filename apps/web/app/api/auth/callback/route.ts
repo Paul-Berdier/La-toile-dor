@@ -82,6 +82,7 @@ export async function GET(req: NextRequest) {
   });
 
   let userId: string;
+  let profileCompleted = false;
 
   if (existing) {
     // Compte connu : rafraîchir le profil et les rôles observés
@@ -131,6 +132,7 @@ export async function GET(req: NextRequest) {
     }
     if (status === "PENDING") return redirectTo(req, "/attente");
     userId = existing.userId;
+    profileCompleted = existing.user.profileCompleted;
   } else {
     // Nouveau venu sans le rôle critique : refus net
     if (!hasRequiredRole) {
@@ -252,7 +254,9 @@ export async function GET(req: NextRequest) {
   await prisma.user.update({ where: { id: userId }, data: { lastLoginAt: new Date() } });
   await audit({ actorId: userId, action: "auth.login", ...meta });
 
-  const res = redirectTo(req, "/missions");
+  // Les profils incomplets (nouveaux comptes et anciens comptes d'avant la
+  // refonte d'identité) passent par l'onboarding avant tout accès sensible.
+  const res = redirectTo(req, profileCompleted ? "/missions" : "/bienvenue");
   res.cookies.set(SESSION_COOKIE, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",

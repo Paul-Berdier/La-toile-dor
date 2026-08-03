@@ -5,10 +5,19 @@ import { useRouter } from "next/navigation";
 import { createInvitationAction, revokeInvitationAction } from "@/server/admin-actions";
 import { Button } from "@/components/ui/button";
 
+export interface GroupOption {
+  id: string;
+  name: string;
+  primaryCountry: string | null;
+  primaryVillage: string | null;
+  specialties: string[];
+  leaderNames: string[];
+}
+
 export interface FactionOption {
   id: string;
   name: string;
-  groups: { id: string; name: string }[];
+  groups: GroupOption[];
 }
 
 const ROLE_LABELS: Record<string, string> = {
@@ -39,6 +48,8 @@ export function InvitationForm({
   const [roleSlug, setRoleSlug] = useState(allowedRoles[allowedRoles.length - 1] ?? "faction_member");
   const [factionId, setFactionId] = useState("");
   const [groupId, setGroupId] = useState(leaderGroups?.[0]?.id ?? "");
+  // Parcours du chef invité : rejoindre un groupe existant ou fonder le sien
+  const [leaderMode, setLeaderMode] = useState<"EXISTING_GROUP" | "CREATE_NEW_GROUP">("EXISTING_GROUP");
   const [hours, setHours] = useState(72);
   const [requireApproval, setRequireApproval] = useState(true);
   const [restrictedDiscordId, setRestrictedDiscordId] = useState("");
@@ -49,14 +60,18 @@ export function InvitationForm({
   const [isPending, startTransition] = useTransition();
 
   const selectedFaction = factions.find((f) => f.id === factionId);
+  const selectedGroup = selectedFaction?.groups.find((g) => g.id === groupId);
   const roleNeedsFaction = roleSlug === "faction_leader" || roleSlug === "faction_member";
+  const isLeaderInvite = roleSlug === "faction_leader";
+  const creatingNewGroup = isLeaderInvite && !leaderGroups && leaderMode === "CREATE_NEW_GROUP";
 
   const submit = () => {
     startTransition(async () => {
       const res = await createInvitationAction({
         roleSlug,
         factionId: !leaderGroups && roleNeedsFaction && factionId ? factionId : undefined,
-        groupId: roleNeedsFaction && groupId ? groupId : undefined,
+        groupId: roleNeedsFaction && groupId && !creatingNewGroup ? groupId : undefined,
+        groupOnboardingMode: isLeaderInvite && !leaderGroups ? leaderMode : "NONE",
         expiresInHours: hours,
         requireApproval,
         restrictedDiscordId: restrictedDiscordId || undefined,
@@ -121,6 +136,29 @@ export function InvitationForm({
             </select>
           </div>
 
+          {/* Chef invité par la modération : rejoindre ou fonder */}
+          {isLeaderInvite && !leaderGroups && (
+            <fieldset className="sm:col-span-2">
+              <legend className={label}>Parcours du chef</legend>
+              <div className="flex flex-col gap-1.5">
+                <label className="flex items-start gap-2 text-sm text-ink-muted">
+                  <input type="radio" name="leader-mode" value="EXISTING_GROUP"
+                    checked={leaderMode === "EXISTING_GROUP"}
+                    onChange={() => setLeaderMode("EXISTING_GROUP")}
+                    className="mt-1 accent-[var(--toile-gold)]" />
+                  Ajouter le chef à un groupe existant
+                </label>
+                <label className="flex items-start gap-2 text-sm text-ink-muted">
+                  <input type="radio" name="leader-mode" value="CREATE_NEW_GROUP"
+                    checked={leaderMode === "CREATE_NEW_GROUP"}
+                    onChange={() => { setLeaderMode("CREATE_NEW_GROUP"); setGroupId(""); }}
+                    className="mt-1 accent-[var(--toile-gold)]" />
+                  Autoriser le chef à fonder un nouveau groupe à sa première connexion
+                </label>
+              </div>
+            </fieldset>
+          )}
+
           {leaderGroups ? (
             <div>
               <label htmlFor="inv-group" className={label}>Groupe rejoint</label>
@@ -136,7 +174,9 @@ export function InvitationForm({
             roleNeedsFaction && (
               <>
                 <div>
-                  <label htmlFor="inv-faction" className={label}>Faction / organisation</label>
+                  <label htmlFor="inv-faction" className={label}>
+                    {creatingNewGroup ? "Faction d'accueil (facultatif)" : "Faction / organisation"}
+                  </label>
                   <select
                     id="inv-faction"
                     value={factionId}
@@ -148,24 +188,55 @@ export function InvitationForm({
                       <option key={faction.id} value={faction.id}>{faction.name}</option>
                     ))}
                   </select>
+                  {creatingNewGroup && (
+                    <p className="mt-1 text-[0.65rem] text-ink-faint">
+                      Sans faction, une organisation homonyme du groupe sera créée.
+                    </p>
+                  )}
                 </div>
-                <div>
-                  <label htmlFor="inv-group" className={label}>Groupe (facultatif)</label>
-                  <select
-                    id="inv-group"
-                    value={groupId}
-                    onChange={(e) => setGroupId(e.target.value)}
-                    className={input}
-                    disabled={!selectedFaction}
-                  >
-                    <option value="">—</option>
-                    {selectedFaction?.groups.map((group) => (
-                      <option key={group.id} value={group.id}>{group.name}</option>
-                    ))}
-                  </select>
-                </div>
+                {!creatingNewGroup && (
+                  <div>
+                    <label htmlFor="inv-group" className={label}>
+                      Groupe {isLeaderInvite ? "rejoint *" : "(facultatif)"}
+                    </label>
+                    <select
+                      id="inv-group"
+                      value={groupId}
+                      onChange={(e) => setGroupId(e.target.value)}
+                      className={input}
+                      disabled={!selectedFaction}
+                    >
+                      <option value="">—</option>
+                      {selectedFaction?.groups.map((group) => (
+                        <option key={group.id} value={group.id}>{group.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </>
             )
+          )}
+
+          {/* Fiche du groupe sélectionné : le modérateur confirme en connaissance */}
+          {!leaderGroups && selectedGroup && !creatingNewGroup && (
+            <aside className="border border-border-default bg-elevated p-3 text-xs text-ink-muted sm:col-span-2">
+              <p className="font-medium text-ink">{selectedFaction?.name} — {selectedGroup.name}</p>
+              <p className="mt-1">
+                {[selectedGroup.primaryVillage, selectedGroup.primaryCountry]
+                  .filter(Boolean)
+                  .join(", ") || "Résidence non renseignée"}
+              </p>
+              {selectedGroup.specialties.length > 0 && (
+                <p className="mt-1 text-ink-faint">
+                  Spécialités : {selectedGroup.specialties.join(", ")}
+                </p>
+              )}
+              <p className="mt-1 text-ink-faint">
+                {selectedGroup.leaderNames.length > 0
+                  ? `Chefs actuels : ${selectedGroup.leaderNames.join(", ")}`
+                  : "Aucun chef pour l'instant"}
+              </p>
+            </aside>
           )}
 
           <div>
@@ -192,7 +263,14 @@ export function InvitationForm({
           </label>
           {error && <p className="text-xs text-blood-bright sm:col-span-2">{error}</p>}
           <div className="sm:col-span-2">
-            <Button variant="gold" onClick={submit} disabled={isPending}>
+            <Button
+              variant="gold"
+              onClick={submit}
+              disabled={
+                isPending ||
+                (isLeaderInvite && !leaderGroups && leaderMode === "EXISTING_GROUP" && !groupId)
+              }
+            >
               {isPending ? "Tissage…" : "Générer l'invitation"}
             </Button>
           </div>

@@ -23,6 +23,7 @@ export function ClaimPanel({
 }) {
   const router = useRouter();
   const [groupId, setGroupId] = useState(groups[0]?.id ?? "");
+  const [headcount, setHeadcount] = useState(groups[0]?.memberCount ?? 1);
   const [message, setMessage] = useState("");
   const [result, setResult] = useState<{ error?: string; warnings?: string[]; ok?: boolean } | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -35,9 +36,17 @@ export function ClaimPanel({
     );
   }
 
+  const selectedGroup = groups.find((g) => g.id === groupId);
+  const maxHeadcount = Math.max(1, selectedGroup?.memberCount ?? 1);
+
   const submit = () => {
     startTransition(async () => {
-      const res = await claimMissionAction({ missionId, groupId, message: message || undefined });
+      const res = await claimMissionAction({
+        missionId,
+        groupId,
+        proposedHeadcount: headcount,
+        message: message || undefined,
+      });
       setResult(res);
       if (res.ok) router.refresh();
     });
@@ -58,7 +67,11 @@ export function ClaimPanel({
         <select
           id="claim-group"
           value={groupId}
-          onChange={(e) => setGroupId(e.target.value)}
+          onChange={(e) => {
+            setGroupId(e.target.value);
+            const group = groups.find((g) => g.id === e.target.value);
+            if (group) setHeadcount(group.memberCount || 1);
+          }}
           className="w-full border border-border-default bg-elevated px-3 py-2 text-sm text-ink focus:border-gold"
         >
           {groups.map((group) => (
@@ -67,6 +80,21 @@ export function ClaimPanel({
             </option>
           ))}
         </select>
+      </div>
+
+      <div>
+        <label htmlFor="claim-headcount" className="mb-1 block text-xs text-ink-faint uppercase tracking-wider">
+          Effectif proposé (max {maxHeadcount})
+        </label>
+        <input
+          id="claim-headcount"
+          type="number"
+          min={1}
+          max={maxHeadcount}
+          value={headcount}
+          onChange={(e) => setHeadcount(Number(e.target.value) || 1)}
+          className="w-24 border border-border-default bg-elevated px-3 py-2 text-sm text-ink focus:border-gold"
+        />
       </div>
 
       <div>

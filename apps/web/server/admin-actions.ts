@@ -154,10 +154,27 @@ export async function createInvitationAction(raw: unknown): Promise<Result> {
 
   let factionId = data.factionId;
   let groupId = data.groupId;
+  let groupOnboardingMode = data.groupOnboardingMode;
+
+  // Le mode de rattachement ne concerne que les invitations de chef —
+  // impossible à détourner en modifiant la requête.
+  if (data.roleSlug !== "faction_leader") {
+    groupOnboardingMode = "NONE";
+  } else if (groupOnboardingMode === "CREATE_NEW_GROUP") {
+    groupId = undefined; // le groupe naîtra à l'onboarding
+  } else if (groupOnboardingMode === "EXISTING_GROUP" && !groupId) {
+    return { ok: false, error: "Choisissez le groupe que rejoindra ce chef." };
+  } else if (groupOnboardingMode === "NONE" && groupId) {
+    groupOnboardingMode = "EXISTING_GROUP";
+  }
 
   const isModOrAbove = slugs.has("super_admin") || slugs.has("moderator");
   if (!isModOrAbove) {
-    // Chef de groupe : le fil ne peut mener que vers un de SES groupes
+    // Chef de groupe : le fil ne peut mener que vers un de SES groupes,
+    // et jamais vers une création de groupe.
+    if (groupOnboardingMode === "CREATE_NEW_GROUP") {
+      return { ok: false, error: "Seule la modération peut autoriser la fondation d'un groupe." };
+    }
     if (!groupId) {
       return { ok: false, error: "Choisissez le groupe que rejoindra votre agent." };
     }
@@ -182,7 +199,7 @@ export async function createInvitationAction(raw: unknown): Promise<Result> {
   const role = await prisma.role.findUnique({ where: { slug: data.roleSlug } });
   if (!role) return { ok: false, error: "Rôle inconnu." };
 
-  const { token } = await createInvitation({
+  const { token, invitation } = await createInvitation({
     createdById: current.session.userId,
     roleId: role.id,
     factionId,
@@ -192,6 +209,12 @@ export async function createInvitationAction(raw: unknown): Promise<Result> {
     restrictedDiscordId: data.restrictedDiscordId,
     note: data.note,
   });
+  if (groupOnboardingMode !== "NONE") {
+    await prisma.invitation.update({
+      where: { id: invitation.id },
+      data: { groupOnboardingMode },
+    });
+  }
 
   const meta = await requestMeta();
   await audit({

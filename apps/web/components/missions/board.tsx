@@ -18,6 +18,7 @@ import type { BoardCard, BoardData } from "@/server/missions";
 import type { KanbanColumnKey } from "@toile/shared";
 import { moveMissionAction } from "@/server/mission-actions";
 import { MissionCard } from "./mission-card";
+import { AssignmentModal } from "./assignment-modal";
 import { Button } from "@/components/ui/button";
 
 /** Statut cible lors d'un dépôt dans une colonne. */
@@ -42,6 +43,10 @@ export function MissionBoard({ board }: { board: BoardData }) {
   const router = useRouter();
   const [activeCard, setActiveCard] = useState<BoardCard | null>(null);
   const [pendingMove, setPendingMove] = useState<PendingMove | null>(null);
+  // Passage « en cours » : la modale d'attribution multi-groupes s'ouvre AVANT
+  const [assignCard, setAssignCard] = useState<BoardCard | null>(null);
+  // Retour « À prendre » d'une mission attribuée : choix conserver/retirer
+  const [releaseCard, setReleaseCard] = useState<BoardCard | null>(null);
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -80,6 +85,17 @@ export function MissionBoard({ board }: { board: BoardData }) {
     const overColumn = event.over?.id as KanbanColumnKey | undefined;
     if (!card || !overColumn || overColumn === card.column) return;
 
+    // « En cours » : jamais de changement de statut sans équipe confirmée
+    if (overColumn === "en_cours") {
+      setAssignCard(card);
+      return;
+    }
+    // Retour « À prendre » d'une mission possédant des groupes assignés
+    if (overColumn === "a_prendre" && card.team) {
+      setReleaseCard(card);
+      return;
+    }
+
     const move: PendingMove = {
       card,
       toColumn: overColumn,
@@ -90,6 +106,20 @@ export function MissionBoard({ board }: { board: BoardData }) {
     } else {
       executeMove(move);
     }
+  };
+
+  const executeRelease = (card: BoardCard, release: boolean) => {
+    startTransition(async () => {
+      const result = await moveMissionAction({
+        missionId: card.view.id,
+        toStatus: "AVAILABLE",
+        releaseAssignments: release,
+      });
+      if (!result.ok) setError(result.error ?? "Le déplacement a échoué.");
+      else setError(null);
+      setReleaseCard(null);
+      router.refresh();
+    });
   };
 
   return (
@@ -132,6 +162,58 @@ export function MissionBoard({ board }: { board: BoardData }) {
         </DragOverlay>
       </DndContext>
 
+      {/* Modale d'attribution multi-groupes (passage « en cours ») */}
+      {assignCard && (
+        <AssignmentModal
+          missionId={assignCard.view.id}
+          missionCode={assignCard.view.code}
+          missionRank={assignCard.view.rank}
+          claims={assignCard.pendingClaims ?? []}
+          assignments={assignCard.activeAssignments ?? []}
+          catalog={board.groupsCatalog}
+          start
+          onClose={() => setAssignCard(null)}
+        />
+      )}
+
+      {/* Retour « À prendre » : conserver ou retirer les attributions */}
+      {releaseCard && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Rouvrir la mission"
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-obsidian/80 px-4"
+        >
+          <div className="w-full max-w-md border border-border-gold bg-raised p-6 shadow-modal">
+            <h2 className="font-display text-base tracking-widest text-gold uppercase">
+              Rouvrir {releaseCard.view.code}
+            </h2>
+            <p className="mt-3 text-sm text-ink-muted">
+              La mission possède actuellement des groupes assignés ({releaseCard.team?.label}).
+            </p>
+            <div className="mt-4 flex flex-col gap-2">
+              <Button
+                variant="outline"
+                onClick={() => executeRelease(releaseCard, false)}
+                disabled={isPending}
+              >
+                Conserver les attributions
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => executeRelease(releaseCard, true)}
+                disabled={isPending}
+              >
+                Retirer les attributions et rouvrir la mission
+              </Button>
+              <Button variant="ghost" onClick={() => setReleaseCard(null)} disabled={isPending}>
+                Annuler l&rsquo;opération
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Confirmation des changements critiques */}
       {pendingMove && (
         <div
@@ -155,8 +237,19 @@ export function MissionBoard({ board }: { board: BoardData }) {
               </strong>
               . L&rsquo;action sera consignée et notifiée.
             </p>
+            {pendingMove.card.team && (
+              <p className="mt-2 border border-border-default bg-elevated px-3 py-2 text-xs text-ink-muted">
+                Équipe concernée : {pendingMove.card.team.label}
+                {pendingMove.card.team.groupsCount > 1 &&
+                  ` (effectif total : ${pendingMove.card.team.totalHeadcount})`}
+              </p>
+            )}
             <label className="mt-4 block text-xs text-ink-faint" htmlFor="move-reason">
-              Justification (visible dans l&rsquo;historique)
+              {pendingMove.toColumn === "echouees"
+                ? "Motif de l'échec (visible dans l'historique)"
+                : pendingMove.toColumn === "annulees"
+                  ? "Motif de l'annulation (visible dans l'historique)"
+                  : "Justification (visible dans l'historique)"}
             </label>
             <textarea
               id="move-reason"
