@@ -50,5 +50,6 @@ EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
-# Applique les migrations puis démarre le serveur
-CMD ["sh", "-c", "node node_modules/prisma/build/index.js migrate deploy --schema packages/database/prisma/schema.prisma && node apps/web/server.js"]
+# Applique les migrations, permet un amorçage de production explicitement
+# demandé, puis démarre le serveur. BOOTSTRAP_SEED doit être retiré après usage.
+CMD ["sh", "-c", "node node_modules/prisma/build/index.js migrate deploy --schema packages/database/prisma/schema.prisma && if [ \"${BOOTSTRAP_SEED:-0}\" = \"1\" ]; then SEED_DEMO=0 node node_modules/tsx/dist/cli.mjs packages/database/prisma/seed.ts; fi && exec node apps/web/server.js"]
