@@ -25,6 +25,7 @@ playwright-report/
 test-results/
 audit-profils*/
 audit-screens*/
+audit-invitation*/
 
 # IDE
 .idea/

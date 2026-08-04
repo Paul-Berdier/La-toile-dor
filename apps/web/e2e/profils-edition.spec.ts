@@ -34,6 +34,9 @@ test.afterAll(async () => {
   await prisma.profileReferenceSuggestion.deleteMany({
     where: { proposedLabel: { startsWith: "Clan" } },
   });
+  await prisma.profileReferenceOption.deleteMany({
+    where: { label: { startsWith: "Clan" }, type: "CLAN_FAMILY" },
+  });
 });
 
 test("« Absence confirmée » enregistre NONE_CONFIRMED et affiche « Aucun »", async ({
@@ -83,6 +86,29 @@ test("l'autocomplete trouve un clan par alias et sans accent", async ({ context,
     include: { option: true },
   });
   expect(traits.map((t) => t.option.code)).toContain("UCHIHA");
+});
+
+test("un super-modérateur ajoute directement une entrée au référentiel", async ({
+  context,
+  page,
+}) => {
+  // demo-admin détient profile.reference.manage : il crée sans validation
+  await loginAs(context, "demo-admin");
+  await page.goto(`/profils/${profileId}/modifier`);
+  await page.getByRole("button", { name: /Affiliation/ }).click();
+
+  const label = `Clan${suffix}Direct`;
+  await page.getByRole("combobox", { name: "Clan(s) et famille(s)" }).fill(label);
+  await page.getByRole("button", { name: /Ajouter .* au référentiel/ }).click();
+
+  // L'entrée créée est immédiatement sélectionnée, sans rechargement
+  await expect(page.getByRole("button", { name: `Retirer ${label}` })).toBeVisible();
+
+  const option = await prisma.profileReferenceOption.findFirst({
+    where: { label, type: "CLAN_FAMILY" },
+  });
+  expect(option).not.toBeNull();
+  expect(option?.isActive).toBe(true);
 });
 
 test("proposer une entrée absente crée une suggestion en attente", async ({ context, page }) => {

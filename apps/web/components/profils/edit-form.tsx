@@ -392,7 +392,7 @@ export function ProfileEditForm({
 
             <KnowledgeField fieldKey="hairColor" state={stateOf("hairColor")} onStateChange={(s) => setState("hairColor", s)}>
               <ReferencePicker
-                legend="Couleur des cheveux"
+                legend="Couleur des cheveux" hideLegend
                 options={refs.hairColors}
                 selected={data.hairColorId ? [data.hairColorId] : []}
                 onChange={(ids) => setValue("hairColor", "hairColorId", ids[ids.length - 1] ?? "")}
@@ -405,7 +405,7 @@ export function ProfileEditForm({
 
             <KnowledgeField fieldKey="skinTone" state={stateOf("skinTone")} onStateChange={(s) => setState("skinTone", s)}>
               <ReferencePicker
-                legend="Couleur de peau"
+                legend="Couleur de peau" hideLegend
                 options={refs.skinTones}
                 selected={data.skinToneId ? [data.skinToneId] : []}
                 onChange={(ids) => setValue("skinTone", "skinToneId", ids[ids.length - 1] ?? "")}
@@ -440,7 +440,7 @@ export function ProfileEditForm({
 
             <KnowledgeField fieldKey="clans" state={stateOf("clans")} onStateChange={(s) => setState("clans", s)}>
               <ReferencePicker
-                legend="Clan(s) et famille(s)"
+                legend="Clan(s) et famille(s)" hideLegend
                 options={refs.clans}
                 selected={data.clanIds}
                 onChange={(ids) => setValue("clans", "clanIds", ids)}
@@ -456,21 +456,21 @@ export function ProfileEditForm({
         {step === 3 && (
           <div className="space-y-3">
             <KnowledgeField fieldKey="chakraNatures" state={stateOf("chakraNatures")} onStateChange={(s) => setState("chakraNatures", s)}>
-              <ReferencePicker legend="Natures de chakra" options={refs.chakraNatures}
+              <ReferencePicker legend="Natures de chakra" hideLegend options={refs.chakraNatures}
                 selected={data.chakraNatureIds} onChange={(ids) => setValue("chakraNatures", "chakraNatureIds", ids)}
                 onSuggest={(label) => setSuggestion({ type: "CHAKRA_NATURE", label })}
                 referenceType="CHAKRA_NATURE" canCreate={canManageReferences}
                 onCreated={(o) => addOption("chakraNatures", o)} />
             </KnowledgeField>
             <KnowledgeField fieldKey="kekkeiGenkai" state={stateOf("kekkeiGenkai")} onStateChange={(s) => setState("kekkeiGenkai", s)}>
-              <ReferencePicker legend="Kekkei Genkai" options={refs.kekkeiGenkai}
+              <ReferencePicker legend="Kekkei Genkai" hideLegend options={refs.kekkeiGenkai}
                 selected={data.kekkeiGenkaiIds} onChange={(ids) => setValue("kekkeiGenkai", "kekkeiGenkaiIds", ids)}
                 onSuggest={(label) => setSuggestion({ type: "KEKKEI_GENKAI", label })}
                 referenceType="KEKKEI_GENKAI" canCreate={canManageReferences}
                 onCreated={(o) => addOption("kekkeiGenkai", o)} />
             </KnowledgeField>
             <KnowledgeField fieldKey="artifacts" state={stateOf("artifacts")} onStateChange={(s) => setState("artifacts", s)}>
-              <ReferencePicker legend="Artefacts légendaires" options={refs.artifacts}
+              <ReferencePicker legend="Artefacts légendaires" hideLegend options={refs.artifacts}
                 selected={data.artifactIds} onChange={(ids) => setValue("artifacts", "artifactIds", ids)}
                 onSuggest={(label) => setSuggestion({ type: "LEGENDARY_ARTIFACT", label })}
                 referenceType="LEGENDARY_ARTIFACT" canCreate={canManageReferences}
@@ -485,7 +485,7 @@ export function ProfileEditForm({
         {step === 4 && (
           <div className="space-y-3">
             <KnowledgeField fieldKey="combatStyles" state={stateOf("combatStyles")} onStateChange={(s) => setState("combatStyles", s)}>
-              <ReferencePicker legend="Styles de combat" options={refs.combatStyles}
+              <ReferencePicker legend="Styles de combat" hideLegend options={refs.combatStyles}
                 selected={data.combatStyleIds} onChange={(ids) => setValue("combatStyles", "combatStyleIds", ids)}
                 onSuggest={(label) => setSuggestion({ type: "COMBAT_STYLE", label })}
                 referenceType="COMBAT_STYLE" canCreate={canManageReferences}
@@ -494,7 +494,7 @@ export function ProfileEditForm({
             {/* Les sous-styles n'apparaissent que si Kenjutsu est retenu */}
             {showKenjutsu && (
               <KnowledgeField fieldKey="kenjutsuStyles" state={stateOf("kenjutsuStyles")} onStateChange={(s) => setState("kenjutsuStyles", s)}>
-                <ReferencePicker legend="Spécialités Kenjutsu" options={refs.kenjutsuStyles}
+                <ReferencePicker legend="Spécialités Kenjutsu" hideLegend options={refs.kenjutsuStyles}
                   selected={data.kenjutsuStyleIds} onChange={(ids) => setValue("kenjutsuStyles", "kenjutsuStyleIds", ids)}
                   onSuggest={(label) => setSuggestion({ type: "KENJUTSU_STYLE", label })}
                   referenceType="KENJUTSU_STYLE" canCreate={canManageReferences}

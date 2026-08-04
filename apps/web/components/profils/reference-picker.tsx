@@ -27,6 +27,7 @@ export function ReferencePicker({
   referenceType,
   canCreate = false,
   onCreated,
+  hideLegend = false,
   placeholder = "Rechercher…",
 }: {
   legend: string;
@@ -41,6 +42,12 @@ export function ReferencePicker({
   canCreate?: boolean;
   /** Remonte l'entrée créée pour l'ajouter aux options affichées */
   onCreated?: (option: RefOption) => void;
+  /**
+   * Masque visuellement la légende sans la retirer de l'arbre d'accessibilité.
+   * Utile lorsque le champ est déjà titré par son encadré d'état, où le
+   * libellé apparaîtrait sinon deux fois de suite.
+   */
+  hideLegend?: boolean;
   placeholder?: string;
 }) {
   const listId = useId();
@@ -48,6 +55,7 @@ export function ReferencePicker({
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
+  const keepOpen = useRef(false);
   const [newColor, setNewColor] = useState("#8a7f6d");
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, startCreate] = useTransition();
@@ -135,7 +143,13 @@ export function ReferencePicker({
 
   return (
     <fieldset>
-      <legend className="mb-1 block text-xs uppercase tracking-wider text-ink-faint">
+      <legend
+        className={
+          hideLegend
+            ? "sr-only"
+            : "mb-1 block text-xs uppercase tracking-wider text-ink-faint"
+        }
+      >
         {legend}
       </legend>
 
@@ -185,7 +199,18 @@ export function ReferencePicker({
           placeholder={placeholder}
           onChange={(e) => { setQuery(e.target.value); setOpen(true); setHighlight(0); }}
           onFocus={() => setOpen(true)}
-          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          onBlur={() =>
+            setTimeout(() => {
+              // Le sélecteur de teinte vole le focus sans que la liste doive
+              // se refermer : il a posé ce drapeau au mousedown.
+              if (keepOpen.current) {
+                keepOpen.current = false;
+                inputRef.current?.focus();
+                return;
+              }
+              setOpen(false);
+            }, 150)
+          }
           onKeyDown={onKeyDown}
           className="w-full border border-border-default bg-elevated px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold"
         />
@@ -229,53 +254,56 @@ export function ReferencePicker({
                 </button>
               </li>
             ))}
+            {/* Ajout d'une valeur absente, en pied de liste. Créée directement
+                par qui administre les référentiels, proposée sinon. */}
+            {query.trim().length >= 2 && !exactMatch && (directCreate || onSuggest) && (
+              <li className="border-t border-border-default">
+                {directCreate ? (
+                  <div className="flex flex-wrap items-center gap-2 px-3 py-1.5">
+                    {wantsColor && (
+                      <label className="flex items-center gap-1 text-[0.65rem] text-ink-faint">
+                        Teinte
+                        <input
+                          type="color"
+                          value={newColor}
+                          onChange={(e) => setNewColor(e.target.value)}
+                          // Ouvre le nuancier sans refermer la liste
+                          onMouseDown={() => { keepOpen.current = true; }}
+                          aria-label={`Teinte de « ${query.trim()} »`}
+                          className="h-6 w-8 cursor-pointer border border-border-default bg-transparent p-0"
+                        />
+                      </label>
+                    )}
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => create(query.trim())}
+                      disabled={isCreating}
+                      className="text-left text-xs text-gold hover:underline disabled:opacity-60"
+                    >
+                      {isCreating ? "Ajout…" : `Ajouter « ${query.trim()} » au référentiel`}
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => { onSuggest?.(query.trim()); setQuery(""); setOpen(false); }}
+                    className="w-full px-3 py-1.5 text-left text-xs text-copper hover:bg-hover-bg"
+                  >
+                    Proposer « {query.trim()} » comme nouvelle entrée…
+                  </button>
+                )}
+                {createError && (
+                  <p role="alert" className="px-3 pb-1.5 text-[0.65rem] text-blood-bright">
+                    {createError}
+                  </p>
+                )}
+              </li>
+            )}
           </ul>
         )}
       </div>
-
-      {/* Ajout d'une valeur absente. Placé SOUS le champ et non dans la liste :
-          le sélecteur de teinte prendrait le focus et refermerait la liste. */}
-      {query.trim().length >= 2 && !exactMatch && (directCreate || onSuggest) && (
-        <div className="mt-1.5 flex flex-wrap items-center gap-2 border border-dashed border-border-gold/60 bg-elevated/50 px-2 py-1.5">
-          {directCreate ? (
-            <>
-              {wantsColor && (
-                <label className="flex items-center gap-1 text-[0.65rem] text-ink-faint">
-                  Teinte
-                  <input
-                    type="color"
-                    value={newColor}
-                    onChange={(e) => setNewColor(e.target.value)}
-                    aria-label={`Teinte de « ${query.trim()} »`}
-                    className="h-6 w-8 cursor-pointer border border-border-default bg-transparent p-0"
-                  />
-                </label>
-              )}
-              <button
-                type="button"
-                onClick={() => create(query.trim())}
-                disabled={isCreating}
-                className="text-xs text-gold underline-offset-2 hover:underline disabled:opacity-60"
-              >
-                {isCreating ? "Ajout…" : `Ajouter « ${query.trim()} » au référentiel`}
-              </button>
-            </>
-          ) : (
-            <button
-              type="button"
-              onClick={() => { onSuggest?.(query.trim()); setQuery(""); }}
-              className="text-xs text-copper underline-offset-2 hover:underline"
-            >
-              Proposer « {query.trim()} » comme nouvelle entrée…
-            </button>
-          )}
-          {createError && (
-            <span role="alert" className="text-[0.65rem] text-blood-bright">
-              {createError}
-            </span>
-          )}
-        </div>
-      )}
     </fieldset>
   );
 }
