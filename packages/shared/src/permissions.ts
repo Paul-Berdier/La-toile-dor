@@ -28,6 +28,18 @@ export const PERMISSIONS = {
   // Identité réelle (prénom/nom) : modération uniquement — les membres d'un
   // même groupe passent par la règle de co-appartenance, pas par ce droit
   IDENTITY_VIEW_REAL: "identity.view.real",
+  // Dossiers de renseignement (profils de personnages)
+  // profile.manage : créer/modifier les dossiers (modération)
+  PROFILE_MANAGE: "profile.manage",
+  // profile.intel.view : voir toutes les valeurs, sources, historique
+  PROFILE_INTEL_VIEW: "profile.intel.view",
+  // profile.purchase.review : traiter les demandes d'achat, révoquer les accès
+  PROFILE_PURCHASE_REVIEW: "profile.purchase.review",
+  // profile.request.create : demander l'achat pour SON groupe (chefs)
+  PROFILE_REQUEST_CREATE: "profile.request.create",
+  // Référentiels et fusion : super-modérateurs
+  PROFILE_REFERENCE_MANAGE: "profile.reference.manage",
+  PROFILE_MERGE: "profile.merge",
   // Invitations
   // invite.create : tendre un fil selon sa position dans la hiérarchie
   // (modérateur → chefs/agents ; chef → agents de ses groupes).
@@ -64,6 +76,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleSlug, PermissionKey[]> = {
     P.GROUP_CREATE,
     P.GROUP_EDIT_ANY,
     P.IDENTITY_VIEW_REAL,
+    P.PROFILE_MANAGE,
+    P.PROFILE_INTEL_VIEW,
+    P.PROFILE_PURCHASE_REVIEW,
     P.MISSION_CREATE,
     P.MISSION_UPDATE,
     P.MISSION_CANCEL,
@@ -78,6 +93,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleSlug, PermissionKey[]> = {
   ],
   group_leader: [
     P.INVITE_CREATE,
+    P.PROFILE_REQUEST_CREATE,
     P.MISSION_CLAIM,
     P.MISSION_REPORT_SUBMIT,
     P.GROUP_MANAGE,

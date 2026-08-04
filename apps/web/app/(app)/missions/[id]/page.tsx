@@ -253,6 +253,27 @@ export default async function MissionDetailPage({
             </section>
           )}
 
+          {/* Renseignement : verser les informations récoltées dans un dossier */}
+          {level === "moderator" &&
+            ["ASSIGNED", "IN_PROGRESS", "COMPLETED"].includes(mission.status) && (
+              <section className="border border-gold-dim bg-raised p-5">
+                <h2 className="mb-2 font-display text-sm tracking-widest text-gold uppercase">
+                  Renseignement
+                </h2>
+                <p className="text-xs text-ink-muted">
+                  Cette mission a permis de récolter des informations sur un personnage ?
+                  Versez-les dans un dossier — rien n&rsquo;est appliqué sans votre
+                  confirmation champ par champ.
+                </p>
+                <Link
+                  href={`/profils?mission=${mission.id}`}
+                  className="mt-3 inline-block border border-border-gold px-3 py-1.5 text-xs text-gold hover:bg-hover-bg"
+                >
+                  Ajouter les renseignements au dossier
+                </Link>
+              </section>
+            )}
+
           {/* Notes de modération */}
           {level === "moderator" && "moderatorNotes" in view && (
             <section className="border border-border-default bg-raised p-5">

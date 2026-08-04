@@ -52,12 +52,17 @@ test("le modérateur attribue la mission à DEUX groupes et la démarre", async 
   await select.selectOption({ index: 1 });
   await dialog.getByRole("button", { name: "Ajouter", exact: true }).click();
 
-  // Les cellules du seed comptent chacune 3 membres : on engage nominativement
-  // les six agents, ce qui détermine automatiquement l'effectif 3 + 3.
+  // Les deux cellules comptent 3 membres chacune, MAIS leur chef appartient
+  // aux deux : un agent ne peut représenter qu'un seul groupe. On engage donc
+  // les 3 agents de la première cellule et les 2 autres de la seconde → 5.
   const agentCheckboxes = dialog.locator("fieldset input[type=checkbox]");
   expect(await agentCheckboxes.count()).toBe(6);
-  for (const checkbox of await agentCheckboxes.all()) await checkbox.check();
-  await expect(dialog.getByText("Effectif total : 6")).toBeVisible();
+  const boxes = await agentCheckboxes.all();
+  for (const [index, checkbox] of boxes.entries()) {
+    if (index === 3) continue; // le chef, déjà engagé via la première cellule
+    await checkbox.check();
+  }
+  await expect(dialog.getByText("Effectif total : 5")).toBeVisible();
 
   // Groupe principal : le premier
   await dialog.getByRole("radio").first().check();
@@ -74,9 +79,9 @@ test("le modérateur attribue la mission à DEUX groupes et la démarre", async 
   });
   expect(mission.status).toBe("IN_PROGRESS");
   expect(mission.assignments).toHaveLength(2);
-  expect(mission.assignments.reduce((s, a) => s + a.assignedHeadcount, 0)).toBe(6);
+  expect(mission.assignments.reduce((sum, a) => sum + a.assignedHeadcount, 0)).toBe(5);
   expect(mission.assignments.filter((a) => a.isLeadGroup)).toHaveLength(1);
-  expect(await prisma.missionParticipant.count({ where: { missionId } })).toBe(6);
+  expect(await prisma.missionParticipant.count({ where: { missionId } })).toBe(5);
 });
 
 test("chaque groupe assigné voit l'équipe ; l'historique et l'audit existent", async ({
@@ -93,7 +98,7 @@ test("chaque groupe assigné voit l'équipe ; l'historique et l'audit existent",
   await loginAs(context, member.userId);
   await page.goto(`/missions/${missionId}`);
   await expect(page.getByRole("heading", { name: /équipe assignée/i })).toBeVisible();
-  await expect(page.getByText("Effectif total : 6")).toBeVisible();
+  await expect(page.getByText("Effectif total : 5")).toBeVisible();
   await expect(page.getByText("Groupe principal")).toBeVisible();
 
   const history = await prisma.missionStatusHistory.findFirst({

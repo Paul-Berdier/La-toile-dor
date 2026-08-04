@@ -50,6 +50,11 @@ ne quittent JAMAIS le serveur pour un utilisateur non autorisé.
 ## Documentation
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — structure, décisions, flux
+- [docs/CHARACTER_PROFILES.md](docs/CHARACTER_PROFILES.md) — dossiers de renseignement
+- [docs/PROFILE_VISIBILITY.md](docs/PROFILE_VISIBILITY.md) — « Inconnu » vs « ??? », matrice des droits
+- [docs/PROFILE_REFERENCE_DATA.md](docs/PROFILE_REFERENCE_DATA.md) — référentiels Naruto et provenance
+- [docs/PROFILE_PURCHASES.md](docs/PROFILE_PURCHASES.md) — achat d'un dossier par un groupe
+- [docs/RP_AGE_CALCULATION.md](docs/RP_AGE_CALCULATION.md) — âge suivant le temps RP
 - [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md) — identité « Réseau d'Obsidienne »
 - [docs/SECURITY.md](docs/SECURITY.md) — modèle de menace et mesures
 - [docs/DEPLOYMENT_RAILWAY.md](docs/DEPLOYMENT_RAILWAY.md) — guide de déploiement
