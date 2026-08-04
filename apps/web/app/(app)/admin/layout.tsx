@@ -18,6 +18,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     { href: "/invitations", label: "Invitations" },
     { href: "/admin/factions", label: "Groupes & factions" },
     { href: "/admin/configuration", label: "Configuration" },
+    { href: "/admin/referentiels", label: "Référentiels" },
     { href: "/admin/audit", label: "Journal d'audit" },
   ];
 

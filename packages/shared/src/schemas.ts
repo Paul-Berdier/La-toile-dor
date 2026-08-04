@@ -108,8 +108,11 @@ export const missionClaimSchema = z.object({
   missionId: z.string().cuid(),
   groupId: z.string().cuid(),
   publicRoster: z.boolean().default(false),
+  // Identifiants d'utilisateurs : pas de contrainte de FORME (les comptes
+  // d'amorçage ont des identifiants lisibles). L'existence, l'appartenance au
+  // groupe et le statut actif sont vérifiés en base juste après.
   participantIds: z
-    .array(z.string().cuid())
+    .array(z.string().min(1).max(64))
     .min(1, "Sélectionnez au moins un agent.")
     .max(50)
     .refine((ids) => new Set(ids).size === ids.length, "Un agent ne peut être sélectionné qu'une fois."),
@@ -226,7 +229,7 @@ export const missionAssignSchema = z
       .array(
         z.object({
           groupId: z.string().min(1),
-          participantIds: z.array(z.string().cuid()).min(1, "Sélectionnez au moins un agent.").max(50),
+          participantIds: z.array(z.string().min(1).max(64)).min(1, "Sélectionnez au moins un agent.").max(50),
           isLead: z.boolean().default(false),
         }),
       )

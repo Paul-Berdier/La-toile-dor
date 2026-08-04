@@ -30,6 +30,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     items.push({ href: "/revendications", label: "Revendications", glyph: "願" });
   }
   items.push({ href: "/groupes", label: "Groupes", glyph: "組" });
+  items.push({ href: "/profils", label: "Dossiers", glyph: "諜" });
   items.push({ href: "/classement", label: "Classement", glyph: "位" });
   items.push({ href: "/notifications", label: "Échos", glyph: "響", badge: unreadEchoes });
   if (
@@ -65,7 +66,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           userName={streamer ? "Opérateur voilé" : current.session.user.displayName}
           roleLabel={roleLabel}
         />
-        <div className="flex-1 pb-16 md:pb-0">
+        {/* Réserve : barre d'onglets mobile + boutons flottants de confidentialité */}
+        <div className="flex-1 pb-28 md:pb-16">
           {streamer && (
             <p className="border-b border-gold-dim bg-gold-faint/40 px-4 py-1.5 text-center font-mono-toile text-[0.65rem] uppercase tracking-[0.25em] text-gold">
               Mode Streamer actif — identités et lieux voilés

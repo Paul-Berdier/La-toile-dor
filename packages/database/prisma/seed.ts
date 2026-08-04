@@ -6,6 +6,7 @@
  * initiale dont le jeton clair est affiché UNE SEULE FOIS en console.
  */
 import { createHash, randomBytes } from "node:crypto";
+import { seedProfileReferences } from "./seed-profile-references";
 import { PrismaClient, MissionRank, MissionCategory } from "../generated/client";
 
 const prisma = new PrismaClient();
@@ -28,6 +29,12 @@ const PERMISSION_DEFS: [string, string][] = [
   ["group.create", "Créer un groupe"],
   ["group.edit.any", "Modifier n'importe quel groupe"],
   ["identity.view.real", "Consulter les identités réelles (prénom/nom)"],
+  ["profile.manage", "Créer et modifier les dossiers de renseignement"],
+  ["profile.intel.view", "Voir toutes les valeurs, sources et historiques des dossiers"],
+  ["profile.purchase.review", "Traiter les demandes d'accès aux dossiers"],
+  ["profile.request.create", "Demander l'accès à un dossier pour son groupe"],
+  ["profile.reference.manage", "Gérer les référentiels des dossiers"],
+  ["profile.merge", "Fusionner ou archiver des dossiers"],
   ["points.adjust", "Modifier les points"],
   ["leaderboard.view", "Consulter le classement"],
   ["group.manage", "Gérer les groupes de sa faction"],
@@ -46,6 +53,7 @@ const ROLE_PERMS: Record<string, { name: string; perms: string[] | "all" }> = {
     name: "Modérateur",
     perms: [
       "invite.create", "group.create", "group.edit.any", "identity.view.real",
+      "profile.manage", "profile.intel.view", "profile.purchase.review",
       "mission.create", "mission.update", "mission.cancel", "mission.move",
       "mission.assign", "mission.view.all", "mission.view.confidential",
       "claim.review", "points.adjust", "leaderboard.view", "audit.read",
@@ -53,7 +61,7 @@ const ROLE_PERMS: Record<string, { name: string; perms: string[] | "all" }> = {
   },
   group_leader: {
     name: "Chef de groupe",
-    perms: ["invite.create", "mission.claim", "mission.report.submit", "group.manage", "leaderboard.view"],
+    perms: ["invite.create", "profile.request.create", "mission.claim", "mission.report.submit", "group.manage", "leaderboard.view"],
   },
   group_member: { name: "Membre de groupe", perms: ["leaderboard.view"] },
 };
@@ -153,6 +161,10 @@ async function main() {
     update: { value: rpTimeValue },
     create: { key: "rp_time", value: rpTimeValue },
   });
+
+  // Référentiels des dossiers de renseignement (production incluse)
+  const refCount = await seedProfileReferences(prisma);
+  console.log(`Référentiels des dossiers : ${refCount} entrées.`);
 
   // Utilisateur système (auteur des données de démonstration)
   const system = await prisma.user.upsert({
@@ -469,6 +481,137 @@ async function main() {
       profileCompleted: false,
     },
   });
+
+  // ── Dossiers de renseignement fictifs ──
+  const refOption = async (type: string, code: string) =>
+    prisma.profileReferenceOption.findUniqueOrThrow({ where: { type_code: { type, code } } });
+
+  const existingProfiles = await prisma.characterProfile.count();
+  if (existingProfiles === 0) {
+    const day2 = 86_400_000;
+    // Dossier COMPLET : « Akira » du clan Kaguya (toutes données fictives)
+    const akira = await prisma.characterProfile.create({
+      data: {
+        code: `tmp-${Date.now()}`,
+        characterFirstName: "Akira",
+        firstNameNorm: "akira",
+        characterLastName: "Kaguya",
+        sexCode: "MALE",
+        heightMinCm: 180,
+        heightMaxCm: 190,
+        hairColorId: (await refOption("HAIR_COLOR", "WHITE")).id,
+        factionId: (await prisma.faction.findUnique({ where: { slug: "kumogakure" } }))?.id,
+        rankId: levelId("jonin"),
+        lifeStatus: "ALIVE",
+        ageMode: "AGE_AT_REFERENCE",
+        ageYearsAtRef: 24,
+        ageReferenceRealAt: new Date(now - 3 * day2),
+        details: "Mercenaire discret opérant autour des routes marchandes. (fiction RP)",
+        strengths: "Ossature modelable, sang-froid remarquable. (fiction RP)",
+        weaknesses: "Endurance limitée après usage prolongé du Shikotsumyaku. (fiction RP)",
+        internalNotes: "NOTE INTERNE FICTIVE — jamais vendue avec le dossier.",
+        createdById: demoMod.id,
+      },
+    });
+    await prisma.characterProfile.update({
+      where: { id: akira.id },
+      data: { code: `PRF-${String(akira.codeNumber).padStart(6, "0")}` },
+    });
+    await prisma.characterProfileTrait.createMany({
+      data: [
+        { profileId: akira.id, optionId: (await refOption("CLAN_FAMILY", "KAGUYA")).id },
+        { profileId: akira.id, optionId: (await refOption("CHAKRA_NATURE", "SUITON")).id },
+        { profileId: akira.id, optionId: (await refOption("KEKKEI_GENKAI", "SHIKOTSUMYAKU")).id },
+        { profileId: akira.id, optionId: (await refOption("COMBAT_STYLE", "KENJUTSU")).id },
+        { profileId: akira.id, optionId: (await refOption("KENJUTSU_STYLE", "HEAVY_BLADE")).id },
+      ],
+    });
+    await prisma.characterSignatureTechnique.create({
+      data: {
+        profileId: akira.id,
+        name: "Danse des Camélias",
+        shortDescription: "Enchaînement de frappes à l'os affûté. (fiction RP)",
+        jutsuTypeId: (await refOption("JUTSU_TYPE", "TAIJUTSU")).id,
+        rank: "B",
+        createdById: demoMod.id,
+      },
+    });
+    // États de connaissance : tout ce qui précède est CONNU ; la peau reste
+    // inconnue (pas de ligne) ; l'absence d'artefact est CONFIRMÉE.
+    const knownKeys = [
+      "lastName", "sex", "height", "hairColor", "faction", "clans", "rank",
+      "lifeStatus", "age", "chakraNatures", "kekkeiGenkai", "techniques",
+      "combatStyles", "kenjutsuStyles", "details", "strengths", "weaknesses",
+    ];
+    await prisma.characterFieldIntel.createMany({
+      data: [
+        ...knownKeys.map((fieldKey) => ({
+          profileId: akira.id,
+          fieldKey,
+          knowledgeState: "KNOWN" as const,
+          confidence: "CONFIRMED" as const,
+          updatedById: demoMod.id,
+        })),
+        {
+          profileId: akira.id,
+          fieldKey: "artifacts",
+          knowledgeState: "NONE_CONFIRMED" as const,
+          confidence: "PROBABLE" as const,
+          updatedById: demoMod.id,
+        },
+      ],
+    });
+
+    // Dossier MINIMAL : « Ombre » (prénom seul, tout Inconnu)
+    const ombre = await prisma.characterProfile.create({
+      data: {
+        code: `tmp2-${Date.now()}`,
+        characterFirstName: "Ombre",
+        firstNameNorm: "ombre",
+        createdById: demoMod.id,
+      },
+    });
+    await prisma.characterProfile.update({
+      where: { id: ombre.id },
+      data: { code: `PRF-${String(ombre.codeNumber).padStart(6, "0")}` },
+    });
+
+    // Relation : Akira est parent d'Ombre (fiction)
+    await prisma.characterRelationship.create({
+      data: {
+        fromProfileId: akira.id,
+        toProfileId: ombre.id,
+        type: "PARENT_OF",
+        createdById: demoMod.id,
+      },
+    });
+
+    // Accès : la Cellule 1 de Kumogakure a acheté le dossier d'Akira ;
+    // une demande PENDING existe pour un autre groupe.
+    const buyerGroup = groups[0];
+    const requesterGroup = groups[2];
+    if (buyerGroup) {
+      await prisma.profileAccessGrant.create({
+        data: {
+          profileId: akira.id,
+          groupId: buyerGroup.group.id,
+          grantedById: demoMod.id,
+          priceRyos: 150_000,
+        },
+      });
+    }
+    if (requesterGroup) {
+      await prisma.profilePurchaseRequest.create({
+        data: {
+          profileId: akira.id,
+          groupId: requesterGroup.group.id,
+          requestedById: requesterGroup.chief.id,
+          message: "Nos routes croisent ce personnage. (fiction RP)",
+        },
+      });
+    }
+    console.log("Dossiers de démonstration créés (Akira, Ombre).");
+  }
   }
 
   // Invitations super_admin initiales si aucune invitation n'existe :

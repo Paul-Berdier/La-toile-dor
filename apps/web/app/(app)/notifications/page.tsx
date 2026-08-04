@@ -6,6 +6,10 @@ export const dynamic = "force-dynamic";
 
 /** Libellés des événements — remplace les DM Discord (mode sans bot). */
 const EVENT_LABELS: Record<string, { glyph: string; text: string }> = {
+  PROFILE_REQUEST_CREATED: { glyph: "諜", text: "Nouvelle demande d'accès à un dossier de renseignement" },
+  PROFILE_REQUEST_APPROVED: { glyph: "承", text: "Votre groupe possède désormais l'accès à un dossier" },
+  PROFILE_REQUEST_REFUSED: { glyph: "断", text: "Votre demande d'accès à un dossier a été refusée" },
+  PROFILE_UPDATED: { glyph: "筆", text: "Un dossier détenu par votre groupe a été mis à jour" },
   MISSION_AVAILABLE: { glyph: "🕸", text: "Un nouveau fil a été tendu sur la Toile" },
   CLAIM_ACCEPTED: { glyph: "承", text: "Votre revendication a été acceptée — le dossier vous est ouvert" },
   CLAIM_REJECTED: { glyph: "断", text: "Votre revendication a été refusée" },

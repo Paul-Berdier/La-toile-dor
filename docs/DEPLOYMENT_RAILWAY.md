@@ -62,6 +62,27 @@ ENCRYPTION_KEY=<openssl rand -base64 32>
 Ne JAMAIS mettre `DEV_LOGIN` en production. Secrets de production distincts
 de ceux du développement local.
 
+## 5 bis. Dossiers de renseignement — points de déploiement
+
+- **Aucune nouvelle variable d'environnement.** Les portraits sont stockés en
+  base (`CharacterProfile.imageData`), comme les emblèmes de groupe : le
+  système de fichiers Railway étant éphémère, aucun volume ni service de
+  stockage objet n'est requis. Les images **survivent donc aux redéploiements**.
+- La migration `20260804090000_character_profiles` est **additive** (nouvelles
+  tables, enums, index partiels, contraintes CHECK) : aucune table ni colonne
+  existante n'est modifiée ou supprimée.
+- Le seed des **référentiels** (105 entrées Naruto vérifiées) est idempotent et
+  s'exécute aussi en mode production (`SEED_DEMO=0`) — il ne crée aucune donnée
+  fictive de démonstration.
+- Les **nouvelles permissions** (`profile.manage`, `profile.intel.view`,
+  `profile.purchase.review`, `profile.request.create`,
+  `profile.reference.manage`, `profile.merge`) sont créées par le seed et
+  rattachées aux rôles. **Sans relancer le seed, les modérateurs n'auront pas
+  accès aux dossiers** — voir §6.
+
+Surveillance de la taille : chaque portrait est plafonné à 500 Ko. Pour ~200
+dossiers illustrés, compter environ 100 Mo dans PostgreSQL.
+
 ## 6. Migrations Prisma
 
 Le conteneur web exécute `prisma migrate deploy` **à chaque démarrage** avant

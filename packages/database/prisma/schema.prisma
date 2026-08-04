@@ -223,6 +223,7 @@ model Faction {
   scores       MissionScore[]
   missionsAssigned Mission[] @relation("MissionAssignedFaction")
   targetMissions   Mission[] @relation("MissionTargetFaction")
+  characterProfiles CharacterProfile[] @relation("ProfileFaction")
 }
 
 model FactionMember {
@@ -267,6 +268,8 @@ model Group {
   scores      MissionScore[]
   missionsAssigned Mission[] @relation("MissionAssignedGroup")
   invitations Invitation[]
+  profileRequests ProfilePurchaseRequest[] @relation("GroupProfileRequests")
+  profileGrants   ProfileAccessGrant[]     @relation("GroupProfileGrants")
 
   @@unique([factionId, name])
 }
@@ -299,6 +302,7 @@ model PlayerLevel {
   ranksMin       RankConfig[]
   users          User[]       @relation("UserLevel")
   invitations    Invitation[]
+  characterProfiles CharacterProfile[] @relation("ProfileRank")
 }
 
 enum MissionRank {
@@ -440,6 +444,7 @@ model Mission {
   reports       MissionReport[]
   scores        MissionScore[]
   notifications NotificationDelivery[]
+  intelSources  CharacterFieldIntel[]  @relation("IntelSourceMission")
 
   @@index([status, rank])
   @@index([status, expiresAt])
@@ -660,6 +665,10 @@ model MissionScore {
 // ─────────────────────────────────────────────────────────────
 
 enum NotificationEvent {
+  PROFILE_REQUEST_CREATED
+  PROFILE_REQUEST_APPROVED
+  PROFILE_REQUEST_REFUSED
+  PROFILE_UPDATED
   MEMBER_PROMOTED
   MISSION_AVAILABLE
   CLAIM_ACCEPTED
@@ -762,4 +771,354 @@ model AppSetting {
   value     Json
   updatedAt DateTime @updatedAt
   updatedById String?
+}
+
+// ─────────────────────────────────────────────────────────────
+// Dossiers de renseignement (profils de personnages RP)
+// Entité DISTINCTE des comptes utilisateurs : un CharacterProfile décrit un
+// personnage recherché/observé du RP, jamais un joueur.
+// ─────────────────────────────────────────────────────────────
+
+// État de connaissance d'une information du dossier.
+// UNKNOWN → « Inconnu » (la Toile ne sait pas) — visible par tous.
+// KNOWN → valeur réelle pour les autorisés, « ??? » pour les autres.
+// NONE_CONFIRMED → « Aucun » pour les autorisés, « ??? » pour les autres.
+// CONFLICTING → « Information contradictoire » / « ??? ».
+// Les textes « Inconnu » et « ??? » ne sont JAMAIS stockés : ils sont calculés.
+enum ProfileKnowledgeState {
+  UNKNOWN
+  KNOWN
+  NONE_CONFIRMED
+  CONFLICTING
+}
+
+enum IntelConfidence {
+  RUMOR
+  UNCONFIRMED
+  PROBABLE
+  CONFIRMED
+}
+
+enum ProfileLifeStatus {
+  ALIVE
+  DEAD
+  MISSING
+}
+
+enum ProfileSex {
+  MALE
+  FEMALE
+  OTHER
+}
+
+// Mode de calcul de l'âge — TOUJOURS dérivé du service central de temps RP,
+// à partir d'instants réels UTC de référence (jamais un âge figé à la main).
+enum ProfileAgeMode {
+  UNKNOWN
+  BIRTH_DATE_RP
+  AGE_AT_REFERENCE
+  AGE_RANGE_AT_REFERENCE
+}
+
+enum ReferenceSourceScope {
+  MANGA_CANON
+  ANIME
+  FILM
+  GAME
+  SERVER_CUSTOM
+}
+
+enum ReferenceSuggestionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  MERGED
+}
+
+enum ProfileRequestStatus {
+  PENDING
+  APPROVED
+  REFUSED
+  CANCELLED
+}
+
+// Relations stockées sous forme CANONIQUE uniquement ; les inverses
+// (enfant de, création de) sont dérivées à la lecture — jamais dupliquées.
+enum ProfileRelationType {
+  PARENT_OF
+  CREATOR_OF
+  SIBLING_OF // fromProfileId < toProfileId, imposé par le service
+}
+
+// Référentiel contrôlé et administrable (couleurs, clans, natures, KG,
+// styles, artefacts…). `type` est une String volontairement : la liste des
+// types est extensible sans migration (constantes dans @toile/shared).
+model ProfileReferenceOption {
+  id              String   @id @default(cuid())
+  type            String // HAIR_COLOR, SKIN_TONE, CLAN_FAMILY, CHAKRA_NATURE, KEKKEI_GENKAI, JUTSU_TYPE, COMBAT_STYLE, KENJUTSU_STYLE, LEGENDARY_ARTIFACT
+  code            String
+  label           String
+  normalizedLabel String // minuscules sans accents — anti-doublons (Uchiha/UCHIWA/Uchïha)
+  aliases         String[] @default([])
+  kanji           String?
+  romaji          String?
+  // Sous-catégorie métier (BASIC_ELEMENT, KEKKEI_TOTA, DOJUTSU, Sept Épées…)
+  category        String?
+  // Aperçu visuel (teintes de peau, couleurs de cheveux)
+  colorHex        String?
+  descriptionShort String?
+  sourceUrl       String?
+  sourceScope     ReferenceSourceScope @default(SERVER_CUSTOM)
+  metadata        Json?
+  sortOrder       Int      @default(100)
+  // Artefacts uniques : avertit (sans bloquer) si porté par plusieurs vivants
+  isUnique        Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  createdById     String?
+  approvedById    String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @default(now()) @updatedAt
+
+  traits           CharacterProfileTrait[]
+  hairProfiles     CharacterProfile[] @relation("ProfileHairColor")
+  skinProfiles     CharacterProfile[] @relation("ProfileSkinTone")
+  techniques       CharacterSignatureTechnique[] @relation("TechniqueJutsuType")
+  mergedSuggestions ProfileReferenceSuggestion[] @relation("SuggestionMergedInto")
+
+  @@unique([type, code])
+  @@unique([type, normalizedLabel])
+  @@index([type, isActive, sortOrder])
+}
+
+// Proposition d'une nouvelle entrée de référentiel (validée par un super-mod)
+model ProfileReferenceSuggestion {
+  id            String  @id @default(cuid())
+  type          String
+  proposedLabel String
+  description   String?
+  sourceUrl     String?
+  sourceScope   ReferenceSourceScope @default(SERVER_CUSTOM)
+  reason        String?
+  status        ReferenceSuggestionStatus @default(PENDING)
+  createdById   String
+  reviewedById  String?
+  reviewNote    String?
+  mergedIntoId  String?
+  createdAt     DateTime @default(now())
+  reviewedAt    DateTime?
+
+  mergedInto ProfileReferenceOption? @relation("SuggestionMergedInto", fields: [mergedIntoId], references: [id])
+
+  @@index([status, type])
+}
+
+model CharacterProfile {
+  id   String @id @default(cuid())
+  // Code lisible PRF-000142, dérivé d'un compteur auto-incrémenté
+  codeNumber Int    @unique @default(autoincrement())
+  code       String @unique
+
+  // ── Identité (seul le prénom est obligatoire ; il n'est PAS unique) ──
+  characterFirstName String
+  firstNameNorm      String // minuscules/espaces réduits — détection de doublons
+  characterLastName  String?
+  sexCode            ProfileSex?
+
+  // Portrait stocké en base (FS Railway éphémère), servi par route authentifiée
+  imageData Bytes?
+  imageMime String?
+
+  // ── Apparence ── (plage en cm, jamais une chaîne « 180-190 cm »)
+  heightMinCm Int?
+  heightMaxCm Int?
+  hairColorId String?
+  skinToneId  String?
+
+  // ── Affiliation ──
+  factionId String? // réutilise la table Faction existante
+  rankId    String? // réutilise le référentiel PlayerLevel existant
+
+  // ── État vital + âge (références en temps réel UTC ; conversion RP centralisée) ──
+  lifeStatus         ProfileLifeStatus?
+  ageMode            ProfileAgeMode @default(UNKNOWN)
+  birthRealAt        DateTime? // instant réel où l'âge RP du personnage était 0
+  ageYearsAtRef      Int?
+  ageMinAtRef        Int?
+  ageMaxAtRef        Int?
+  ageReferenceRealAt DateTime? // instant réel de l'observation de l'âge
+  statusChangedRealAt DateTime?
+  deathRealAt        DateTime? // fige l'âge d'un personnage mort
+  missingSinceRealAt DateTime? // un disparu continue de vieillir
+
+  // ── Analyse (texte brut multiligne, jamais de HTML) ──
+  details   String?
+  strengths String?
+  weaknesses String?
+  // Notes internes : JAMAIS incluses dans un dossier acheté
+  internalNotes String?
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @default(now()) @updatedAt
+  archivedAt  DateTime?
+  mergedIntoId String? // redirection après fusion de doublons
+  version     Int       @default(1)
+
+  hairColor ProfileReferenceOption? @relation("ProfileHairColor", fields: [hairColorId], references: [id])
+  skinTone  ProfileReferenceOption? @relation("ProfileSkinTone", fields: [skinToneId], references: [id])
+  faction   Faction?     @relation("ProfileFaction", fields: [factionId], references: [id])
+  rank      PlayerLevel? @relation("ProfileRank", fields: [rankId], references: [id])
+  mergedInto CharacterProfile? @relation("ProfileMerge", fields: [mergedIntoId], references: [id])
+  mergedFrom CharacterProfile[] @relation("ProfileMerge")
+
+  fieldIntel    CharacterFieldIntel[]
+  traits        CharacterProfileTrait[]
+  techniques    CharacterSignatureTechnique[]
+  relationsFrom CharacterRelationship[] @relation("RelFrom")
+  relationsTo   CharacterRelationship[] @relation("RelTo")
+  revisions     CharacterProfileRevision[]
+  purchaseRequests ProfilePurchaseRequest[]
+  accessGrants  ProfileAccessGrant[]
+
+  @@index([firstNameNorm])
+  @@index([archivedAt])
+  @@index([factionId])
+}
+
+// État de connaissance par champ (fieldKey ∈ @toile/shared PROFILE_FIELD_KEYS).
+// L'absence de ligne vaut UNKNOWN — règle centralisée dans le sérialiseur.
+model CharacterFieldIntel {
+  id         String                @id @default(cuid())
+  profileId  String
+  fieldKey   String
+  knowledgeState ProfileKnowledgeState @default(KNOWN)
+  confidence IntelConfidence?
+  sourceMissionId String?
+  sourceNote String?
+  observedAtRp String? // libellé RP libre (« 12e jour du mois de la Brume, an 42 »)
+  updatedById String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @default(now()) @updatedAt
+
+  profile CharacterProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  sourceMission Mission? @relation("IntelSourceMission", fields: [sourceMissionId], references: [id])
+
+  @@unique([profileId, fieldKey])
+  @@index([sourceMissionId])
+}
+
+// Liaison générique profil ↔ option de référentiel (natures, KG, clans,
+// styles, sous-styles Kenjutsu, artefacts). Le type vient de l'option —
+// même pouvoir de filtre que six tables dédiées, sans duplication.
+model CharacterProfileTrait {
+  profileId String
+  optionId  String
+  addedById String?
+  createdAt DateTime @default(now())
+
+  profile CharacterProfile       @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  option  ProfileReferenceOption @relation(fields: [optionId], references: [id])
+
+  @@id([profileId, optionId])
+  @@index([optionId])
+}
+
+// « Subjutsu » : techniques propres/signatures d'un personnage
+model CharacterSignatureTechnique {
+  id               String  @id @default(cuid())
+  profileId        String
+  name             String
+  shortDescription String?
+  jutsuTypeId      String?
+  rank             MissionRank? // échelle D→SS réutilisée
+  knowledgeState   ProfileKnowledgeState @default(KNOWN)
+  confidence       IntelConfidence?
+  sourceMissionId  String?
+  createdById      String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @default(now()) @updatedAt
+
+  profile   CharacterProfile        @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  jutsuType ProfileReferenceOption? @relation("TechniqueJutsuType", fields: [jutsuTypeId], references: [id])
+
+  @@index([profileId])
+}
+
+model CharacterRelationship {
+  id            String @id @default(cuid())
+  fromProfileId String
+  toProfileId   String
+  type          ProfileRelationType
+  note          String?
+  createdById   String?
+  createdAt     DateTime @default(now())
+
+  fromProfile CharacterProfile @relation("RelFrom", fields: [fromProfileId], references: [id], onDelete: Cascade)
+  toProfile   CharacterProfile @relation("RelTo", fields: [toProfileId], references: [id], onDelete: Cascade)
+
+  @@unique([fromProfileId, toProfileId, type])
+  @@index([toProfileId])
+}
+
+// Historique : aucune information n'est remplacée silencieusement
+model CharacterProfileRevision {
+  id         String  @id @default(cuid())
+  profileId  String
+  fieldKey   String
+  oldValue   Json?
+  newValue   Json?
+  changedById String?
+  sourceMissionId String?
+  confidence IntelConfidence?
+  justification String?
+  createdAt  DateTime @default(now())
+
+  profile CharacterProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, createdAt])
+}
+
+// Demande d'accès (achat) d'un dossier par un groupe.
+// Une seule demande PENDING par (profil, groupe) — index partiel en migration.
+model ProfilePurchaseRequest {
+  id            String  @id @default(cuid())
+  profileId     String
+  groupId       String
+  requestedById String
+  message       String?
+  status        ProfileRequestStatus @default(PENDING)
+  // Aucun portefeuille de Ryōs n'existe : le prix convenu est enregistré et
+  // le règlement se fait manuellement en RP (limite documentée).
+  priceRyos     Int?
+  moderatorResponse String?
+  reviewedById  String?
+  requestedAt   DateTime @default(now())
+  reviewedAt    DateTime?
+
+  profile CharacterProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  group   Group            @relation("GroupProfileRequests", fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@index([status, requestedAt])
+  @@index([groupId, status])
+}
+
+// Autorisation d'accès d'un groupe à un dossier (révocable).
+// Un seul accès actif par (profil, groupe) — index partiel en migration.
+model ProfileAccessGrant {
+  id          String  @id @default(cuid())
+  profileId   String
+  groupId     String
+  grantedById String
+  requestId   String?
+  priceRyos   Int?
+  grantedAt   DateTime @default(now())
+  revokedAt   DateTime?
+  revokedById String?
+
+  profile CharacterProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  group   Group            @relation("GroupProfileGrants", fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@index([groupId, revokedAt])
+  @@index([profileId, revokedAt])
 }
