@@ -187,6 +187,10 @@ export interface DossierDetail {
   /** Chefs : leurs groupes sans accès (pour demander l'achat) */
   requestableGroups: { id: string; name: string }[];
   myPendingRequest: boolean;
+  /** Nombre d'informations détenues par la Toile (sans en révéler le contenu) */
+  sealedCount: number;
+  /** Dernier prix consenti pour ce dossier, à titre indicatif */
+  lastPrice: number | null;
 }
 
 export async function getDossierDetail(
@@ -206,11 +210,13 @@ export async function getDossierDetail(
       },
     },
   });
-  if (!profile || profile.archivedAt) return null;
-  // Dossier fusionné : suivre la redirection
+  if (!profile) return null;
+  // Un dossier fusionné est aussi archivé : la redirection doit donc être
+  // évaluée AVANT le test d'archivage, sinon l'ancien code renverrait 404.
   if (profile.mergedIntoId) {
     return getDossierDetail(current, profile.mergedIntoId);
   }
+  if (profile.archivedAt) return null;
 
   const canView = canViewProfileValues(viewer, profile.id);
   const rpConfig = await getRpTimeConfig();
@@ -243,6 +249,21 @@ export async function getDossierDetail(
     else if (rel.type === "CREATOR_OF") push(rel.id, "creators", rel.fromProfile);
     else push(rel.id, "siblings", rel.fromProfile);
   }
+
+  // Volume de renseignements détenus : un compte, jamais un contenu — il est
+  // déjà déductible des « ??? » affichés, et motive la demande d'accès.
+  const sealedCount = profile.fieldIntel.filter(
+    (row) => row.knowledgeState !== "UNKNOWN",
+  ).length;
+  // Dernier tarif consenti (indicatif) : le prix reste fixé par la modération
+  const lastGrant = canView
+    ? null
+    : await prisma.profileAccessGrant.findFirst({
+        where: { profileId: profile.id, priceRyos: { not: null } },
+        orderBy: { grantedAt: "desc" },
+        select: { priceRyos: true },
+      });
+  const lastPrice = lastGrant?.priceRyos ?? null;
 
   // Chefs : groupes qu'ils dirigent, sans accès actif ni demande en attente
   let requestableGroups: { id: string; name: string }[] = [];
@@ -316,7 +337,16 @@ export async function getDossierDetail(
     };
   }
 
-  return { dossier, relations, viewer, internal, requestableGroups, myPendingRequest };
+  return {
+    dossier,
+    relations,
+    viewer,
+    internal,
+    requestableGroups,
+    myPendingRequest,
+    sealedCount,
+    lastPrice,
+  };
 }
 
 // ── Doublons potentiels ──

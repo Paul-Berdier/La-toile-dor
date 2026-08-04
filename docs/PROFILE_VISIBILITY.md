@@ -18,6 +18,27 @@ calculé par `resolveFieldDisplay(knowledge, canView)`
 Il est **acceptable** qu'un lecteur déduise qu'une information existe sans
 connaître sa valeur : c'est le comportement attendu (§13 du cahier des charges).
 
+## Rendu visuel : la distinction doit être indiscutable
+
+La différence entre « pas d'information » et « information refusée » ne repose
+**jamais sur la seule couleur** — elle porte sur la forme et la longueur :
+
+| État | Rendu | Label accessible |
+|---|---|---|
+| `???` | **Bande censurée** pleine largeur, fond obsidienne mat, liseré or, blocs `▮▮▮▮` et sceau 封, curseur `not-allowed` | « Information connue mais confidentielle » |
+| `Inconnu` | Mention italique discrète, sans cadre ni fond | « Information non renseignée » |
+| `Aucun` | Glyphe 無 cuivre + « Aucun » | « Absence confirmée » |
+| `Contradictoire` | Cadre rouge sang + ⚠ | « Renseignements contradictoires » |
+
+Une variante `compact` de la bande existe pour les en-têtes et les listes.
+
+**Dossier ouvert = parchemin.** Un dossier dont le lecteur possède les valeurs
+s'affiche sur `bg-parchment` avec titres à l'encre de sceau — même grammaire
+que les dossiers de mission : on ouvre un document. Un dossier **scellé**
+reste sur panneau sombre : il n'y a rien à lire, et la colonne latérale
+affiche le sceau 封, le **nombre de renseignements sous scellé** et, pour un
+chef, le dernier tarif consenti à titre indicatif.
+
 ## Garantie de non-fuite
 
 Le sérialiseur `serializeDossier` (`apps/web/server/profiles/serializer.ts`)

@@ -16,10 +16,15 @@ build/
 # Prisma
 packages/database/generated/
 
+# Caches d'outillage (pollue les diffs, régénéré à chaque build)
+*.tsbuildinfo
+
 # Tests
 coverage/
 playwright-report/
 test-results/
+audit-profils*/
+audit-screens*/
 
 # IDE
 .idea/
