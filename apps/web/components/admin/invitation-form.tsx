@@ -16,6 +16,7 @@ export interface GroupOption {
   leaderNames: string[];
 }
 
+/** Regroupement interne utilisé par la page pour bâtir la liste des groupes. */
 export interface FactionOption {
   id: string;
   name: string;
@@ -31,31 +32,29 @@ const ROLE_LABELS: Record<string, string> = {
 
 /**
  * Formulaire « Tendre un nouveau fil ».
- * - `allowedRoles` : rôles que l'inviteur a le droit d'accorder (recalculé
- *   côté serveur de toute façon) ;
- * - `factions` : rattachements facultatifs lors de la fondation d'un groupe ;
+ *
+ * L'inviteur décide d'une seule chose : la POSITION de l'invité (son rôle et,
+ * le cas échéant, le groupe qu'il rejoint). Le grade du personnage n'est plus
+ * demandé ici — il appartient au joueur, qui le déclare à sa première
+ * connexion en même temps que son Titre.
+ *
+ * - `allowedRoles` : rôles que l'inviteur peut accorder (revérifié serveur) ;
  * - `groups` : groupes sélectionnables par la modération ;
- * - `leaderGroups` : si non nul, l'inviteur est un chef — seul le choix
- *   parmi SES groupes est proposé.
+ * - `leaderGroups` : si non nul, l'inviteur est un chef — seuls SES groupes
+ *   sont proposés.
  */
 export function InvitationForm({
   allowedRoles,
-  factions,
   groups,
   leaderGroups,
-  levels,
 }: {
   allowedRoles: string[];
-  factions: FactionOption[];
   groups: GroupOption[];
   leaderGroups: GroupOption[] | null;
-  levels: { id: string; label: string }[];
 }) {
   const router = useRouter();
   const [roleSlug, setRoleSlug] = useState(allowedRoles[allowedRoles.length - 1] ?? "group_member");
-  const [factionId, setFactionId] = useState("");
   const [groupId, setGroupId] = useState(leaderGroups?.[0]?.id ?? "");
-  const [playerLevelId, setPlayerLevelId] = useState(levels[0]?.id ?? "");
   // Parcours du chef invité : rejoindre un groupe existant ou fonder le sien
   const [leaderMode, setLeaderMode] = useState<"EXISTING_GROUP" | "CREATE_NEW_GROUP">("EXISTING_GROUP");
   const [hours, setHours] = useState(72);
@@ -77,9 +76,7 @@ export function InvitationForm({
     startTransition(async () => {
       const res = await createInvitationAction({
         roleSlug,
-        factionId: creatingNewGroup && factionId ? factionId : undefined,
         groupId: groupId && !creatingNewGroup ? groupId : undefined,
-        playerLevelId,
         groupOnboardingMode: isLeaderInvite && !leaderGroups ? leaderMode : "NONE",
         expiresInHours: hours,
         requireApproval,
@@ -106,7 +103,8 @@ export function InvitationForm({
         Tendre un nouveau fil
       </h2>
       <p className="mb-3 text-xs text-ink-faint">
-        Choisissez son rôle, son niveau RP et son groupe avant de lier son compte Discord.
+        Choisissez son rôle et, s&rsquo;il y a lieu, le groupe qu&rsquo;il rejoint.
+        L&rsquo;invité déclarera lui-même son Titre et son grade à sa première connexion.
       </p>
 
       {inviteUrl ? (
@@ -136,26 +134,11 @@ export function InvitationForm({
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
-          <div>
+          <div className="sm:col-span-2">
             <label htmlFor="inv-role" className={label}>Rôle accordé</label>
             <select id="inv-role" value={roleSlug} onChange={(e) => setRoleSlug(e.target.value)} className={input}>
               {allowedRoles.map((slug) => (
                 <option key={slug} value={slug}>{ROLE_LABELS[slug] ?? slug}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label htmlFor="inv-level" className={label}>Niveau du personnage *</label>
-            <select
-              id="inv-level"
-              value={playerLevelId}
-              onChange={(event) => setPlayerLevelId(event.target.value)}
-              className={input}
-              required
-            >
-              {levels.map((level) => (
-                <option key={level.id} value={level.id}>{level.label}</option>
               ))}
             </select>
           </div>
@@ -177,52 +160,35 @@ export function InvitationForm({
                     checked={leaderMode === "CREATE_NEW_GROUP"}
                     onChange={() => { setLeaderMode("CREATE_NEW_GROUP"); setGroupId(""); }}
                     className="mt-1 accent-[var(--toile-gold)]" />
-                  Autoriser le chef à fonder un nouveau groupe à sa première connexion
+                  Autoriser le chef à fonder son propre groupe à sa première connexion
                 </label>
               </div>
             </fieldset>
           )}
 
           {leaderGroups ? (
-            <div>
+            <div className="sm:col-span-2">
               <label htmlFor="inv-group" className={label}>Groupe rejoint</label>
               <select id="inv-group" value={groupId} onChange={(e) => setGroupId(e.target.value)} className={input}>
                 {leaderGroups.map((group) => (
-                  <option key={group.id} value={group.id}>
-                    {group.name} · {group.factionName ?? "Sans faction"}
-                  </option>
+                  <option key={group.id} value={group.id}>{group.name}</option>
                 ))}
               </select>
             </div>
           ) : creatingNewGroup ? (
-            <div>
-              <label htmlFor="inv-faction" className={label}>Faction du futur groupe (facultatif)</label>
-              <select
-                id="inv-faction"
-                value={factionId}
-                onChange={(e) => setFactionId(e.target.value)}
-                className={input}
-              >
-                <option value="">Sans faction</option>
-                {factions.map((faction) => (
-                  <option key={faction.id} value={faction.id}>{faction.name}</option>
-                ))}
-              </select>
-              <p className="mt-1 text-[0.65rem] text-ink-faint">
-                Aucun rattachement ne sera créé automatiquement.
-              </p>
-            </div>
+            <p className="border border-border-default bg-elevated px-3 py-2 text-xs text-ink-muted sm:col-span-2">
+              Le chef fondera son groupe lui-même à sa première connexion : il en
+              choisira le nom, la résidence et les spécialités.
+            </p>
           ) : (
-            <div>
+            <div className="sm:col-span-2">
               <label htmlFor="inv-group" className={label}>
                 Groupe {roleNeedsGroup ? "rejoint *" : "rejoint (facultatif)"}
               </label>
               <select id="inv-group" value={groupId} onChange={(e) => setGroupId(e.target.value)} className={input}>
                 <option value="">—</option>
                 {groups.map((group) => (
-                  <option key={group.id} value={group.id}>
-                    {group.name} · {group.factionName ?? "Sans faction"}
-                  </option>
+                  <option key={group.id} value={group.id}>{group.name}</option>
                 ))}
               </select>
             </div>
@@ -231,9 +197,7 @@ export function InvitationForm({
           {/* Fiche du groupe sélectionné : le modérateur confirme en connaissance */}
           {!leaderGroups && selectedGroup && !creatingNewGroup && (
             <aside className="border border-border-default bg-elevated p-3 text-xs text-ink-muted sm:col-span-2">
-              <p className="font-medium text-ink">
-                {selectedGroup.name} · {selectedGroup.factionName ?? "Sans faction"}
-              </p>
+              <p className="font-medium text-ink">{selectedGroup.name}</p>
               <p className="mt-1">
                 {[selectedGroup.primaryVillage, selectedGroup.primaryCountry]
                   .filter(Boolean)
@@ -279,11 +243,7 @@ export function InvitationForm({
             <Button
               variant="gold"
               onClick={submit}
-              disabled={
-                isPending ||
-                !playerLevelId ||
-                (roleNeedsGroup && !creatingNewGroup && !groupId)
-              }
+              disabled={isPending || (roleNeedsGroup && !creatingNewGroup && !groupId)}
             >
               {isPending ? "Tissage…" : "Générer l'invitation"}
             </Button>

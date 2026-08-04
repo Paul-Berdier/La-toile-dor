@@ -2,7 +2,11 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { mergeProfilesAction, archiveProfileAction } from "@/server/profiles/profile-actions";
+import {
+  mergeProfilesAction,
+  archiveProfileAction,
+  deleteProfileAction,
+} from "@/server/profiles/profile-actions";
 import { Button } from "@/components/ui/button";
 
 interface Candidate {
@@ -60,6 +64,7 @@ export function MergePanel({
           Fusionner avec un autre dossier
         </Button>
         <ArchiveButton profileId={profileId} />
+        <DeleteButton profileId={profileId} profileCode={profileCode} profileName={profileName} />
       </div>
     );
   }
@@ -180,5 +185,83 @@ function ArchiveButton({ profileId }: { profileId: string }) {
         Renoncer
       </Button>
     </span>
+  );
+}
+
+/**
+ * Suppression définitive. Irréversible : on demande de recopier le code du
+ * dossier, comme pour toute destruction de données — l'archivage reste offert
+ * juste à côté pour ceux qui voulaient seulement le sortir des listes.
+ */
+function DeleteButton({
+  profileId,
+  profileCode,
+  profileName,
+}: {
+  profileId: string;
+  profileCode: string;
+  profileName: string;
+}) {
+  const router = useRouter();
+  const [confirming, setConfirming] = useState(false);
+  const [typed, setTyped] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  if (!confirming) {
+    return (
+      <Button variant="danger" size="sm" onClick={() => setConfirming(true)}>
+        Supprimer définitivement
+      </Button>
+    );
+  }
+
+  return (
+    <div className="w-full space-y-2 border border-blood/60 bg-blood/10 p-3">
+      <p className="text-xs text-blood-bright">
+        Suppression <strong>irréversible</strong> de {profileCode} — {profileName} :
+        renseignements, relations, historique, demandes et accès disparaissent.
+        Préférez l&rsquo;archivage si vous voulez seulement le retirer des listes.
+      </p>
+      <label htmlFor={`del-${profileId}`} className="block text-[0.7rem] text-ink-muted">
+        Recopiez <strong className="font-mono-toile text-ink">{profileCode}</strong> pour confirmer
+      </label>
+      <input
+        id={`del-${profileId}`}
+        value={typed}
+        onChange={(e) => setTyped(e.target.value)}
+        autoComplete="off"
+        className="w-full max-w-xs border border-border-default bg-raised px-3 py-1.5 font-mono-toile text-sm text-ink focus:border-blood"
+      />
+      {error && (
+        <p role="alert" className="text-xs text-blood-bright">
+          {error}
+        </p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          variant="danger"
+          size="sm"
+          disabled={isPending || typed.trim().toUpperCase() !== profileCode.toUpperCase()}
+          onClick={() =>
+            startTransition(async () => {
+              const res = await deleteProfileAction(profileId);
+              if (!res.ok) setError(res.error ?? "La suppression a échoué.");
+              else router.push("/profils");
+            })
+          }
+        >
+          {isPending ? "Suppression…" : "Supprimer définitivement"}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => { setConfirming(false); setTyped(""); setError(null); }}
+          disabled={isPending}
+        >
+          Renoncer
+        </Button>
+      </div>
+    </div>
   );
 }

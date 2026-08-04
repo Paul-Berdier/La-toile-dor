@@ -1,13 +1,22 @@
 "use client";
 
-import { useId, useMemo, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState, useTransition } from "react";
 import { normalizeRefLabel } from "@toile/shared";
+import { createInlineReferenceOptionAction } from "@/server/profiles/profile-actions";
 import type { RefOption } from "./edit-form";
+
+/** Types pour lesquels une teinte est proposée à la création. */
+const COLOR_TYPES = new Set(["HAIR_COLOR", "SKIN_TONE"]);
 
 /**
  * Sélecteur de référentiel : recherche tolérante aux accents et aux alias,
  * sélection multiple sous forme de tags, navigation clavier complète
- * (↑ ↓ Entrée Échap ⌫), et proposition d'une valeur absente.
+ * (↑ ↓ Entrée Échap ⌫).
+ *
+ * Une valeur absente peut être AJOUTÉE directement lorsque le rédacteur
+ * administre les référentiels (`canCreate`) ; sinon elle est proposée et
+ * attend une validation. Sans cette saisie directe, compléter un dossier
+ * butait sur toute valeur non prévue.
  */
 export function ReferencePicker({
   legend,
@@ -15,6 +24,9 @@ export function ReferencePicker({
   selected,
   onChange,
   onSuggest,
+  referenceType,
+  canCreate = false,
+  onCreated,
   placeholder = "Rechercher…",
 }: {
   legend: string;
@@ -23,6 +35,12 @@ export function ReferencePicker({
   onChange: (ids: string[]) => void;
   /** Ouvre la proposition d'une nouvelle entrée avec le texte saisi */
   onSuggest?: (label: string) => void;
+  /** Référentiel visé (HAIR_COLOR, CLAN_FAMILY…) — requis pour créer */
+  referenceType?: string;
+  /** Le rédacteur peut-il créer l'entrée sans validation ? */
+  canCreate?: boolean;
+  /** Remonte l'entrée créée pour l'ajouter aux options affichées */
+  onCreated?: (option: RefOption) => void;
   placeholder?: string;
 }) {
   const listId = useId();
@@ -30,6 +48,12 @@ export function ReferencePicker({
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
+  const [newColor, setNewColor] = useState("#8a7f6d");
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [isCreating, startCreate] = useTransition();
+
+  const wantsColor = referenceType != null && COLOR_TYPES.has(referenceType);
+  const directCreate = canCreate && referenceType != null;
 
   const byId = useMemo(() => new Map(options.map((o) => [o.id, o])), [options]);
 
@@ -46,6 +70,13 @@ export function ReferencePicker({
       .slice(0, 8);
   }, [options, selected, query]);
 
+  // Une saisie qui correspond exactement à une entrée existante ne doit pas
+  // proposer de la recréer — c'est ainsi qu'on évite Uchiha / UCHIWA / Uchïha.
+  const exactMatch = useMemo(() => {
+    const q = normalizeRefLabel(query);
+    return q.length > 0 && options.some((o) => normalizeRefLabel(o.label) === q);
+  }, [options, query]);
+
   const add = (id: string) => {
     onChange([...selected, id]);
     setQuery("");
@@ -53,6 +84,34 @@ export function ReferencePicker({
     inputRef.current?.focus();
   };
   const remove = (id: string) => onChange(selected.filter((s) => s !== id));
+
+  /** Crée l'entrée puis la sélectionne — l'action est idempotente. */
+  const create = (label: string) => {
+    if (!referenceType || isCreating) return;
+    startCreate(async () => {
+      const res = await createInlineReferenceOptionAction({
+        type: referenceType,
+        label,
+        ...(wantsColor ? { colorHex: newColor } : {}),
+      });
+      if (!res.ok || !res.option) {
+        setCreateError(res.error ?? "La création a échoué.");
+        return;
+      }
+      setCreateError(null);
+      onCreated?.({
+        id: res.option.id,
+        label: res.option.label,
+        category: null,
+        colorHex: res.option.colorHex,
+        sourceScopeLabel: "Serveur",
+      });
+      onChange([...selected, res.option.id]);
+      setQuery("");
+      setOpen(false);
+      inputRef.current?.focus();
+    });
+  };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown") {
@@ -170,21 +229,53 @@ export function ReferencePicker({
                 </button>
               </li>
             ))}
-            {onSuggest && query.trim().length >= 2 && (
-              <li className="border-t border-border-default">
-                <button
-                  type="button"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => { onSuggest(query.trim()); setQuery(""); setOpen(false); }}
-                  className="w-full px-3 py-1.5 text-left text-xs text-copper hover:bg-hover-bg"
-                >
-                  Proposer « {query.trim()} » comme nouvelle entrée…
-                </button>
-              </li>
-            )}
           </ul>
         )}
       </div>
+
+      {/* Ajout d'une valeur absente. Placé SOUS le champ et non dans la liste :
+          le sélecteur de teinte prendrait le focus et refermerait la liste. */}
+      {query.trim().length >= 2 && !exactMatch && (directCreate || onSuggest) && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-2 border border-dashed border-border-gold/60 bg-elevated/50 px-2 py-1.5">
+          {directCreate ? (
+            <>
+              {wantsColor && (
+                <label className="flex items-center gap-1 text-[0.65rem] text-ink-faint">
+                  Teinte
+                  <input
+                    type="color"
+                    value={newColor}
+                    onChange={(e) => setNewColor(e.target.value)}
+                    aria-label={`Teinte de « ${query.trim()} »`}
+                    className="h-6 w-8 cursor-pointer border border-border-default bg-transparent p-0"
+                  />
+                </label>
+              )}
+              <button
+                type="button"
+                onClick={() => create(query.trim())}
+                disabled={isCreating}
+                className="text-xs text-gold underline-offset-2 hover:underline disabled:opacity-60"
+              >
+                {isCreating ? "Ajout…" : `Ajouter « ${query.trim()} » au référentiel`}
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => { onSuggest?.(query.trim()); setQuery(""); }}
+              className="text-xs text-copper underline-offset-2 hover:underline"
+            >
+              Proposer « {query.trim()} » comme nouvelle entrée…
+            </button>
+          )}
+          {createError && (
+            <span role="alert" className="text-[0.65rem] text-blood-bright">
+              {createError}
+            </span>
+          )}
+        </div>
+      )}
     </fieldset>
   );
 }

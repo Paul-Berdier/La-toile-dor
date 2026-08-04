@@ -51,6 +51,19 @@ export async function completeIdentityAction(raw: unknown): Promise<Result> {
     };
   }
 
+  // Le grade est déclaré par le joueur : il doit exister dans le référentiel
+  const level = await prisma.playerLevel.findUnique({
+    where: { id: data.playerLevelId },
+    select: { id: true },
+  });
+  if (!level) {
+    return {
+      ok: false,
+      fieldErrors: { playerLevelId: ["Ce grade n'existe pas."] },
+      error: "Ce grade n'existe pas.",
+    };
+  }
+
   const before = await prisma.user.findUniqueOrThrow({
     where: { id: current.session.userId },
     select: { displayName: true, firstName: true, lastName: true },
@@ -64,6 +77,7 @@ export async function completeIdentityAction(raw: unknown): Promise<Result> {
         lastName: data.lastName?.trim() ? data.lastName.trim() : null,
         displayName,
         displayNameNorm: norm,
+        playerLevelId: level.id,
         privacyAcknowledgedAt: new Date(),
       },
     });

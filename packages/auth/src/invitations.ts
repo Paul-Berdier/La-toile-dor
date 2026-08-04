@@ -7,7 +7,8 @@ export interface CreateInvitationInput {
   roleId?: string;
   factionId?: string;
   groupId?: string;
-  playerLevelId: string;
+  /** Grade RP — normalement déclaré par l'invité lui-même à sa connexion */
+  playerLevelId?: string;
   groupOnboardingMode?: "NONE" | "EXISTING_GROUP" | "CREATE_NEW_GROUP";
   expiresInHours: number;
   requireApproval: boolean;
@@ -30,7 +31,7 @@ export async function createInvitation(
       roleId: input.roleId ?? null,
       factionId: input.factionId ?? null,
       groupId: input.groupId ?? null,
-      playerLevelId: input.playerLevelId,
+      playerLevelId: input.playerLevelId ?? null,
       groupOnboardingMode: input.groupOnboardingMode ?? "NONE",
       expiresAt: new Date(Date.now() + input.expiresInHours * 3600 * 1000),
       requireApproval: input.requireApproval,

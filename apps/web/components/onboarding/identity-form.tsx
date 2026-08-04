@@ -9,15 +9,25 @@ const input =
   "w-full border border-border-default bg-elevated px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold";
 const label = "mb-1 block text-xs uppercase tracking-wider text-ink-faint";
 
+/**
+ * Première connexion : le joueur déclare son identité.
+ *
+ * Deux points comptent plus que le reste :
+ * - le pseudonyme demandé est un TITRE de jeu de rôle, pas le pseudo Discord.
+ *   Le champ démarre donc VIDE, jamais pré-rempli avec le nom Discord, qui
+ *   ferait croire qu'il suffit de le valider ;
+ * - le grade est choisi ICI, par le joueur, et non imposé par l'inviteur.
+ */
 export function IdentityForm({
-  initialDisplayName,
+  levels,
 }: {
-  initialDisplayName: string;
+  levels: { id: string; label: string }[];
 }) {
   const router = useRouter();
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
-  const [displayName, setDisplayName] = useState(initialDisplayName);
+  const [displayName, setDisplayName] = useState("");
+  const [playerLevelId, setPlayerLevelId] = useState("");
   const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
   const [errors, setErrors] = useState<Record<string, string[]>>({});
   const [globalError, setGlobalError] = useState<string | null>(null);
@@ -30,6 +40,7 @@ export function IdentityForm({
         firstName,
         lastName,
         displayName,
+        playerLevelId,
         privacyAcknowledged,
       });
       if (!res.ok) {
@@ -54,9 +65,65 @@ export function IdentityForm({
       className="space-y-4"
       noValidate
     >
+      {/* Le Titre d'abord : c'est le point qui prête le plus à confusion */}
+      <div>
+        <label htmlFor="ob-displayname" className={label}>
+          Votre Titre *
+        </label>
+        <p className="mb-1.5 text-xs leading-relaxed text-ink-muted">
+          Ce n&rsquo;est <strong className="text-gold">pas</strong> votre pseudo Discord :
+          c&rsquo;est le nom sous lequel la Toile vous connaît, celui qui circule dans
+          les rumeurs — <em>« L&rsquo;assassin de l&rsquo;ombre »</em>,{" "}
+          <em>« La Vipère de Kiri »</em>, <em>« Celui qui ne dort jamais »</em>.
+        </p>
+        <input
+          id="ob-displayname"
+          value={displayName}
+          onChange={(e) => setDisplayName(e.target.value)}
+          maxLength={60}
+          required
+          autoComplete="off"
+          placeholder="ex. L'assassin de l'ombre"
+          className={input}
+        />
+        {fieldError("displayName") && (
+          <p role="alert" className="mt-1 text-xs text-blood-bright">
+            {fieldError("displayName")}
+          </p>
+        )}
+      </div>
+
+      <div>
+        <label htmlFor="ob-level" className={label}>
+          Grade de votre personnage *
+        </label>
+        <p className="mb-1.5 text-xs text-ink-muted">
+          C&rsquo;est à vous de le déclarer : personne ne l&rsquo;a choisi à votre place.
+        </p>
+        <select
+          id="ob-level"
+          value={playerLevelId}
+          onChange={(e) => setPlayerLevelId(e.target.value)}
+          required
+          className={input}
+        >
+          <option value="">— choisir votre grade —</option>
+          {levels.map((level) => (
+            <option key={level.id} value={level.id}>
+              {level.label}
+            </option>
+          ))}
+        </select>
+        {fieldError("playerLevelId") && (
+          <p role="alert" className="mt-1 text-xs text-blood-bright">
+            {fieldError("playerLevelId")}
+          </p>
+        )}
+      </div>
+
       <div>
         <label htmlFor="ob-firstname" className={label}>
-          Prénom *
+          Prénom du personnage *
         </label>
         <input
           id="ob-firstname"
@@ -93,34 +160,13 @@ export function IdentityForm({
         )}
       </div>
 
-      <div>
-        <label htmlFor="ob-displayname" className={label}>
-          Pseudonyme public *
-        </label>
-        <input
-          id="ob-displayname"
-          value={displayName}
-          onChange={(e) => setDisplayName(e.target.value)}
-          maxLength={60}
-          required
-          autoComplete="off"
-          placeholder="ex. Araignée Rouge"
-          className={input}
-        />
-        {fieldError("displayName") && (
-          <p role="alert" className="mt-1 text-xs text-blood-bright">
-            {fieldError("displayName")}
-          </p>
-        )}
-      </div>
-
       {/* Encart de confidentialité */}
       <aside className="border border-gold-dim bg-gold-faint/20 p-4">
         <h2 className="font-display text-xs tracking-[0.2em] text-gold uppercase">
           Identité confidentielle
         </h2>
         <p className="mt-2 text-xs leading-relaxed text-ink-muted">
-          Votre pseudonyme sera visible par l&rsquo;ensemble des membres autorisés de La
+          Votre Titre sera visible par l&rsquo;ensemble des membres autorisés de La
           Toile d&rsquo;Or.
         </p>
         <p className="mt-1 text-xs leading-relaxed text-ink-muted">
@@ -157,7 +203,13 @@ export function IdentityForm({
         variant="gold"
         size="lg"
         className="w-full"
-        disabled={isPending || !privacyAcknowledged || !firstName.trim() || !displayName.trim()}
+        disabled={
+          isPending ||
+          !privacyAcknowledged ||
+          !firstName.trim() ||
+          !displayName.trim() ||
+          !playerLevelId
+        }
       >
         {isPending ? "Le fil se noue…" : "Sceller mon identité"}
       </Button>
