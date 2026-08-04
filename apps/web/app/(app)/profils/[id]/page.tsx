@@ -29,11 +29,23 @@ export default async function DossierPage({
   const { dossier, relations, viewer, internal, requestableGroups } = detail;
   const f = dossier.fields;
 
-  // La colonne latérale n'existe que pour l'achat (chefs) ou la gestion des
-  // accès (modération) — sinon le dossier occupe toute la largeur.
-  const hasAside =
-    internal != null ||
-    (!viewer.canViewAll && (requestableGroups.length > 0 || detail.myPendingRequest || dossier.canViewValues));
+  // Colonne latérale : gestion des accès (modération) ou, pour tout autre
+  // lecteur, l'état du dossier (possédé, scellé, demande en cours).
+  const hasAside = internal != null || !viewer.canViewAll;
+
+  // Un dossier LISIBLE s'affiche sur parchemin — même grammaire que les
+  // dossiers de mission : on ouvre un document. Un dossier scellé reste
+  // sombre : il n'y a rien à lire.
+  const open = dossier.canViewValues;
+  const tone: "dark" | "parchment" = open ? "parchment" : "dark";
+  const sectionCls = open
+    ? "border border-parchment-deep bg-parchment p-5 text-parchment-text shadow-card"
+    : "border border-border-default bg-raised p-5";
+  // Sur parchemin, les titres sont à l'encre de sceau (rouge sombre) :
+  // l'or manque de contraste sur papier clair.
+  const headingCls = open
+    ? "mb-2 border-b border-parchment-deep pb-1.5 font-display text-sm tracking-widest text-blood uppercase"
+    : "mb-2 font-display text-sm tracking-widest text-gold uppercase";
 
   const relationGroups: { key: RelationView["group"]; position: string }[] = [
     { key: "parents", position: "haut" },
@@ -98,7 +110,7 @@ export default async function DossierPage({
               ] as const).map(([labelText, field]) => (
                 <div key={labelText} className="flex shrink-0 items-center gap-1.5">
                   <dt className="whitespace-nowrap text-ink-faint">{labelText} :</dt>
-                  <dd className="min-w-0"><FieldValue field={field} /></dd>
+                  <dd className="min-w-0"><FieldValue field={field} compact /></dd>
                 </div>
               ))}
             </dl>
@@ -109,7 +121,8 @@ export default async function DossierPage({
           {viewer.canManage && (
             <Link
               href={`/profils/${dossier.id}/modifier${mission ? `?mission=${mission}` : ""}`}
-              className={buttonClasses("gold", "sm")}
+              // Pleine largeur sous sm : superposé au titre en mobile sinon
+              className={`${buttonClasses("gold", "sm")} w-full justify-center sm:w-auto`}
             >
               {mission ? "Ajouter les renseignements au dossier" : "Modifier le dossier"}
             </Link>
@@ -125,34 +138,46 @@ export default async function DossierPage({
       >
         <div className="space-y-5">
           {/* Identité */}
-          <section className="border border-border-default bg-raised p-5">
-            <h2 className="mb-2 font-display text-sm tracking-widest text-gold uppercase">Identité</h2>
+          <section className={sectionCls}>
+            <h2 className={headingCls}>Identité</h2>
             <dl>
-              <div className="flex items-baseline justify-between gap-3 border-b border-border-default/60 py-1.5">
-                <dt className="text-[0.7rem] uppercase tracking-wider text-ink-faint">Prénom</dt>
-                <dd className="text-sm text-ink">{dossier.firstName}</dd>
+              <div
+                className={`flex items-baseline justify-between gap-3 border-b py-1.5 ${
+                  open ? "border-parchment-deep/60" : "border-border-default/60"
+                }`}
+              >
+                <dt
+                  className={`text-[0.7rem] uppercase tracking-wider ${
+                    open ? "text-parchment-text/60" : "text-ink-faint"
+                  }`}
+                >
+                  Prénom
+                </dt>
+                <dd className={`text-sm ${open ? "text-parchment-text" : "text-ink"}`}>
+                  {dossier.firstName}
+                </dd>
               </div>
-              <DossierRow label={PROFILE_FIELD_LABELS.lastName} field={f.lastName} />
-              <DossierRow label={PROFILE_FIELD_LABELS.sex} field={f.sex} />
-              <DossierRow label={PROFILE_FIELD_LABELS.age} field={f.age} />
-              <DossierRow label={PROFILE_FIELD_LABELS.lifeStatus} field={f.lifeStatus} />
-              <DossierRow label={PROFILE_FIELD_LABELS.faction} field={f.faction} />
-              <DossierRow label={PROFILE_FIELD_LABELS.clans} field={f.clans} />
+              <DossierRow label={PROFILE_FIELD_LABELS.lastName} field={f.lastName} tone={tone} />
+              <DossierRow label={PROFILE_FIELD_LABELS.sex} field={f.sex} tone={tone} />
+              <DossierRow label={PROFILE_FIELD_LABELS.age} field={f.age} tone={tone} />
+              <DossierRow label={PROFILE_FIELD_LABELS.lifeStatus} field={f.lifeStatus} tone={tone} />
+              <DossierRow label={PROFILE_FIELD_LABELS.faction} field={f.faction} tone={tone} />
+              <DossierRow label={PROFILE_FIELD_LABELS.clans} field={f.clans} tone={tone} />
             </dl>
           </section>
 
           {/* Signalement */}
-          <section className="border border-border-default bg-raised p-5">
-            <h2 className="mb-2 font-display text-sm tracking-widest text-gold uppercase">Signalement</h2>
+          <section className={sectionCls}>
+            <h2 className={headingCls}>Signalement</h2>
             <dl>
-              <DossierRow label={PROFILE_FIELD_LABELS.image} field={dossier.image} />
-              <DossierRow label={PROFILE_FIELD_LABELS.height} field={f.height} />
-              <DossierRow label={PROFILE_FIELD_LABELS.hairColor} field={f.hairColor}>
+              <DossierRow label={PROFILE_FIELD_LABELS.image} field={dossier.image} tone={tone} />
+              <DossierRow label={PROFILE_FIELD_LABELS.height} field={f.height} tone={tone} />
+              <DossierRow label={PROFILE_FIELD_LABELS.hairColor} field={f.hairColor} tone={tone}>
                 {f.hairColor.displayState === "VISIBLE" &&
                 f.hairColor.value &&
                 typeof f.hairColor.value === "object" &&
                 "colorHex" in (f.hairColor.value as object) ? (
-                  <span className="inline-flex items-center gap-2 text-sm text-ink">
+                  <span className={`inline-flex items-center gap-2 text-sm ${open ? "text-parchment-text" : "text-ink"}`}>
                     {(f.hairColor.value as { colorHex: string | null }).colorHex && (
                       <span
                         aria-hidden
@@ -164,11 +189,11 @@ export default async function DossierPage({
                   </span>
                 ) : undefined}
               </DossierRow>
-              <DossierRow label={PROFILE_FIELD_LABELS.skinTone} field={f.skinTone}>
+              <DossierRow label={PROFILE_FIELD_LABELS.skinTone} field={f.skinTone} tone={tone}>
                 {f.skinTone.displayState === "VISIBLE" &&
                 f.skinTone.value &&
                 typeof f.skinTone.value === "object" ? (
-                  <span className="inline-flex items-center gap-2 text-sm text-ink">
+                  <span className={`inline-flex items-center gap-2 text-sm ${open ? "text-parchment-text" : "text-ink"}`}>
                     {(f.skinTone.value as { colorHex: string | null }).colorHex && (
                       <span
                         aria-hidden
@@ -184,20 +209,20 @@ export default async function DossierPage({
           </section>
 
           {/* Capacités */}
-          <section className="border border-border-default bg-raised p-5">
-            <h2 className="mb-2 font-display text-sm tracking-widest text-gold uppercase">Capacités</h2>
+          <section className={sectionCls}>
+            <h2 className={headingCls}>Capacités</h2>
             <dl>
-              <DossierRow label={PROFILE_FIELD_LABELS.chakraNatures} field={f.chakraNatures} />
-              <DossierRow label={PROFILE_FIELD_LABELS.kekkeiGenkai} field={f.kekkeiGenkai} />
-              <DossierRow label={PROFILE_FIELD_LABELS.rank} field={f.rank} />
-              <DossierRow label={PROFILE_FIELD_LABELS.combatStyles} field={f.combatStyles} />
-              <DossierRow label={PROFILE_FIELD_LABELS.kenjutsuStyles} field={f.kenjutsuStyles} />
-              <DossierRow label={PROFILE_FIELD_LABELS.artifacts} field={f.artifacts} />
+              <DossierRow label={PROFILE_FIELD_LABELS.chakraNatures} field={f.chakraNatures} tone={tone} />
+              <DossierRow label={PROFILE_FIELD_LABELS.kekkeiGenkai} field={f.kekkeiGenkai} tone={tone} />
+              <DossierRow label={PROFILE_FIELD_LABELS.rank} field={f.rank} tone={tone} />
+              <DossierRow label={PROFILE_FIELD_LABELS.combatStyles} field={f.combatStyles} tone={tone} />
+              <DossierRow label={PROFILE_FIELD_LABELS.kenjutsuStyles} field={f.kenjutsuStyles} tone={tone} />
+              <DossierRow label={PROFILE_FIELD_LABELS.artifacts} field={f.artifacts} tone={tone} />
             </dl>
             {/* Subjutsu détaillés (uniquement si visibles) */}
             {f.techniques.displayState === "VISIBLE" && Array.isArray(f.techniques.value) && (
-              <div className="mt-3 border-t border-border-default pt-3">
-                <h3 className="mb-2 text-[0.7rem] uppercase tracking-wider text-ink-faint">
+              <div className={`mt-3 border-t pt-3 ${open ? "border-parchment-deep" : "border-border-default"}`}>
+                <h3 className={`mb-2 text-[0.7rem] uppercase tracking-wider ${open ? "text-parchment-text/60" : "text-ink-faint"}`}>
                   {PROFILE_FIELD_LABELS.techniques}
                 </h3>
                 <ul className="space-y-2">
@@ -205,18 +230,18 @@ export default async function DossierPage({
                     id: string; name: string; shortDescription: string | null;
                     typeLabel: string | null; rank: string | null;
                   }[]).map((technique) => (
-                    <li key={technique.id} className="border border-border-default bg-elevated p-2.5">
-                      <p className="text-sm text-ink">
+                    <li key={technique.id} className={`border p-2.5 ${open ? "border-parchment-deep bg-parchment-deep/30" : "border-border-default bg-elevated"}`}>
+                      <p className={`text-sm ${open ? "text-parchment-text" : "text-ink"}`}>
                         {technique.name}
                         {technique.rank && (
-                          <span className="ml-2 font-mono-toile text-xs text-gold">rang {technique.rank}</span>
+                          <span className={`ml-2 font-mono-toile text-xs ${open ? "text-blood" : "text-gold"}`}>rang {technique.rank}</span>
                         )}
                         {technique.typeLabel && (
-                          <span className="ml-2 text-xs text-ink-faint">{technique.typeLabel}</span>
+                          <span className={`ml-2 text-xs ${open ? "text-parchment-text/60" : "text-ink-faint"}`}>{technique.typeLabel}</span>
                         )}
                       </p>
                       {technique.shortDescription && (
-                        <p className="mt-0.5 text-xs text-ink-muted">{technique.shortDescription}</p>
+                        <p className={`mt-0.5 text-xs ${open ? "text-parchment-text/80" : "text-ink-muted"}`}>{technique.shortDescription}</p>
                       )}
                     </li>
                   ))}
@@ -225,18 +250,20 @@ export default async function DossierPage({
             )}
             {f.techniques.displayState !== "VISIBLE" && (
               <div className="mt-3 border-t border-border-default pt-3">
-                <DossierRow label={PROFILE_FIELD_LABELS.techniques} field={f.techniques} />
+                <DossierRow label={PROFILE_FIELD_LABELS.techniques} field={f.techniques} tone={tone} />
               </div>
             )}
           </section>
 
           {/* Réseau relationnel : fils dorés + vue liste accessible */}
-          <section className="border border-border-default bg-raised p-5">
-            <h2 className="mb-3 font-display text-sm tracking-widest text-gold uppercase">
+          <section className={sectionCls}>
+            <h2 className={headingCls}>
               Réseau relationnel
             </h2>
             {relations.length === 0 ? (
-              <p className="text-xs text-ink-faint italic">Aucun lien répertorié.</p>
+              <p className={`text-xs italic ${open ? "text-parchment-text/50" : "text-ink-faint"}`}>
+                Aucun lien répertorié.
+              </p>
             ) : (
               <>
                 {/* Toile : parents/créateurs en haut, fratrie au centre, descendance en bas */}
@@ -251,7 +278,7 @@ export default async function DossierPage({
                           <div className="flex flex-1 flex-wrap justify-end gap-2">
                             {nodes.map((rel) => <RelationNode key={rel.relationId} rel={rel} />)}
                           </div>
-                          <div className="flex h-12 w-32 shrink-0 items-center justify-center border border-gold bg-elevated font-display text-sm text-gold">
+                          <div className={`flex h-12 w-32 shrink-0 items-center justify-center border font-display text-sm ${open ? "border-blood/50 bg-parchment-deep/40 text-parchment-text" : "border-gold bg-elevated text-gold"}`}>
                             {dossier.firstName}
                           </div>
                           <div className="flex-1" />
@@ -272,14 +299,19 @@ export default async function DossierPage({
                 <ul className="space-y-1 text-sm">
                   {relations.map((rel) => (
                     <li key={`list-${rel.relationId}`} className="flex items-baseline justify-between gap-3">
-                      <span className="text-[0.7rem] uppercase tracking-wider text-ink-faint">
+                      <span className={`text-[0.7rem] uppercase tracking-wider ${open ? "text-parchment-text/60" : "text-ink-faint"}`}>
                         {rel.typeVisible ? rel.groupLabel : (
-                          <span aria-label="Lien connu mais confidentiel" className="font-mono-toile text-gold">???</span>
+                          <span
+                            aria-label="Lien connu mais confidentiel"
+                            className="inline-block border border-gold-dim bg-obsidian px-1.5 font-mono-toile text-[0.65rem] tracking-widest text-gold-dim"
+                          >
+                            ▮▮▮
+                          </span>
                         )}
                       </span>
-                      <Link href={`/profils/${rel.related.id}`} className="text-ink hover:text-gold">
+                      <Link href={`/profils/${rel.related.id}`} className={open ? "text-parchment-text hover:text-blood" : "text-ink hover:text-gold"}>
                         {rel.related.firstName}
-                        <span className="ml-2 font-mono-toile text-[0.65rem] text-ink-faint">
+                        <span className={`ml-2 font-mono-toile text-[0.65rem] ${open ? "text-parchment-text/60" : "text-ink-faint"}`}>
                           {rel.related.code}
                         </span>
                       </Link>
@@ -291,19 +323,19 @@ export default async function DossierPage({
           </section>
 
           {/* Analyse */}
-          <section className="border border-border-default bg-raised p-5">
-            <h2 className="mb-2 font-display text-sm tracking-widest text-gold uppercase">Analyse</h2>
+          <section className={sectionCls}>
+            <h2 className={headingCls}>Analyse</h2>
             {(["details", "strengths", "weaknesses"] as const).map((key) => (
               <div key={key} className="mb-3 last:mb-0">
-                <h3 className="text-[0.7rem] uppercase tracking-wider text-ink-faint">
+                <h3 className={`text-[0.7rem] uppercase tracking-wider ${open ? "text-parchment-text/60" : "text-ink-faint"}`}>
                   {PROFILE_FIELD_LABELS[key]}
                 </h3>
                 {f[key].displayState === "VISIBLE" ? (
-                  <p className="mt-1 text-sm leading-relaxed whitespace-pre-line text-ink-muted">
+                  <p className={`mt-1 text-sm leading-relaxed whitespace-pre-line ${open ? "text-parchment-text/90" : "text-ink-muted"}`}>
                     {f[key].displayValue}
                   </p>
                 ) : (
-                  <p className="mt-1"><FieldValue field={f[key]} /></p>
+                  <p className="mt-1"><FieldValue field={f[key]} tone={tone} /></p>
                 )}
               </div>
             ))}
@@ -349,23 +381,51 @@ export default async function DossierPage({
 
         {/* Colonne latérale (rendue uniquement si elle a du contenu) */}
         <aside className={`space-y-5 ${hasAside ? "" : "hidden"}`}>
-          {!viewer.canViewAll && requestableGroups.length > 0 && (
-            <section className="border border-border-gold bg-raised p-4">
-              <h2 className="mb-3 font-display text-sm tracking-widest text-gold uppercase">
-                Acheter le dossier
-              </h2>
-              <RequestAccessPanel profileId={dossier.id} groups={requestableGroups} />
-            </section>
-          )}
-          {!viewer.canViewAll && detail.myPendingRequest && (
-            <p className="border border-warning/50 bg-warning/10 px-3 py-2 text-xs text-warning">
-              Une demande de votre groupe attend la décision d&rsquo;un tisseur.
-            </p>
-          )}
-          {dossier.canViewValues && !viewer.canViewAll && (
+          {/* Un dossier possédé n'affiche JAMAIS d'invitation à le racheter */}
+          {dossier.canViewValues && !viewer.canViewAll ? (
             <p className="border border-gold-dim bg-gold-faint/20 px-3 py-2 text-xs text-gold">
               Votre groupe possède ce dossier : les informations connues vous sont ouvertes.
             </p>
+          ) : (
+            !viewer.canViewAll && (
+              <section className="border border-border-gold bg-raised p-4">
+                <div className="mb-3 flex items-center gap-3">
+                  <SealGlyph />
+                  <div>
+                    <h2 className="font-display text-sm tracking-widest text-gold uppercase">
+                      Dossier scellé
+                    </h2>
+                    <p className="font-mono-toile text-[0.65rem] text-ink-faint">
+                      {detail.sealedCount} renseignement{detail.sealedCount > 1 ? "s" : ""} sous
+                      scellé
+                    </p>
+                  </div>
+                </div>
+                {detail.myPendingRequest ? (
+                  <p className="border border-warning/50 bg-warning/10 px-3 py-2 text-xs text-warning">
+                    Une demande de votre groupe attend la décision d&rsquo;un tisseur.
+                  </p>
+                ) : requestableGroups.length > 0 ? (
+                  <>
+                    {detail.lastPrice != null && (
+                      <p className="mb-3 text-xs text-ink-muted">
+                        Dernier tarif consenti pour ce dossier :{" "}
+                        <span className="font-mono-toile text-gold">
+                          {detail.lastPrice.toLocaleString("fr-FR")} ryōs
+                        </span>
+                        . Le tisseur fixe le prix définitif.
+                      </p>
+                    )}
+                    <RequestAccessPanel profileId={dossier.id} groups={requestableGroups} />
+                  </>
+                ) : (
+                  <p className="text-xs leading-relaxed text-ink-muted">
+                    Seuls les chefs de groupe peuvent négocier l&rsquo;ouverture d&rsquo;un
+                    dossier. Adressez-vous au vôtre.
+                  </p>
+                )}
+              </section>
+            )
           )}
 
           {/* Accès accordés : gestion modération */}
@@ -397,6 +457,23 @@ export default async function DossierPage({
         </aside>
       </div>
     </main>
+  );
+}
+
+/** Sceau de scellé — marque un dossier fermé au lecteur. */
+function SealGlyph() {
+  return (
+    <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden className="shrink-0">
+      <polygon
+        points="12,2 28,2 38,12 38,28 28,38 12,38 2,28 2,12"
+        fill="none"
+        stroke="var(--toile-gold-dim)"
+        strokeWidth="1"
+      />
+      <text x="20" y="26" textAnchor="middle" fontSize="15" fill="var(--toile-blood)" fontFamily="serif">
+        封
+      </text>
+    </svg>
   );
 }
 

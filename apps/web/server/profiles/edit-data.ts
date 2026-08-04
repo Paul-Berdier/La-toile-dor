@@ -14,6 +14,9 @@ async function loadRef(type: string): Promise<RefOption[]> {
     category: r.category,
     colorHex: r.colorHex,
     sourceScopeLabel: SOURCE_SCOPE_LABELS[r.sourceScope] ?? r.sourceScope,
+    // Alimentent la recherche tolérante du sélecteur (alias + romanisation)
+    aliases: r.aliases,
+    kanji: r.kanji,
   }));
 }
 
@@ -40,11 +43,43 @@ export async function loadProfileRefs() {
 export async function loadEditData(profileId: string): Promise<EditFormData | null> {
   const profile = await prisma.characterProfile.findUnique({
     where: { id: profileId },
-    include: { traits: { include: { option: { select: { id: true, type: true } } } } },
+    include: {
+      traits: { include: { option: { select: { id: true, type: true } } } },
+      fieldIntel: { select: { fieldKey: true, knowledgeState: true } },
+    },
   });
   if (!profile || profile.archivedAt) return null;
   const traitIds = (type: string) =>
     profile.traits.filter((t) => t.option.type === type).map((t) => t.optionId);
+
+  // État de connaissance courant de chaque champ ; l'absence de ligne vaut
+  // UNKNOWN, sauf si une valeur existe déjà (dossiers antérieurs au suivi).
+  const fieldStates: EditFormData["fieldStates"] = {};
+  for (const row of profile.fieldIntel) {
+    fieldStates[row.fieldKey as keyof EditFormData["fieldStates"]] =
+      row.knowledgeState as never;
+  }
+  const inferKnown = (key: keyof EditFormData["fieldStates"], hasValue: boolean) => {
+    if (!fieldStates[key] && hasValue) fieldStates[key] = "KNOWN";
+  };
+  inferKnown("lastName", profile.characterLastName != null);
+  inferKnown("sex", profile.sexCode != null);
+  inferKnown("height", profile.heightMinCm != null || profile.heightMaxCm != null);
+  inferKnown("hairColor", profile.hairColorId != null);
+  inferKnown("skinTone", profile.skinToneId != null);
+  inferKnown("faction", profile.factionId != null);
+  inferKnown("rank", profile.rankId != null);
+  inferKnown("lifeStatus", profile.lifeStatus != null);
+  inferKnown("age", profile.ageMode !== "UNKNOWN");
+  inferKnown("clans", traitIds(REFERENCE_TYPES.CLAN_FAMILY).length > 0);
+  inferKnown("chakraNatures", traitIds(REFERENCE_TYPES.CHAKRA_NATURE).length > 0);
+  inferKnown("kekkeiGenkai", traitIds(REFERENCE_TYPES.KEKKEI_GENKAI).length > 0);
+  inferKnown("combatStyles", traitIds(REFERENCE_TYPES.COMBAT_STYLE).length > 0);
+  inferKnown("kenjutsuStyles", traitIds(REFERENCE_TYPES.KENJUTSU_STYLE).length > 0);
+  inferKnown("artifacts", traitIds(REFERENCE_TYPES.LEGENDARY_ARTIFACT).length > 0);
+  inferKnown("details", profile.details != null);
+  inferKnown("strengths", profile.strengths != null);
+  inferKnown("weaknesses", profile.weaknesses != null);
   return {
     profileId: profile.id,
     firstName: profile.characterFirstName,
@@ -71,5 +106,6 @@ export async function loadEditData(profileId: string): Promise<EditFormData | nu
     strengths: profile.strengths ?? "",
     weaknesses: profile.weaknesses ?? "",
     internalNotes: profile.internalNotes ?? "",
+    fieldStates,
   };
 }

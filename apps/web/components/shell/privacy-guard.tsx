@@ -92,15 +92,16 @@ export function PrivacyGuard({
       </div>
 
       {/* Boutons permanents compacts : voile + mode Streamer.
-          Décalés au-dessus de la barre d'onglets sur mobile. */}
-      <div className="fixed right-2 bottom-[4.5rem] z-40 flex flex-col gap-1.5 md:bottom-3">
+          Ancrés à GAUCHE sous lg : les valeurs des dossiers sont alignées à
+          droite et se faisaient recouvrir. Au-dessus de la barre d'onglets. */}
+      <div className="fixed left-2 bottom-[4.5rem] z-40 flex flex-col gap-1.5 lg:left-auto lg:right-2 lg:bottom-3">
         <button
           type="button"
           onClick={toggleStreamer}
           aria-pressed={streamerActive}
           aria-label={streamerActive ? "Désactiver le mode Streamer" : "Activer le mode Streamer"}
           title="Mode Streamer (Ctrl+Shift+S) : remplace les informations sensibles par des codes"
-          className={`flex h-9 w-9 items-center justify-center border font-display text-xs transition-colors ${
+          className={`flex h-11 w-11 items-center justify-center border font-display text-sm opacity-70 transition-all hover:opacity-100 focus-visible:opacity-100 ${
             streamerActive
               ? "border-gold bg-gold text-obsidian"
               : "border-border-gold bg-raised/90 text-ink-muted hover:text-gold"
@@ -113,7 +114,7 @@ export function PrivacyGuard({
           onClick={() => setVeiled(true)}
           aria-label="Voiler immédiatement l'écran"
           title="Voiler immédiatement l'écran"
-          className="flex h-9 w-9 items-center justify-center border border-border-gold bg-raised/90 font-display text-xs text-ink-muted transition-colors hover:text-gold"
+          className="flex h-11 w-11 items-center justify-center border border-border-gold bg-raised/90 font-display text-sm text-ink-muted opacity-70 transition-all hover:text-gold hover:opacity-100 focus-visible:opacity-100"
         >
           幕
         </button>

@@ -233,7 +233,10 @@ export async function updateProfileAction(raw: unknown): Promise<ProfileActionRe
   }
 
   const revisions: Prisma.CharacterProfileRevisionCreateManyInput[] = [];
+  // dedupeIntel conserve la DERNIÈRE entrée d'un même champ : l'ordre compte.
+  // 1) états explicites du formulaire, 2) décisions de conflit (prioritaires).
   const intelUpserts: { fieldKey: string; state: ProfileKnowledgeState }[] = [];
+  const conflictResolved = new Set<string>();
   const data: Prisma.CharacterProfileUncheckedUpdateInput = {
     updatedById: current.session.userId,
     version: { increment: 1 },
@@ -262,6 +265,8 @@ export async function updateProfileAction(raw: unknown): Promise<ProfileActionRe
       return;
     }
     if (change.changed && strategy === "MARK_CONFLICTING") {
+      // La contradiction prime sur l'état affiché dans le formulaire
+      conflictResolved.add(key);
       intelUpserts.push({ fieldKey: key, state: "CONFLICTING" });
       revisions.push({
         profileId: profile.id,
@@ -416,8 +421,11 @@ export async function updateProfileAction(raw: unknown): Promise<ProfileActionRe
     }
   }
 
-  // États explicites choisis par le modérateur (Inconnu / Connue / Aucun / Contradictoire)
+  // États explicites choisis par le modérateur (Inconnu / Connue / Aucun /
+  // Contradictoire). Un champ dont le conflit vient d'être arbitré garde la
+  // décision d'arbitrage — elle est plus récente que l'état affiché.
   for (const [fieldKey, state] of Object.entries(input.fieldStates ?? {})) {
+    if (conflictResolved.has(fieldKey)) continue;
     intelUpserts.push({ fieldKey, state: state as ProfileKnowledgeState });
     if (state === "UNKNOWN" || state === "NONE_CONFIRMED") {
       // Une absence confirmée ou une inconnue ne conserve pas de valeur

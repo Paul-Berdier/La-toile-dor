@@ -60,6 +60,33 @@ chaîne. `CHECK (min <= max)`. Affichage : « 185 cm », « Entre 180 et 190 cm 
   Aucune donnée n'est appliquée automatiquement depuis un rapport texte : le
   modérateur saisit et confirme les champs structurés.
 
+## Saisie : un état par champ
+
+Le formulaire d'édition encadre **chaque champ facultatif** d'un sélecteur
+d'état — le modérateur n'a jamais à comprendre les codes internes :
+
+| Choix affiché | État stocké | Rendu pour un lecteur autorisé |
+|---|---|---|
+| Inconnu | `UNKNOWN` | « Inconnu » (pour tous) |
+| Valeur connue | `KNOWN` | la valeur |
+| Absence confirmée | `NONE_CONFIRMED` | « Aucun » |
+| Contradictoire | `CONFLICTING` | « Information contradictoire » |
+
+La zone de saisie n'apparaît que pour « Valeur connue » : les autres états
+signifient qu'il n'y a rien à saisir. Choisir « Inconnu » ou « Absence
+confirmée » **efface** la valeur correspondante côté serveur.
+
+Les référentiels se saisissent par un **sélecteur de recherche** : frappe
+tolérante aux accents et à la casse, correspondance sur les **alias**
+(« uchiwa » trouve Uchiha), tags retirables, navigation clavier complète
+(↑ ↓ Entrée Échap, ⌫ retire le dernier tag), provenance affichée à côté de
+chaque entrée. Si une valeur manque, « Proposer … comme nouvelle entrée »
+ouvre une suggestion soumise à un super-modérateur.
+
+L'onglet « Source & aperçu » montre le rendu simultané pour un modérateur, un
+groupe ayant acheté le dossier et un groupe sans accès — utile pour vérifier
+d'un coup d'œil que rien ne fuite.
+
 ## Conflits
 
 Quand une nouvelle valeur contredit une information déjà **connue**, le serveur
@@ -70,6 +97,9 @@ refuse d'écrire et renvoie la liste des conflits. Le modérateur choisit :
 | Remplacer | La nouvelle valeur devient la valeur courante (ancienne en historique) |
 | Conserver | L'ancienne valeur reste ; la nouvelle est consignée en historique |
 | Marquer contradictoire | Le champ passe en `CONFLICTING` → « Information contradictoire » |
+
+L'arbitrage d'un conflit **prime** sur l'état affiché dans le formulaire : un
+champ marqué contradictoire ne repasse pas en « connu » par effet de bord.
 
 ## Fusion (super-modérateurs)
 

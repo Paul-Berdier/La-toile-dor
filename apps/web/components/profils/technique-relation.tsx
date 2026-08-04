@@ -173,45 +173,170 @@ export function RelationManager({
 
 // ── Portrait ──
 
+const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
+/** Format portrait 3:4 : l'image est recadrée et optimisée avant l'envoi. */
+const PORTRAIT_WIDTH = 480;
+const PORTRAIT_HEIGHT = 640;
+
 export function ProfileImageUpload({ profileId }: { profileId: string }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
-  const [preview, setPreview] = useState<string | null>(null);
+  const [source, setSource] = useState<{ url: string; width: number; height: number } | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [offsetX, setOffsetX] = useState(50); // cadrage, en pourcentage
+  const [offsetY, setOffsetY] = useState(50);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const onFile = (file: File | undefined) => {
     setError(null);
-    if (!file) return setPreview(null);
-    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) { setError("Format refusé : PNG, JPG ou WEBP."); return; }
-    if (file.size > 500 * 1024) { setError("Portrait trop lourd : 500 Ko maximum."); return; }
-    setPreview(URL.createObjectURL(file));
+    setSource(null);
+    if (!file) return;
+    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+      setError("Format refusé : PNG, JPG ou WEBP.");
+      return;
+    }
+    // Le recadrage ré-encode l'image : la source peut dépasser 500 Ko,
+    // seul le résultat est soumis à la limite de stockage.
+    if (file.size > 12 * 1024 * 1024) {
+      setError("Fichier trop volumineux (12 Mo maximum).");
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      setSource({ url, width: image.naturalWidth, height: image.naturalHeight });
+      setZoom(1);
+      setOffsetX(50);
+      setOffsetY(50);
+    };
+    image.onerror = () => setError("Image illisible.");
+    image.src = url;
   };
 
+  /** Génère le portrait recadré, sous la limite de 500 Ko. */
+  const buildCropped = (): Promise<Blob | null> =>
+    new Promise((resolve) => {
+      if (!source) return resolve(null);
+      const canvas = document.createElement("canvas");
+      canvas.width = PORTRAIT_WIDTH;
+      canvas.height = PORTRAIT_HEIGHT;
+      const context = canvas.getContext("2d");
+      if (!context) return resolve(null);
+
+      const image = new Image();
+      image.onload = () => {
+        // Échelle « couvrante » : le cadre est toujours entièrement rempli
+        const cover = Math.max(PORTRAIT_WIDTH / source.width, PORTRAIT_HEIGHT / source.height);
+        const scale = cover * zoom;
+        const drawWidth = source.width * scale;
+        const drawHeight = source.height * scale;
+        const dx = (PORTRAIT_WIDTH - drawWidth) * (offsetX / 100);
+        const dy = (PORTRAIT_HEIGHT - drawHeight) * (offsetY / 100);
+        context.fillStyle = "#0b0a08";
+        context.fillRect(0, 0, PORTRAIT_WIDTH, PORTRAIT_HEIGHT);
+        context.drawImage(image, dx, dy, drawWidth, drawHeight);
+        // Qualité dégressive jusqu'à passer sous la limite
+        const tryQuality = (quality: number) => {
+          canvas.toBlob(
+            (blob) => {
+              if (!blob) return resolve(null);
+              if (blob.size <= 500 * 1024 || quality <= 0.5) return resolve(blob);
+              tryQuality(quality - 0.1);
+            },
+            "image/jpeg",
+            quality,
+          );
+        };
+        tryQuality(0.9);
+      };
+      image.onerror = () => resolve(null);
+      image.src = source.url;
+    });
+
   const submit = () => {
-    const file = inputRef.current?.files?.[0];
-    if (!file || isPending) return;
-    const fd = new FormData();
-    fd.set("profileId", profileId);
-    fd.set("image", file);
+    if (!source || isPending) return;
     startTransition(async () => {
+      const blob = await buildCropped();
+      if (!blob) {
+        setError("Le recadrage a échoué.");
+        return;
+      }
+      const fd = new FormData();
+      fd.set("profileId", profileId);
+      fd.set("image", new File([blob], "portrait.jpg", { type: "image/jpeg" }));
       const res = await uploadProfileImageAction(fd);
       if (!res.ok) setError(res.error ?? "Échec.");
-      else { setPreview(null); if (inputRef.current) inputRef.current.value = ""; router.refresh(); }
+      else {
+        setSource(null);
+        if (inputRef.current) inputRef.current.value = "";
+        router.refresh();
+      }
     });
   };
 
   return (
-    <div className="space-y-2">
-      <label htmlFor="prf-portrait" className={label}>Portrait (PNG, JPG, WEBP — 500 Ko max)</label>
-      <input id="prf-portrait" ref={inputRef} type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => onFile(e.target.files?.[0])}
-        className="block w-full text-xs text-ink-muted file:mr-3 file:border file:border-border-gold file:bg-raised file:px-3 file:py-1.5 file:text-xs file:text-gold" />
-      {preview && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={preview} alt="Aperçu du portrait" className="h-28 w-20 border border-border-gold object-cover" />
+    <div className="space-y-3">
+      <label htmlFor="prf-portrait" className={label}>
+        Portrait — PNG, JPG ou WEBP (recadré au format portrait)
+      </label>
+      <input
+        id="prf-portrait"
+        ref={inputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        onChange={(e) => onFile(e.target.files?.[0])}
+        className="block w-full text-xs text-ink-muted file:mr-3 file:border file:border-border-gold file:bg-raised file:px-3 file:py-1.5 file:text-xs file:text-gold"
+      />
+
+      {source && (
+        <div className="space-y-2">
+          {/* Aperçu exact du cadrage retenu */}
+          <div
+            className="relative overflow-hidden border border-border-gold bg-obsidian"
+            style={{ width: 120, height: 160 }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={source.url}
+              alt="Aperçu du recadrage"
+              className="absolute h-full w-full object-cover"
+              style={{
+                objectPosition: `${offsetX}% ${offsetY}%`,
+                transform: `scale(${zoom})`,
+                transformOrigin: `${offsetX}% ${offsetY}%`,
+              }}
+            />
+          </div>
+          <div className="grid gap-2 sm:grid-cols-3">
+            <label className="text-[0.7rem] text-ink-faint">
+              Zoom
+              <input type="range" min={1} max={3} step={0.05} value={zoom}
+                onChange={(e) => setZoom(Number(e.target.value))}
+                className="mt-1 block w-full accent-[var(--toile-gold)]" />
+            </label>
+            <label className="text-[0.7rem] text-ink-faint">
+              Horizontal
+              <input type="range" min={0} max={100} value={offsetX}
+                onChange={(e) => setOffsetX(Number(e.target.value))}
+                className="mt-1 block w-full accent-[var(--toile-gold)]" />
+            </label>
+            <label className="text-[0.7rem] text-ink-faint">
+              Vertical
+              <input type="range" min={0} max={100} value={offsetY}
+                onChange={(e) => setOffsetY(Number(e.target.value))}
+                className="mt-1 block w-full accent-[var(--toile-gold)]" />
+            </label>
+          </div>
+        </div>
       )}
+
       {error && <p role="alert" className="text-xs text-blood-bright">{error}</p>}
-      {preview && <Button size="sm" variant="outline" onClick={submit} disabled={isPending}>Enregistrer le portrait</Button>}
+      {source && (
+        <Button size="sm" variant="outline" onClick={submit} disabled={isPending}>
+          {isPending ? "Envoi…" : "Enregistrer le portrait"}
+        </Button>
+      )}
     </div>
   );
 }

@@ -2,8 +2,10 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { updateProfileAction } from "@/server/profiles/profile-actions";
+import { PROFILE_FIELD_LABELS, type ProfileFieldKey } from "@toile/shared";
+import { updateProfileAction, suggestReferenceAction } from "@/server/profiles/profile-actions";
 import { Button } from "@/components/ui/button";
+import { ReferencePicker } from "./reference-picker";
 
 export interface RefOption {
   id: string;
@@ -11,7 +13,12 @@ export interface RefOption {
   category: string | null;
   colorHex: string | null;
   sourceScopeLabel: string;
+  aliases?: string[];
+  kanji?: string | null;
 }
+
+/** État de connaissance choisi par le modérateur, champ par champ. */
+export type KnowledgeChoice = "UNKNOWN" | "KNOWN" | "NONE_CONFIRMED" | "CONFLICTING";
 
 export interface EditFormData {
   profileId: string;
@@ -39,6 +46,8 @@ export interface EditFormData {
   strengths: string;
   weaknesses: string;
   internalNotes: string;
+  /** État actuel de chaque champ (issu de CharacterFieldIntel) */
+  fieldStates: Partial<Record<ProfileFieldKey, KnowledgeChoice>>;
 }
 
 interface Refs {
@@ -56,61 +65,83 @@ interface Refs {
 }
 
 const SEX_OPTIONS = [
-  ["", "Inconnu"],
   ["MALE", "Masculin"],
   ["FEMALE", "Féminin"],
   ["OTHER", "Autre"],
 ] as const;
 const LIFE_OPTIONS = [
-  ["", "Inconnu"],
   ["ALIVE", "Vivant"],
   ["DEAD", "Mort"],
   ["MISSING", "Disparu"],
 ] as const;
 
-const input = "w-full border border-border-default bg-elevated px-3 py-2 text-sm text-ink focus:border-gold";
-const label = "mb-1 block text-xs uppercase tracking-wider text-ink-faint";
+const KNOWLEDGE_CHOICES: { value: KnowledgeChoice; label: string; hint: string }[] = [
+  { value: "UNKNOWN", label: "Inconnu", hint: "La Toile ne possède pas cette information" },
+  { value: "KNOWN", label: "Valeur connue", hint: "Renseignement acquis" },
+  { value: "NONE_CONFIRMED", label: "Absence confirmée", hint: "Vérifié : il n'y en a pas" },
+  { value: "CONFLICTING", label: "Contradictoire", hint: "Renseignements incompatibles" },
+];
 
-/** Sélecteur multiple à cases (tags), avec indication de provenance. */
-function MultiSelect({
-  legend,
-  options,
-  selected,
-  onChange,
+const input =
+  "w-full border border-border-default bg-elevated px-3 py-2 text-sm text-ink focus:border-gold";
+const labelCls = "mb-1 block text-xs uppercase tracking-wider text-ink-faint";
+
+/**
+ * Encadre un champ avec son état de connaissance. La saisie n'apparaît que
+ * lorsque l'état est « Valeur connue » — les autres états signifient qu'il
+ * n'y a rien à saisir (inconnu, absence confirmée, contradiction).
+ */
+function KnowledgeField({
+  fieldKey,
+  state,
+  onStateChange,
+  children,
 }: {
-  legend: string;
-  options: RefOption[];
-  selected: string[];
-  onChange: (ids: string[]) => void;
+  fieldKey: ProfileFieldKey;
+  state: KnowledgeChoice;
+  onStateChange: (state: KnowledgeChoice) => void;
+  children: React.ReactNode;
 }) {
-  const toggle = (id: string) =>
-    onChange(selected.includes(id) ? selected.filter((s) => s !== id) : [...selected, id]);
+  const selectId = `state-${fieldKey}`;
   return (
-    <fieldset>
-      <legend className={label}>{legend}</legend>
-      <div className="flex flex-wrap gap-1.5">
-        {options.map((option) => (
-          <button
-            key={option.id}
-            type="button"
-            onClick={() => toggle(option.id)}
-            aria-pressed={selected.includes(option.id)}
-            title={option.sourceScopeLabel}
-            className={`flex items-center gap-1 border px-2 py-1 text-[0.7rem] transition-colors ${
-              selected.includes(option.id)
-                ? "border-gold bg-gold-faint/40 text-gold"
-                : "border-border-default text-ink-muted hover:border-border-gold hover:text-ink"
-            }`}
-          >
-            {option.colorHex && (
-              <span aria-hidden className="inline-block h-2.5 w-2.5 border border-border-strong" style={{ background: option.colorHex }} />
-            )}
-            {option.label}
-            <span className="text-[0.55rem] text-ink-faint">{option.sourceScopeLabel}</span>
-          </button>
-        ))}
+    <div className="border border-border-default/70 bg-elevated/40 p-3">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs uppercase tracking-wider text-ink-faint">
+          {PROFILE_FIELD_LABELS[fieldKey]}
+        </span>
+        <label htmlFor={selectId} className="sr-only">
+          État du renseignement — {PROFILE_FIELD_LABELS[fieldKey]}
+        </label>
+        <select
+          id={selectId}
+          value={state}
+          onChange={(e) => onStateChange(e.target.value as KnowledgeChoice)}
+          title={KNOWLEDGE_CHOICES.find((c) => c.value === state)?.hint}
+          className={`border bg-elevated px-2 py-1 text-[0.7rem] ${
+            state === "KNOWN"
+              ? "border-gold-dim text-gold"
+              : state === "UNKNOWN"
+                ? "border-border-default text-ink-faint"
+                : state === "CONFLICTING"
+                  ? "border-blood/60 text-blood-bright"
+                  : "border-border-strong text-ink-muted"
+          }`}
+        >
+          {KNOWLEDGE_CHOICES.map((choice) => (
+            <option key={choice.value} value={choice.value}>
+              {choice.label}
+            </option>
+          ))}
+        </select>
       </div>
-    </fieldset>
+      {state === "KNOWN" ? (
+        children
+      ) : (
+        <p className="text-xs text-ink-faint italic">
+          {KNOWLEDGE_CHOICES.find((c) => c.value === state)?.hint}.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -139,22 +170,32 @@ export function ProfileEditForm({
   const [confidence, setConfidence] = useState("PROBABLE");
   const [justification, setJustification] = useState("");
   const [observedAtRp, setObservedAtRp] = useState("");
-  const [conflicts, setConflicts] = useState<{ fieldKey: string; fieldLabel: string; currentValue: string; newValue: string }[]>([]);
+  const [conflicts, setConflicts] = useState<
+    { fieldKey: string; fieldLabel: string; currentValue: string; newValue: string }[]
+  >([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [suggestion, setSuggestion] = useState<{ type: string; label: string } | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const set = <K extends keyof EditFormData>(key: K, value: EditFormData[K]) =>
     setData((d) => ({ ...d, [key]: value }));
 
-  const showKenjutsu = data.combatStyleIds.some(
-    (id) => refs.combatStyles.find((c) => c.id === id)?.label === "Kenjutsu",
-  );
+  const stateOf = (key: ProfileFieldKey): KnowledgeChoice => data.fieldStates[key] ?? "UNKNOWN";
+  const setState = (key: ProfileFieldKey, state: KnowledgeChoice) =>
+    setData((d) => ({ ...d, fieldStates: { ...d.fieldStates, [key]: state } }));
+
+  const showKenjutsu =
+    stateOf("combatStyles") === "KNOWN" &&
+    data.combatStyleIds.some((id) => refs.combatStyles.find((c) => c.id === id)?.label === "Kenjutsu");
 
   const save = (conflictStrategy?: string) => {
     if (isPending) return;
     startTransition(async () => {
+      // Un champ dont l'état n'est pas « connu » n'envoie aucune valeur :
+      // le serveur nettoie alors la donnée correspondante.
+      const known = (key: ProfileFieldKey) => stateOf(key) === "KNOWN";
       const res = await updateProfileAction({
         profileId: data.profileId,
         sourceMissionId: sourceMissionId ?? null,
@@ -162,29 +203,30 @@ export function ProfileEditForm({
         justification: justification || undefined,
         observedAtRp: observedAtRp || undefined,
         conflictStrategy,
+        fieldStates: data.fieldStates,
         firstName: data.firstName,
-        lastName: data.lastName || null,
-        sexCode: data.sexCode || null,
-        heightMinCm: data.heightMinCm,
-        heightMaxCm: data.heightMaxCm,
-        hairColorId: data.hairColorId || null,
-        skinToneId: data.skinToneId || null,
-        factionId: data.factionId || null,
-        rankId: data.rankId || null,
-        lifeStatus: data.lifeStatus || null,
-        ageMode: data.ageMode as never,
-        ageYearsNow: data.ageYearsNow,
-        ageMinNow: data.ageMinNow,
-        ageMaxNow: data.ageMaxNow,
-        clanIds: data.clanIds,
-        chakraNatureIds: data.chakraNatureIds,
-        kekkeiGenkaiIds: data.kekkeiGenkaiIds,
-        combatStyleIds: data.combatStyleIds,
+        lastName: known("lastName") ? data.lastName || null : null,
+        sexCode: known("sex") ? data.sexCode || null : null,
+        heightMinCm: known("height") ? data.heightMinCm : null,
+        heightMaxCm: known("height") ? data.heightMaxCm : null,
+        hairColorId: known("hairColor") ? data.hairColorId || null : null,
+        skinToneId: known("skinTone") ? data.skinToneId || null : null,
+        factionId: known("faction") ? data.factionId || null : null,
+        rankId: known("rank") ? data.rankId || null : null,
+        lifeStatus: known("lifeStatus") ? data.lifeStatus || null : null,
+        ageMode: known("age") ? (data.ageMode as never) : "UNKNOWN",
+        ageYearsNow: known("age") ? data.ageYearsNow : null,
+        ageMinNow: known("age") ? data.ageMinNow : null,
+        ageMaxNow: known("age") ? data.ageMaxNow : null,
+        clanIds: known("clans") ? data.clanIds : [],
+        chakraNatureIds: known("chakraNatures") ? data.chakraNatureIds : [],
+        kekkeiGenkaiIds: known("kekkeiGenkai") ? data.kekkeiGenkaiIds : [],
+        combatStyleIds: known("combatStyles") ? data.combatStyleIds : [],
         kenjutsuStyleIds: showKenjutsu ? data.kenjutsuStyleIds : [],
-        artifactIds: data.artifactIds,
-        details: data.details || null,
-        strengths: data.strengths || null,
-        weaknesses: data.weaknesses || null,
+        artifactIds: known("artifacts") ? data.artifactIds : [],
+        details: known("details") ? data.details || null : null,
+        strengths: known("strengths") ? data.strengths || null : null,
+        weaknesses: known("weaknesses") ? data.weaknesses || null : null,
         internalNotes: data.internalNotes || null,
       });
       if (!res.ok) {
@@ -206,7 +248,6 @@ export function ProfileEditForm({
 
   return (
     <div className="grid gap-6 lg:grid-cols-[12rem_1fr]">
-      {/* Sections */}
       <ol className="flex gap-2 overflow-x-auto lg:flex-col" aria-label="Sections">
         {SECTIONS.map((title, i) => (
           <li key={title}>
@@ -215,7 +256,9 @@ export function ProfileEditForm({
               onClick={() => setStep(i)}
               aria-current={i === step ? "step" : undefined}
               className={`flex w-full items-center gap-2 whitespace-nowrap px-2 py-1.5 text-left text-xs transition-colors lg:whitespace-normal ${
-                i === step ? "border-l-2 border-gold text-gold" : "border-l-2 border-transparent text-ink-faint hover:text-ink"
+                i === step
+                  ? "border-l-2 border-gold text-gold"
+                  : "border-l-2 border-transparent text-ink-faint hover:text-ink"
               }`}
             >
               <span className="font-mono-toile">{String(i + 1).padStart(2, "0")}</span>
@@ -226,62 +269,70 @@ export function ProfileEditForm({
       </ol>
 
       <form onSubmit={(e) => e.preventDefault()} className="border border-border-default bg-raised p-5" noValidate>
-        <h2 className="mb-4 font-display text-sm tracking-widest text-gold uppercase">
+        <h2 className="mb-1 font-display text-sm tracking-widest text-gold uppercase">
           {SECTIONS[step]}
         </h2>
+        <p className="mb-4 text-[0.7rem] text-ink-faint">
+          Chaque champ porte son état : ce que la Toile ignore reste « Inconnu »,
+          ce qu&rsquo;elle a vérifié absent devient « Aucun ».
+        </p>
 
         {step === 0 && (
-          <div className="space-y-4">
+          <div className="space-y-3">
             <div>
-              <label htmlFor="ef-first" className={label}>Prénom *</label>
+              <label htmlFor="ef-first" className={labelCls}>Prénom * (toujours visible)</label>
               <input id="ef-first" value={data.firstName} onChange={(e) => set("firstName", e.target.value)} className={input} maxLength={80} />
             </div>
-            <div>
-              <label htmlFor="ef-last" className={label}>Nom (facultatif)</label>
-              <input id="ef-last" value={data.lastName} onChange={(e) => set("lastName", e.target.value)} className={input} maxLength={80} />
-            </div>
-            <div>
-              <label htmlFor="ef-sex" className={label}>Sexe</label>
-              <select id="ef-sex" value={data.sexCode} onChange={(e) => set("sexCode", e.target.value)} className={input}>
+
+            <KnowledgeField fieldKey="lastName" state={stateOf("lastName")} onStateChange={(s) => setState("lastName", s)}>
+              <input aria-label="Nom du personnage" value={data.lastName} onChange={(e) => set("lastName", e.target.value)} className={input} maxLength={80} />
+            </KnowledgeField>
+
+            <KnowledgeField fieldKey="sex" state={stateOf("sex")} onStateChange={(s) => setState("sex", s)}>
+              <select aria-label="Sexe" value={data.sexCode} onChange={(e) => set("sexCode", e.target.value)} className={input}>
+                <option value="">— choisir —</option>
                 {SEX_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               </select>
-            </div>
-            <div>
-              <label htmlFor="ef-life" className={label}>État</label>
-              <select id="ef-life" value={data.lifeStatus} onChange={(e) => set("lifeStatus", e.target.value)} className={input}>
+            </KnowledgeField>
+
+            <KnowledgeField fieldKey="lifeStatus" state={stateOf("lifeStatus")} onStateChange={(s) => setState("lifeStatus", s)}>
+              <select aria-label="État vital" value={data.lifeStatus} onChange={(e) => set("lifeStatus", e.target.value)} className={input}>
+                <option value="">— choisir —</option>
                 {LIFE_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               </select>
-            </div>
-            {/* Âge — suit le temps RP à partir de valeurs observées aujourd'hui */}
-            <fieldset className="border border-border-default p-3">
-              <legend className={label}>Âge (progresse avec le temps RP)</legend>
-              <select value={data.ageMode} onChange={(e) => set("ageMode", e.target.value)} className={input}>
-                <option value="UNKNOWN">Inconnu</option>
-                <option value="AGE_AT_REFERENCE">Âge connu aujourd&rsquo;hui</option>
-                <option value="AGE_RANGE_AT_REFERENCE">Fourchette d&rsquo;âge</option>
-              </select>
-              {data.ageMode === "AGE_AT_REFERENCE" && (
-                <input type="number" min={0} max={500} value={data.ageYearsNow ?? ""} placeholder="Âge en années"
-                  aria-label="Âge actuel" onChange={(e) => set("ageYearsNow", e.target.value ? Number(e.target.value) : null)}
-                  className={`${input} mt-2`} />
-              )}
-              {data.ageMode === "AGE_RANGE_AT_REFERENCE" && (
-                <div className="mt-2 flex items-center gap-2">
-                  <input type="number" min={0} value={data.ageMinNow ?? ""} placeholder="min" aria-label="Âge minimum"
-                    onChange={(e) => set("ageMinNow", e.target.value ? Number(e.target.value) : null)} className={input} />
-                  <span aria-hidden className="text-ink-faint">–</span>
-                  <input type="number" min={0} value={data.ageMaxNow ?? ""} placeholder="max" aria-label="Âge maximum"
-                    onChange={(e) => set("ageMaxNow", e.target.value ? Number(e.target.value) : null)} className={input} />
-                </div>
-              )}
-            </fieldset>
+            </KnowledgeField>
+
+            <KnowledgeField fieldKey="age" state={stateOf("age")} onStateChange={(s) => setState("age", s)}>
+              <div className="space-y-2">
+                <select aria-label="Mode de calcul de l'âge" value={data.ageMode} onChange={(e) => set("ageMode", e.target.value)} className={input}>
+                  <option value="UNKNOWN">— choisir —</option>
+                  <option value="AGE_AT_REFERENCE">Âge connu aujourd&rsquo;hui</option>
+                  <option value="AGE_RANGE_AT_REFERENCE">Fourchette d&rsquo;âge</option>
+                </select>
+                {data.ageMode === "AGE_AT_REFERENCE" && (
+                  <input type="number" min={0} max={500} value={data.ageYearsNow ?? ""} placeholder="Âge en années"
+                    aria-label="Âge actuel" onChange={(e) => set("ageYearsNow", e.target.value ? Number(e.target.value) : null)} className={input} />
+                )}
+                {data.ageMode === "AGE_RANGE_AT_REFERENCE" && (
+                  <div className="flex items-center gap-2">
+                    <input type="number" min={0} value={data.ageMinNow ?? ""} placeholder="min" aria-label="Âge minimum"
+                      onChange={(e) => set("ageMinNow", e.target.value ? Number(e.target.value) : null)} className={input} />
+                    <span aria-hidden className="text-ink-faint">–</span>
+                    <input type="number" min={0} value={data.ageMaxNow ?? ""} placeholder="max" aria-label="Âge maximum"
+                      onChange={(e) => set("ageMaxNow", e.target.value ? Number(e.target.value) : null)} className={input} />
+                  </div>
+                )}
+                <p className="text-[0.65rem] text-ink-faint">
+                  L&rsquo;âge saisi progressera seul avec le temps RP.
+                </p>
+              </div>
+            </KnowledgeField>
           </div>
         )}
 
         {step === 1 && (
-          <div className="space-y-4">
-            <fieldset>
-              <legend className={label}>Taille (cm) — plage possible</legend>
+          <div className="space-y-3">
+            <KnowledgeField fieldKey="height" state={stateOf("height")} onStateChange={(s) => setState("height", s)}>
               <div className="flex items-center gap-2">
                 <input type="number" min={30} max={400} value={data.heightMinCm ?? ""} placeholder="min" aria-label="Taille minimum"
                   onChange={(e) => set("heightMinCm", e.target.value ? Number(e.target.value) : null)} className={input} />
@@ -289,21 +340,28 @@ export function ProfileEditForm({
                 <input type="number" min={30} max={400} value={data.heightMaxCm ?? ""} placeholder="max" aria-label="Taille maximum"
                   onChange={(e) => set("heightMaxCm", e.target.value ? Number(e.target.value) : null)} className={input} />
               </div>
-            </fieldset>
-            <div>
-              <label htmlFor="ef-hair" className={label}>Couleur des cheveux</label>
-              <select id="ef-hair" value={data.hairColorId} onChange={(e) => set("hairColorId", e.target.value)} className={input}>
-                <option value="">Inconnu</option>
-                {refs.hairColors.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label htmlFor="ef-skin" className={label}>Couleur de peau</label>
-              <select id="ef-skin" value={data.skinToneId} onChange={(e) => set("skinToneId", e.target.value)} className={input}>
-                <option value="">Inconnu</option>
-                {refs.skinTones.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-              </select>
-            </div>
+            </KnowledgeField>
+
+            <KnowledgeField fieldKey="hairColor" state={stateOf("hairColor")} onStateChange={(s) => setState("hairColor", s)}>
+              <ReferencePicker
+                legend="Couleur des cheveux"
+                options={refs.hairColors}
+                selected={data.hairColorId ? [data.hairColorId] : []}
+                onChange={(ids) => set("hairColorId", ids[ids.length - 1] ?? "")}
+                onSuggest={(label) => setSuggestion({ type: "HAIR_COLOR", label })}
+              />
+            </KnowledgeField>
+
+            <KnowledgeField fieldKey="skinTone" state={stateOf("skinTone")} onStateChange={(s) => setState("skinTone", s)}>
+              <ReferencePicker
+                legend="Couleur de peau"
+                options={refs.skinTones}
+                selected={data.skinToneId ? [data.skinToneId] : []}
+                onChange={(ids) => set("skinToneId", ids[ids.length - 1] ?? "")}
+                onSuggest={(label) => setSuggestion({ type: "SKIN_TONE", label })}
+              />
+            </KnowledgeField>
+
             <p className="text-[0.65rem] text-ink-faint">
               Le portrait se téléverse depuis la page du dossier.
             </p>
@@ -311,30 +369,50 @@ export function ProfileEditForm({
         )}
 
         {step === 2 && (
-          <div className="space-y-4">
-            <div>
-              <label htmlFor="ef-faction" className={label}>Faction</label>
-              <select id="ef-faction" value={data.factionId} onChange={(e) => set("factionId", e.target.value)} className={input}>
-                <option value="">Inconnu</option>
+          <div className="space-y-3">
+            <KnowledgeField fieldKey="faction" state={stateOf("faction")} onStateChange={(s) => setState("faction", s)}>
+              <select aria-label="Faction" value={data.factionId} onChange={(e) => set("factionId", e.target.value)} className={input}>
+                <option value="">— choisir —</option>
                 {refs.factions.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
               </select>
-            </div>
-            <div>
-              <label htmlFor="ef-rank" className={label}>Grade</label>
-              <select id="ef-rank" value={data.rankId} onChange={(e) => set("rankId", e.target.value)} className={input}>
-                <option value="">Inconnu</option>
+            </KnowledgeField>
+
+            <KnowledgeField fieldKey="rank" state={stateOf("rank")} onStateChange={(s) => setState("rank", s)}>
+              <select aria-label="Grade" value={data.rankId} onChange={(e) => set("rankId", e.target.value)} className={input}>
+                <option value="">— choisir —</option>
                 {refs.ranks.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
               </select>
-            </div>
-            <MultiSelect legend="Clan(s) et famille(s)" options={refs.clans} selected={data.clanIds} onChange={(ids) => set("clanIds", ids)} />
+            </KnowledgeField>
+
+            <KnowledgeField fieldKey="clans" state={stateOf("clans")} onStateChange={(s) => setState("clans", s)}>
+              <ReferencePicker
+                legend="Clan(s) et famille(s)"
+                options={refs.clans}
+                selected={data.clanIds}
+                onChange={(ids) => set("clanIds", ids)}
+                onSuggest={(label) => setSuggestion({ type: "CLAN_FAMILY", label })}
+              />
+            </KnowledgeField>
           </div>
         )}
 
         {step === 3 && (
-          <div className="space-y-4">
-            <MultiSelect legend="Natures de chakra" options={refs.chakraNatures} selected={data.chakraNatureIds} onChange={(ids) => set("chakraNatureIds", ids)} />
-            <MultiSelect legend="Kekkei Genkai" options={refs.kekkeiGenkai} selected={data.kekkeiGenkaiIds} onChange={(ids) => set("kekkeiGenkaiIds", ids)} />
-            <MultiSelect legend="Artefacts légendaires" options={refs.artifacts} selected={data.artifactIds} onChange={(ids) => set("artifactIds", ids)} />
+          <div className="space-y-3">
+            <KnowledgeField fieldKey="chakraNatures" state={stateOf("chakraNatures")} onStateChange={(s) => setState("chakraNatures", s)}>
+              <ReferencePicker legend="Natures de chakra" options={refs.chakraNatures}
+                selected={data.chakraNatureIds} onChange={(ids) => set("chakraNatureIds", ids)}
+                onSuggest={(label) => setSuggestion({ type: "CHAKRA_NATURE", label })} />
+            </KnowledgeField>
+            <KnowledgeField fieldKey="kekkeiGenkai" state={stateOf("kekkeiGenkai")} onStateChange={(s) => setState("kekkeiGenkai", s)}>
+              <ReferencePicker legend="Kekkei Genkai" options={refs.kekkeiGenkai}
+                selected={data.kekkeiGenkaiIds} onChange={(ids) => set("kekkeiGenkaiIds", ids)}
+                onSuggest={(label) => setSuggestion({ type: "KEKKEI_GENKAI", label })} />
+            </KnowledgeField>
+            <KnowledgeField fieldKey="artifacts" state={stateOf("artifacts")} onStateChange={(s) => setState("artifacts", s)}>
+              <ReferencePicker legend="Artefacts légendaires" options={refs.artifacts}
+                selected={data.artifactIds} onChange={(ids) => set("artifactIds", ids)}
+                onSuggest={(label) => setSuggestion({ type: "LEGENDARY_ARTIFACT", label })} />
+            </KnowledgeField>
             <p className="text-[0.65rem] text-ink-faint">
               Les Subjutsu (techniques propres) s&rsquo;ajoutent depuis la page du dossier.
             </p>
@@ -342,27 +420,38 @@ export function ProfileEditForm({
         )}
 
         {step === 4 && (
-          <div className="space-y-4">
-            <MultiSelect legend="Styles de combat" options={refs.combatStyles} selected={data.combatStyleIds} onChange={(ids) => set("combatStyleIds", ids)} />
+          <div className="space-y-3">
+            <KnowledgeField fieldKey="combatStyles" state={stateOf("combatStyles")} onStateChange={(s) => setState("combatStyles", s)}>
+              <ReferencePicker legend="Styles de combat" options={refs.combatStyles}
+                selected={data.combatStyleIds} onChange={(ids) => set("combatStyleIds", ids)}
+                onSuggest={(label) => setSuggestion({ type: "COMBAT_STYLE", label })} />
+            </KnowledgeField>
+            {/* Les sous-styles n'apparaissent que si Kenjutsu est retenu */}
             {showKenjutsu && (
-              <MultiSelect legend="Spécialités Kenjutsu" options={refs.kenjutsuStyles} selected={data.kenjutsuStyleIds} onChange={(ids) => set("kenjutsuStyleIds", ids)} />
+              <KnowledgeField fieldKey="kenjutsuStyles" state={stateOf("kenjutsuStyles")} onStateChange={(s) => setState("kenjutsuStyles", s)}>
+                <ReferencePicker legend="Spécialités Kenjutsu" options={refs.kenjutsuStyles}
+                  selected={data.kenjutsuStyleIds} onChange={(ids) => set("kenjutsuStyleIds", ids)}
+                  onSuggest={(label) => setSuggestion({ type: "KENJUTSU_STYLE", label })} />
+              </KnowledgeField>
             )}
           </div>
         )}
 
         {step === 5 && (
-          <div className="space-y-4">
+          <div className="space-y-3">
             {(["details", "strengths", "weaknesses"] as const).map((key) => (
-              <div key={key}>
-                <label htmlFor={`ef-${key}`} className={label}>
-                  {key === "details" ? "Détails" : key === "strengths" ? "Forces" : "Faiblesses"}
-                </label>
-                <textarea id={`ef-${key}`} value={data[key]} onChange={(e) => set(key, e.target.value)} rows={4} maxLength={10_000} className={input} />
-                <p className="mt-0.5 text-right text-[0.6rem] text-ink-faint">{data[key].length} / 10000</p>
-              </div>
+              <KnowledgeField key={key} fieldKey={key} state={stateOf(key)} onStateChange={(s) => setState(key, s)}>
+                <>
+                  <textarea aria-label={PROFILE_FIELD_LABELS[key]} value={data[key]}
+                    onChange={(e) => set(key, e.target.value)} rows={4} maxLength={10_000} className={input} />
+                  <p className="mt-0.5 text-right text-[0.6rem] text-ink-faint">{data[key].length} / 10000</p>
+                </>
+              </KnowledgeField>
             ))}
-            <div>
-              <label htmlFor="ef-notes" className={label}>Notes internes (jamais vendues avec le dossier)</label>
+            <div className="border border-copper/40 bg-elevated/40 p-3">
+              <label htmlFor="ef-notes" className={labelCls}>
+                Notes internes (jamais vendues avec le dossier)
+              </label>
               <textarea id="ef-notes" value={data.internalNotes} onChange={(e) => set("internalNotes", e.target.value)} rows={3} maxLength={10_000} className={input} />
             </div>
           </div>
@@ -372,7 +461,7 @@ export function ProfileEditForm({
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
-                <label htmlFor="ef-conf" className={label}>Niveau de confiance</label>
+                <label htmlFor="ef-conf" className={labelCls}>Niveau de confiance</label>
                 <select id="ef-conf" value={confidence} onChange={(e) => setConfidence(e.target.value)} className={input}>
                   <option value="RUMOR">Rumeur</option>
                   <option value="UNCONFIRMED">Non confirmé</option>
@@ -381,12 +470,12 @@ export function ProfileEditForm({
                 </select>
               </div>
               <div>
-                <label htmlFor="ef-obs" className={label}>Date RP d&rsquo;observation (libre)</label>
+                <label htmlFor="ef-obs" className={labelCls}>Date RP d&rsquo;observation (libre)</label>
                 <input id="ef-obs" value={observedAtRp} onChange={(e) => setObservedAtRp(e.target.value)} maxLength={120} className={input} placeholder="ex. 12e jour du mois de la Brume, an 42" />
               </div>
             </div>
             <div>
-              <label htmlFor="ef-just" className={label}>Justification / source</label>
+              <label htmlFor="ef-just" className={labelCls}>Justification / source</label>
               <textarea id="ef-just" value={justification} onChange={(e) => setJustification(e.target.value)} rows={2} maxLength={2000} className={input} />
             </div>
             {sourceMissionId && (
@@ -394,11 +483,10 @@ export function ProfileEditForm({
                 Ce lot de renseignements sera rattaché à la mission d&rsquo;origine.
               </p>
             )}
-            <PermissionPreview data={data} refs={refs} />
+            <PermissionPreview data={data} refs={refs} stateOf={stateOf} />
           </div>
         )}
 
-        {/* Conflits détectés */}
         {conflicts.length > 0 && (
           <div className="mt-4 border border-blood/50 bg-blood/10 p-4">
             <p className="text-sm text-blood-bright">
@@ -446,34 +534,159 @@ export function ProfileEditForm({
           )}
         </div>
       </form>
+
+      {suggestion && (
+        <SuggestionModal
+          type={suggestion.type}
+          initialLabel={suggestion.label}
+          onClose={() => setSuggestion(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Proposition d'une entrée absente d'un référentiel (validée par un super-mod). */
+function SuggestionModal({
+  type,
+  initialLabel,
+  onClose,
+}: {
+  type: string;
+  initialLabel: string;
+  onClose: () => void;
+}) {
+  const [label, setLabel] = useState(initialLabel);
+  const [description, setDescription] = useState("");
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [scope, setScope] = useState("SERVER_CUSTOM");
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  const [isPending, startTransition] = useTransition();
+
+  const submit = () => {
+    if (isPending) return;
+    startTransition(async () => {
+      const res = await suggestReferenceAction({
+        type,
+        proposedLabel: label,
+        description: description || undefined,
+        sourceUrl: sourceUrl || "",
+        sourceScope: scope as never,
+        reason: reason || undefined,
+      });
+      if (!res.ok) setError(res.error ?? "Échec de la proposition.");
+      else { setError(null); setDone(true); }
+    });
+  };
+
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Proposer une nouvelle entrée"
+      className="fixed inset-0 z-[95] flex items-center justify-center bg-obsidian/80 px-4">
+      <div className="w-full max-w-md border border-border-gold bg-raised p-5 shadow-modal">
+        <h2 className="font-display text-base tracking-widest text-gold uppercase">
+          Proposer une entrée
+        </h2>
+        {done ? (
+          <>
+            <p className="mt-3 text-sm text-ink-muted">
+              Proposition transmise. Un super-modérateur l&rsquo;examinera avant qu&rsquo;elle
+              rejoigne le référentiel.
+            </p>
+            <div className="mt-4 flex justify-end">
+              <Button variant="gold" onClick={onClose}>Fermer</Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="mt-1 text-xs text-ink-faint">
+              Les entrées officielles sont validées : cela évite les variantes
+              (Uchiha / UCHIWA / Uchïha).
+            </p>
+            <div className="mt-4 space-y-3">
+              <div>
+                <label htmlFor="sg-label" className={labelCls}>Libellé *</label>
+                <input id="sg-label" value={label} onChange={(e) => setLabel(e.target.value)} maxLength={120} className={input} />
+              </div>
+              <div>
+                <label htmlFor="sg-scope" className={labelCls}>Provenance</label>
+                <select id="sg-scope" value={scope} onChange={(e) => setScope(e.target.value)} className={input}>
+                  <option value="MANGA_CANON">Manga</option>
+                  <option value="ANIME">Anime</option>
+                  <option value="FILM">Film</option>
+                  <option value="GAME">Jeu</option>
+                  <option value="SERVER_CUSTOM">Création du serveur</option>
+                </select>
+              </div>
+              <div>
+                <label htmlFor="sg-url" className={labelCls}>Lien source (facultatif)</label>
+                <input id="sg-url" value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} maxLength={300} className={input} placeholder="https://…" />
+              </div>
+              <div>
+                <label htmlFor="sg-desc" className={labelCls}>Description courte</label>
+                <input id="sg-desc" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={1000} className={input} />
+              </div>
+              <div>
+                <label htmlFor="sg-reason" className={labelCls}>Motif de la demande</label>
+                <input id="sg-reason" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={1000} className={input} />
+              </div>
+            </div>
+            {error && <p role="alert" className="mt-3 text-xs text-blood-bright">{error}</p>}
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="ghost" onClick={onClose} disabled={isPending}>Annuler</Button>
+              <Button variant="gold" onClick={submit} disabled={isPending || label.trim().length === 0}>
+                {isPending ? "Envoi…" : "Proposer"}
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
 
 /** Aperçu des trois vues (modérateur / groupe acheteur / groupe sans accès). */
-function PermissionPreview({ data, refs }: { data: EditFormData; refs: Refs }) {
+function PermissionPreview({
+  data,
+  refs,
+  stateOf,
+}: {
+  data: EditFormData;
+  refs: Refs;
+  stateOf: (key: ProfileFieldKey) => KnowledgeChoice;
+}) {
   const rows = useMemo(() => {
     const labelOf = (list: RefOption[], ids: string[]) =>
       ids.map((id) => list.find((o) => o.id === id)?.label).filter(Boolean).join(", ");
     return [
-      ["Nom", data.lastName],
-      ["Faction", refs.factions.find((f) => f.id === data.factionId)?.name ?? ""],
-      ["Clan", labelOf(refs.clans, data.clanIds)],
-      ["Cheveux", refs.hairColors.find((o) => o.id === data.hairColorId)?.label ?? ""],
-      ["Kekkei Genkai", labelOf(refs.kekkeiGenkai, data.kekkeiGenkaiIds)],
+      ["lastName", "Nom", data.lastName],
+      ["faction", "Faction", refs.factions.find((f) => f.id === data.factionId)?.name ?? ""],
+      ["clans", "Clan", labelOf(refs.clans, data.clanIds)],
+      ["hairColor", "Cheveux", refs.hairColors.find((o) => o.id === data.hairColorId)?.label ?? ""],
+      ["kekkeiGenkai", "Kekkei Genkai", labelOf(refs.kekkeiGenkai, data.kekkeiGenkaiIds)],
+      ["artifacts", "Artefact", labelOf(refs.artifacts, data.artifactIds)],
     ] as const;
   }, [data, refs]);
+
+  /** Rendu exact des règles Inconnu / ??? / Aucun / Contradictoire. */
+  const render = (key: ProfileFieldKey, value: string, reveal: boolean) => {
+    const state = stateOf(key);
+    if (state === "UNKNOWN") return <span className="italic text-ink-faint">Inconnu</span>;
+    if (!reveal) return <span className="font-mono-toile text-gold">???</span>;
+    if (state === "NONE_CONFIRMED") return <span className="text-ink-muted">Aucun</span>;
+    if (state === "CONFLICTING") return <span className="text-blood-bright">Contradictoire</span>;
+    return <span className="text-ink-muted">{value || <span className="italic text-ink-faint">Inconnu</span>}</span>;
+  };
 
   const Col = ({ title, reveal }: { title: string; reveal: boolean }) => (
     <div className="border border-border-default bg-elevated p-3">
       <p className="mb-1 font-mono-toile text-[0.6rem] uppercase tracking-widest text-ink-faint">{title}</p>
       <dl className="space-y-0.5 text-[0.7rem]">
-        {rows.map(([field, value]) => (
-          <div key={field} className="flex justify-between gap-2">
-            <dt className="text-ink-faint">{field}</dt>
-            <dd className="text-ink-muted">
-              {value ? (reveal ? value : "???") : <span className="italic text-ink-faint">Inconnu</span>}
-            </dd>
+        {rows.map(([key, fieldLabel, value]) => (
+          <div key={key} className="flex justify-between gap-2">
+            <dt className="text-ink-faint">{fieldLabel}</dt>
+            <dd>{render(key as ProfileFieldKey, value, reveal)}</dd>
           </div>
         ))}
       </dl>
@@ -482,7 +695,7 @@ function PermissionPreview({ data, refs }: { data: EditFormData; refs: Refs }) {
 
   return (
     <div>
-      <p className={label}>Aperçu selon le lecteur</p>
+      <p className={labelCls}>Aperçu selon le lecteur</p>
       <div className="grid gap-2 sm:grid-cols-3">
         <Col title="Modérateur" reveal />
         <Col title="Groupe ayant acheté" reveal />

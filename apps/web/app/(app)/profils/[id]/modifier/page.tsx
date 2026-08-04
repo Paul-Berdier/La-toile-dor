@@ -10,6 +10,7 @@ import {
   RelationManager,
   ProfileImageUpload,
 } from "@/components/profils/technique-relation";
+import { MergePanel } from "@/components/profils/merge-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -91,6 +92,20 @@ export default async function ModifierDossierPage({
           <h2 className="mb-3 font-display text-sm tracking-widest text-gold uppercase">Portrait</h2>
           <ProfileImageUpload profileId={id} />
         </section>
+
+        {/* Fusion et archivage : super-modérateurs uniquement */}
+        {current.permissions.has(PERMISSIONS.PROFILE_MERGE) && (
+          <section className="border border-copper/50 bg-raised p-5">
+            <h2 className="mb-3 font-display text-sm tracking-widest text-copper uppercase">
+              Doublons et archivage
+            </h2>
+            <MergePanel
+              profileId={id}
+              profileCode={profile.code}
+              profileName={profile.characterFirstName}
+            />
+          </section>
+        )}
       </div>
     </main>
   );
