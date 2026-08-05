@@ -111,8 +111,29 @@ champ marqué contradictoire ne repasse pas en « connu » par effet de bord.
 ## Fusion (super-modérateurs)
 
 `mergeProfilesAction` déplace vers le dossier cible : traits, techniques,
-renseignements absents, historiques, relations (les réflexives sont
-supprimées), accès et demandes (les doublons sont neutralisés, pas perdus).
+renseignements absents, historiques, relations, accès et demandes (les doublons
+sont neutralisés, pas perdus).
+
+### Les relations se déplacent une par une
+
+`CharacterRelationship` porte `@@unique([fromProfileId, toProfileId, type])`.
+Un déplacement en bloc (`updateMany`) violait cette contrainte dès que les deux
+dossiers partageaient un lien — or **deux doublons ont presque toujours un
+parent ou un frère commun** : c'est souvent ce qui les fait repérer. La fusion
+échouait alors sur un `P2002` et toute la transaction était perdue.
+
+Chaque relation est donc réécrite individuellement :
+
+1. les extrémités pointant vers la source sont redirigées vers la cible ;
+2. une relation devenue **réflexive** (elle liait les deux dossiers fusionnés)
+   est supprimée ;
+3. `SIBLING_OF` est **re-canonisée** (`fromProfileId < toProfileId`) : la
+   redirection peut casser cet ordre, et la même fratrie existerait sinon sous
+   deux formes ;
+4. si la cible porte déjà ce lien, le doublon est supprimé plutôt que déplacé.
+
+Couvert par l'e2e « la fusion de deux dossiers ayant un parent commun ne casse
+pas ».
 Le dossier source devient une **redirection** (`mergedIntoId` + `archivedAt`) :
 son ancien code mène toujours au dossier fusionné.
 

@@ -1264,17 +1264,43 @@ export async function mergeProfilesAction(input: {
       where: { profileId: source.id },
       data: { profileId: target.id },
     });
-    // Relations : rediriger, en neutralisant celles devenues réflexives
-    await tx.characterRelationship.deleteMany({
-      where: {
-        OR: [
-          { fromProfileId: source.id, toProfileId: target.id },
-          { fromProfileId: target.id, toProfileId: source.id },
-        ],
-      },
+    // Relations : rediriger UNE PAR UNE.
+    //
+    // Un `updateMany` en bloc violait `@@unique([fromProfileId, toProfileId,
+    // type])` dès que la cible portait déjà la même relation (deux doublons
+    // ont presque toujours des parents ou des frères communs — c'est même ce
+    // qui les fait repérer). La fusion échouait alors sur un P2002 et toute la
+    // transaction était perdue.
+    const sourceRelations = await tx.characterRelationship.findMany({
+      where: { OR: [{ fromProfileId: source.id }, { toProfileId: source.id }] },
     });
-    await tx.characterRelationship.updateMany({ where: { fromProfileId: source.id }, data: { fromProfileId: target.id } });
-    await tx.characterRelationship.updateMany({ where: { toProfileId: source.id }, data: { toProfileId: target.id } });
+    for (const rel of sourceRelations) {
+      let from = rel.fromProfileId === source.id ? target.id : rel.fromProfileId;
+      let to = rel.toProfileId === source.id ? target.id : rel.toProfileId;
+
+      // La relation liait les deux dossiers fusionnés : elle devient réflexive
+      if (from === to) {
+        await tx.characterRelationship.delete({ where: { id: rel.id } });
+        continue;
+      }
+      // SIBLING_OF est stockée avec fromProfileId < toProfileId : la
+      // redirection peut casser cet ordre, il faut le rétablir sans quoi la
+      // même fratrie existerait sous deux formes.
+      if (rel.type === "SIBLING_OF" && from > to) [from, to] = [to, from];
+
+      const clash = await tx.characterRelationship.findFirst({
+        where: { fromProfileId: from, toProfileId: to, type: rel.type, id: { not: rel.id } },
+      });
+      if (clash) {
+        // La cible possède déjà ce lien : le doublon disparaît avec le dossier
+        await tx.characterRelationship.delete({ where: { id: rel.id } });
+      } else {
+        await tx.characterRelationship.update({
+          where: { id: rel.id },
+          data: { fromProfileId: from, toProfileId: to },
+        });
+      }
+    }
     // Achats et demandes suivent le dossier fusionné (doublons neutralisés)
     const sourceGrants = await tx.profileAccessGrant.findMany({ where: { profileId: source.id, revokedAt: null } });
     for (const grant of sourceGrants) {

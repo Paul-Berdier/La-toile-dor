@@ -205,7 +205,11 @@ test("un agent ne peut PAS demander l'accès ; un chef le peut", async ({ contex
   const page2 = await ctx2.newPage();
   await page2.goto(`/profils/${profile.id}`);
   await page2.getByRole("button", { name: /Demander l'accès pour mon groupe/ }).click();
-  await expect(page2.getByText(/Demande transmise/)).toBeVisible();
+  // « Demande transmise » est TRANSITOIRE : le rafraîchissement qui suit
+  // remplace le panneau de demande par l'état persistant. S'accrocher au
+  // message rendait le test dépendant de la vitesse du serveur. On vérifie
+  // donc ce que l'utilisateur voit durablement.
+  await expect(page2.getByText(/attend la décision/)).toBeVisible();
 
   const created = await prisma.profilePurchaseRequest.findFirst({
     where: { profileId: profile.id, requestedById: chief, status: "PENDING" },
