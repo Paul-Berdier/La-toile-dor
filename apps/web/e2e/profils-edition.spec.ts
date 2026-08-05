@@ -217,6 +217,35 @@ async function makeProfile(firstName: string) {
   });
 }
 
+test("la suppression est réservée aux super-modérateurs et exige le code", async ({
+  context,
+  page,
+}) => {
+  const jetable = await makeProfile(`Cible${suffix}Jetable`);
+
+  // Un modérateur simple n'a pas accès au panneau destructif
+  await loginAs(context, "demo-mod");
+  await page.goto(`/profils/${jetable.id}/modifier`);
+  await expect(page.getByRole("button", { name: /Supprimer définitivement/ })).toHaveCount(0);
+
+  // Un super-modérateur le voit, mais doit recopier le code du dossier
+  const ctx2 = await page.context().browser()!.newContext();
+  await loginAs(ctx2, "demo-admin");
+  const page2 = await ctx2.newPage();
+  await page2.goto(`/profils/${jetable.id}/modifier`);
+  await page2.getByRole("button", { name: /Supprimer définitivement/ }).click();
+
+  const confirmer = page2.getByRole("button", { name: /^Supprimer définitivement$/ }).last();
+  await expect(confirmer).toBeDisabled(); // tant que le code n'est pas recopié
+  await page2.getByLabel(/Recopiez/).fill(jetable.code);
+  await confirmer.click();
+
+  await page2.waitForURL(/\/profils$/);
+  const gone = await prisma.characterProfile.findUnique({ where: { id: jetable.id } });
+  expect(gone).toBeNull();
+  await ctx2.close();
+});
+
 test("la fusion de deux dossiers ayant un parent commun ne casse pas", async ({
   context,
   page,

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { PROFILE_FIELD_KEYS } from "./profile-fields";
+import { PROFILE_FIELD_KEYS, REFERENCE_TYPES, type ReferenceType } from "./profile-fields";
 
 // ── Validation serveur des dossiers de renseignement ──
 
@@ -172,7 +172,13 @@ export const referenceSuggestionSchema = z.object({
  * variantes (Uchiha / UCHIWA / Uchïha).
  */
 export const referenceOptionCreateSchema = z.object({
-  type: z.string().min(2).max(40),
+  // Liste blanche, contrairement aux propositions : cette création est
+  // immédiate et sans relecture. Un type inventé produirait des entrées
+  // invisibles dans l'administration et impossibles à sélectionner.
+  type: z.enum(
+    Object.values(REFERENCE_TYPES) as [ReferenceType, ...ReferenceType[]],
+    { errorMap: () => ({ message: "Référentiel inconnu." }) },
+  ),
   label: z.string().trim().min(1).max(120),
   sourceScope: z
     .enum(["MANGA_CANON", "ANIME", "FILM", "GAME", "SERVER_CUSTOM"])

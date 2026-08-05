@@ -58,6 +58,42 @@ test("un agent SANS accès voit le prénom, « Inconnu » et « ??? » — jamai
   }
 });
 
+test("la LISTE n'expose le nom de famille qu'aux lecteurs autorisés", async ({
+  context,
+  page,
+}) => {
+  // La liste affiche « Akira Kaguya » pour la modération. Le nom est un
+  // renseignement comme un autre : la clé ne doit pas exister dans la charge
+  // utile envoyée à un lecteur sans accès — ni dans le DOM, ni dans le RSC.
+  const responses: string[] = [];
+  page.on("response", async (response) => {
+    const type = response.headers()["content-type"] ?? "";
+    if (type.includes("text") || type.includes("json") || type.includes("javascript")) {
+      responses.push(await response.text().catch(() => ""));
+    }
+  });
+
+  await loginAs(context, "demo-member-2-0-0");
+  await page.goto("/profils");
+  await expect(page.getByText("Akira").first()).toBeVisible();
+
+  const html = await page.content();
+  expect(html, "le nom de famille ne doit pas figurer dans la liste").not.toContain("Kaguya");
+  for (const body of responses) {
+    expect(body, "le nom de famille ne doit être dans aucune réponse").not.toContain("Kaguya");
+  }
+
+  // La modération, elle, voit bien le nom complet
+  const ctx2 = await page.context().browser()!.newContext();
+  await loginAs(ctx2, "demo-mod");
+  const page2 = await ctx2.newPage();
+  await page2.goto("/profils");
+  // Dans la CARTE du dossier — « Kaguya » apparaît aussi dans le filtre Clan,
+  // qui n'est pas ce que l'on vérifie ici.
+  await expect(page2.getByRole("link", { name: /Akira Kaguya/ })).toBeVisible();
+  await ctx2.close();
+});
+
 test("le portrait protégé n'est PAS servi (404) à un utilisateur sans accès", async ({
   context,
   request,

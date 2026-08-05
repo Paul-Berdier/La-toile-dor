@@ -51,9 +51,17 @@ chaîne. `CHECK (min <= max)`. Affichage : « 185 cm », « Entre 180 et 190 cm 
 
 - **Rapide** : bouton « Nouveau profil » → prénom seul → code généré, tous les
   autres champs UNKNOWN, historique de création, dossier visible immédiatement.
-- **Doublons** : à la création, les dossiers au prénom normalisé identique sont
-  listés en avertissement. La création n'est **jamais bloquée** — le modérateur
-  confirme (« Créer quand même »).
+- **Doublons** : à la création, les dossiers dont le prénom normalisé
+  **commence par** la saisie sont listés en avertissement (« Aki » fait
+  ressortir « Akira »). Ni égalité stricte — qui ne signalerait presque
+  jamais rien — ni `contains`, qui ferait ressortir « Ran » dans « Kiran » et
+  réclamerait une confirmation à presque chaque création, jusqu'à ce que
+  l'avertissement soit cliqué sans être lu. La création n'est **jamais
+  bloquée** : le modérateur confirme (« Créer quand même »).
+- **Dossiers déjà ouverts** : la modale interroge la recherche au fil de la
+  frappe et propose d'ouvrir un dossier existant plutôt que d'en créer un
+  second — le doublon se repère avant la création, pas dans un message d'erreur
+  après coup.
 - **Depuis une mission** : sur une mission attribuée/en cours/accomplie, le
   bouton « Ajouter les renseignements au dossier » ouvre `/profils?mission=…`.
   La mission est alors enregistrée comme source de chaque champ modifié.
