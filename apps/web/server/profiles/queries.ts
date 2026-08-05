@@ -6,6 +6,7 @@ import type { CurrentUser } from "@/lib/session";
 import { getRpTimeConfig } from "@/server/rp-config";
 import { getProfileViewer, canViewProfileValues, type ProfileViewer } from "./access";
 import { dossierInclude, serializeDossier, type SerializedDossier } from "./serializer";
+import { estimateProfilePrice, type ProfileEstimate } from "./pricing";
 
 // ── Liste des dossiers ──
 
@@ -255,6 +256,11 @@ export interface DossierDetail {
   sealedCount: number;
   /** Dernier prix consenti pour ce dossier, à titre indicatif */
   lastPrice: number | null;
+  /**
+   * Prix conseillé par le barème. Un CONSEIL, jamais un prélèvement : aucun
+   * compte n'est débité, le règlement se fait en jeu.
+   */
+  estimate: ProfileEstimate | null;
 }
 
 export async function getDossierDetail(
@@ -328,6 +334,12 @@ export async function getDossierDetail(
         select: { priceRyos: true },
       });
   const lastPrice = lastGrant?.priceRyos ?? null;
+
+  // Le barème n'intéresse que ceux qui négocient : la modération qui fixe le
+  // prix, et le chef qui s'apprête à le payer. Inutile de le calculer pour un
+  // agent qui ne peut rien acheter.
+  const estimate =
+    viewer.canViewAll || viewer.canRequest ? await estimateProfilePrice(profile.id) : null;
 
   // Chefs : groupes qu'ils dirigent, sans accès actif ni demande en attente
   let requestableGroups: { id: string; name: string }[] = [];
@@ -410,6 +422,7 @@ export async function getDossierDetail(
     myPendingRequest,
     sealedCount,
     lastPrice,
+    estimate,
   };
 }
 

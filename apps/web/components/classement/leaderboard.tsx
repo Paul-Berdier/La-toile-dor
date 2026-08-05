@@ -14,6 +14,12 @@ export interface LeaderRow {
   failed?: number;
   /** Nombre de groupes rassemblés (factions uniquement) */
   groupCount?: number;
+  /**
+   * Ryōs engagés en achats de dossiers. Ce n'est PAS un solde : rien n'est
+   * débité nulle part, le règlement se fait en jeu. C'est ce que le groupe a
+   * accepté de payer pour du renseignement.
+   */
+  spent?: number;
 }
 
 type Scope = "groups" | "factions" | "agents";
@@ -176,6 +182,14 @@ export function Leaderboard({
                       </span>
                       {formatRyos(row.ryos)}
                     </span>
+                    {row.spent != null && row.spent > 0 && (
+                      <span
+                        className="block font-mono-toile text-[0.65rem] text-copper"
+                        title="Ryōs engagés en achats de dossiers — aucun compte n'est débité"
+                      >
+                        −{formatRyos(row.spent)} en renseignement
+                      </span>
+                    )}
                   </span>
                 </div>
               </li>

@@ -34,7 +34,7 @@ export default async function ClassementPage({
       }
     : {};
 
-  const [groups, scores, resolvedAssignments, rewardedParticipants, myMemberships] =
+  const [groups, scores, resolvedAssignments, rewardedParticipants, myMemberships, spending] =
     await Promise.all([
       prisma.group.findMany({
         where: { isActive: true },
@@ -72,7 +72,19 @@ export default async function ClassementPage({
         where: { userId: current.session.userId, group: { isActive: true } },
         select: { groupId: true },
       }),
+      // Ryōs engagés en achats de dossiers. Pas un débit : aucun compte
+      // n'existe, le règlement se fait en jeu. C'est ce qu'un groupe a accepté
+      // de payer pour du renseignement.
+      prisma.profileAccessGrant.groupBy({
+        by: ["groupId"],
+        where: { priceRyos: { not: null } },
+        _sum: { priceRyos: true },
+      }),
     ]);
+
+  const spentByGroup = new Map(
+    spending.map((row) => [row.groupId, row._sum.priceRyos ?? 0]),
+  );
 
   // ── Groupes ──
   const groupRows: GroupScore[] = groups.map((group) => {
@@ -107,6 +119,7 @@ export default async function ClassementPage({
         .filter((participant) => participant.groupId === group.id)
         .reduce((sum, participant) => sum + participant.ryoAwarded, 0),
       bestStreak,
+      spent: spentByGroup.get(group.id) ?? 0,
       sanctions: groupScores.filter(
         (score) => score.reason === "ADMIN_PENALTY" || score.reason === "RP_VIOLATION",
       ).length,
@@ -131,12 +144,14 @@ export default async function ClassementPage({
       ryos: 0,
       missions: 0,
       failed: 0,
+      spent: 0,
       groupCount: 0,
     };
     target.points += row.points;
     target.ryos += row.ryos;
     target.missions += row.missions;
     target.failed = (target.failed ?? 0) + (row.failed ?? 0);
+    target.spent = (target.spent ?? 0) + (row.spent ?? 0);
     target.groupCount = (target.groupCount ?? 0) + 1;
     factionMap.set(group.faction.id, target);
   }

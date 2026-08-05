@@ -7,7 +7,9 @@ import {
   LevelRow,
   SeasonForm,
   ScoreAdjustForm,
+  ProfilePricingForm,
 } from "@/components/admin/config-forms";
+import { getProfilePricing } from "@/server/profiles/pricing";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +29,8 @@ export default async function AdminConfigurationPage() {
   ]);
 
   const rpConfig = (rpSetting?.value as typeof DEFAULT_RP_TIME_CONFIG | null) ?? DEFAULT_RP_TIME_CONFIG;
+  // Barème en vigueur, défauts compris : le formulaire part de ce qui s'applique
+  const pricing = await getProfilePricing();
 
   return (
     <div className="space-y-8">
@@ -35,6 +39,13 @@ export default async function AdminConfigurationPage() {
           Temps RP
         </h2>
         <RpTimeForm current={rpConfig} />
+      </section>
+
+      <section className="border border-border-default bg-raised p-4">
+        <h2 className="mb-3 font-display text-sm tracking-widest text-gold uppercase">
+          Valeur des dossiers
+        </h2>
+        <ProfilePricingForm current={pricing} />
       </section>
 
       <section className="border border-border-default bg-raised p-4">

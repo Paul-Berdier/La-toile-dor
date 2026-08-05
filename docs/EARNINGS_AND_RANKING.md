@@ -17,6 +17,47 @@ Les deux ne classent **pas dans le même ordre** — un groupe peut accumuler de
 points sans toucher grand-chose, et l'inverse. C'est justement l'information
 intéressante, d'où la bascule « Classer par : Points / Ryōs ».
 
+## Ce que vaut un dossier
+
+Le prix d'un dossier n'est pas une constante du produit : ce qu'une faiblesse
+vaut face à un Kekkei Genkai relève de l'équilibre du serveur. La modération
+règle donc le barème dans `/admin/configuration`, et le calcul lui-même vit
+dans `packages/shared/src/profile-pricing.ts` — pur, testé, rejouable.
+
+Le principe tient en une phrase : **on paie ce qui sert à agir**.
+
+| Poste | Défaut | Pourquoi |
+|---|---:|---|
+| Faiblesses | 2 500 | le plus cher — c'est ce qui décide d'un combat |
+| Kekkei Genkai | 2 000 | rare et déterminant |
+| Techniques de clan | 1 600 | savoir qu'un non-membre les porte vaut cher |
+| Forces, artefacts | 1 500 | |
+| Subjutsu | 1 400 | |
+| Styles, natures | 1 000–1 200 | |
+| Clan, faction, grade | 700–900 | sert à trouver, pas à vaincre |
+| Portrait | 900 | reconnaître quelqu'un a un prix |
+| Apparence (taille, cheveux, peau) | 100–200 | complète, ne décide rien |
+| Parenté | 400 par lien, 8 au plus | |
+
+À quoi s'ajoutent un **prix plancher** (ouvrir un dossier a déjà coûté), un
+**multiplicateur de grade** (`1 + (rang − 1) × pas`, plafonné — le dossier d'un
+Kage n'a pas le prix de celui d'un apprenti) et un **multiplicateur global**
+pour l'inflation du serveur. Le taux `ryosPerPoint` convertit la valeur en
+points de mérite.
+
+Seuls les renseignements **acquis** (`KNOWN`) se facturent : une absence
+confirmée ou une contradiction sont utiles, mais ce n'est pas ce qu'on achète.
+
+Le prix s'affiche avec son **détail** : un prix qu'on ne peut pas expliquer ne
+se négocie pas. Et il reste un **conseil** — la modération fixe le montant.
+
+## Dépenses
+
+Le classement affiche, sous les gains d'un groupe, ce qu'il a engagé en achats
+de dossiers (somme des `priceRyos` de ses accès). Ce n'est **pas** un solde :
+les gains ne sont pas diminués, rien n'est bloqué si le montant dépasse ce que
+le groupe a touché.
+
 ## Il n'existe aucun portefeuille
 
 Les ryōs affichés sont un **cumul de gains**, pas un solde débitable : le
