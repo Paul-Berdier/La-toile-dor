@@ -3,13 +3,22 @@
  *
  * La Toile vend des dossiers : encore faut-il savoir à quel prix. Le barème
  * n'est pas figé dans le code — la modération le règle — mais il repose sur
- * une idée simple : **on paie ce qui sert à agir**.
+ * une idée : **on paie ce qui donne prise sur quelqu'un**.
  *
- * D'où l'ordre des valeurs par défaut : une faiblesse vaut plus cher qu'une
- * force (c'est ce qui permet de l'emporter), les aptitudes de combat plus que
- * l'état civil, et la couleur des cheveux presque rien. Le grade de la cible
- * multiplie l'ensemble : le dossier d'un Kage n'a pas le prix de celui d'un
- * apprenti.
+ * Ce n'est pas seulement de quoi le vaincre. Trois choses donnent prise :
+ *
+ *  1. **ses aptitudes** — une faiblesse décide d'un combat, elle coûte donc
+ *     plus cher qu'une force ;
+ *  2. **son histoire** — un passé, une dette, une faute donnent barre sur un
+ *     homme sans qu'aucun coup ne soit porté ;
+ *  3. **ses proches** — et c'est souvent le plus précieux. La petite sœur d'un
+ *     grand ninja n'a peut-être aucun talent : son dossier vaut cher
+ *     précisément parce qu'elle est sa sœur.
+ *
+ * D'où deux multiplicateurs, et non un seul. Le grade de la CIBLE rehausse
+ * tout le dossier — celui d'un Kage n'a pas le prix de celui d'un apprenti. Le
+ * grade des PERSONNES LIÉES rehausse la valeur de chaque lien : un lien vers
+ * un haut gradé est un levier, pas une ligne d'état civil.
  *
  * Le calcul est PUR : aucune requête, aucune date. Il se teste et se rejoue.
  */
@@ -27,10 +36,17 @@ export interface ProfilePricing {
   gradeMax: number;
   /** Ce que vaut chaque champ RENSEIGNÉ, en ryōs */
   fieldValues: Partial<Record<ProfileFieldKey, number>>;
-  /** Ce que vaut une parenté connue */
+  /** Ce que vaut un lien vers quelqu'un sans grade établi */
   relationValue: number;
-  /** Au-delà, les relations n'ajoutent plus rien */
+  /** Au-delà, les liens n'ajoutent plus rien — les plus précieux d'abord */
   relationCap: number;
+  /**
+   * Part du multiplicateur de grade répercutée sur un lien.
+   *
+   * À 0, tous les liens se valent — la sœur d'un Kage compterait comme une
+   * connaissance anonyme. À 1, un lien vaut autant que le rang qu'il désigne.
+   */
+  relationLeverage: number;
   /** Combien de ryōs valent un point de mérite */
   ryosPerPoint: number;
   /** Coup de pouce global — inflation ou austérité décidée par la Toile */
@@ -58,11 +74,13 @@ export const DEFAULT_PROFILE_PRICING: ProfilePricing = {
     combatStyles: 1200,
     chakraNatures: 1000,
     kenjutsuStyles: 800,
-    // ── Ce qui sert à trouver et à comprendre ──
+    // ── Ce qui donne barre sans porter un coup ──
+    // L'histoire d'un homme — un passé, une dette, une faute — vaut autant
+    // que ses techniques : on peut la retourner contre lui sans combattre.
+    details: 1600,
     clans: 900,
     faction: 800,
     rank: 700,
-    details: 600,
     lastName: 500,
     lifeStatus: 400,
     age: 300,
@@ -73,8 +91,11 @@ export const DEFAULT_PROFILE_PRICING: ProfilePricing = {
     skinTone: 150,
     sex: 100,
   },
-  relationValue: 400,
+  relationValue: 500,
   relationCap: 8,
+  // 0,75 : la sœur d'un Kage vaut nettement plus qu'une connaissance anonyme,
+  // sans que le lien pèse autant que le dossier du Kage lui-même.
+  relationLeverage: 0.75,
   ryosPerPoint: 500,
   globalMultiplier: 1,
   roundTo: 100,
@@ -103,8 +124,12 @@ export const PRICING_GROUPS: { label: string; fields: ProfileFieldKey[] }[] = [
 export interface PricingInput {
   /** Champs dont le renseignement est ACQUIS (état KNOWN) */
   knownFields: ProfileFieldKey[];
-  /** Nombre de parentés connues */
-  relationCount: number;
+  /**
+   * Rang du grade de CHAQUE personne liée (parent, enfant, fratrie…), `null`
+   * quand il est inconnu. Un lien vers un haut gradé est un levier : c'est ce
+   * qui fait la valeur du dossier d'une petite sœur sans talent.
+   */
+  relationGradeRanks: (number | null)[];
   /**
    * Rang du grade de la cible (1 = le plus bas). `null` si le grade est
    * inconnu : on n'applique alors aucun multiplicateur — on ne facture pas
@@ -170,10 +195,21 @@ export function priceProfile(input: PricingInput, pricing: ProfilePricing): Pric
     subtotal += otherAmount;
   }
 
-  const relations = Math.min(Math.max(0, input.relationCount), pricing.relationCap);
-  if (relations > 0) {
-    const amount = relations * pricing.relationValue;
-    lines.push({ label: `Parenté et liens (${relations})`, amount });
+  // Chaque lien vaut selon le rang qu'il désigne : un lien vers un Kage donne
+  // prise sur un Kage. Les plus précieux sont retenus en premier, sans quoi le
+  // plafond écarterait au hasard le seul lien qui comptait.
+  const relationAmounts = input.relationGradeRanks
+    .map(
+      (rank) =>
+        pricing.relationValue *
+        (1 + (gradeMultiplier(rank, pricing) - 1) * pricing.relationLeverage),
+    )
+    .sort((a, b) => b - a)
+    .slice(0, Math.max(0, pricing.relationCap));
+
+  if (relationAmounts.length > 0) {
+    const amount = Math.round(relationAmounts.reduce((sum, value) => sum + value, 0));
+    lines.push({ label: `Parenté et liens (${relationAmounts.length})`, amount });
     subtotal += amount;
   }
 

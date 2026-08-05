@@ -24,26 +24,50 @@ vaut face à un Kekkei Genkai relève de l'équilibre du serveur. La modération
 règle donc le barème dans `/admin/configuration`, et le calcul lui-même vit
 dans `packages/shared/src/profile-pricing.ts` — pur, testé, rejouable.
 
-Le principe tient en une phrase : **on paie ce qui sert à agir**.
+Le principe : **on paie ce qui donne prise sur quelqu'un**. Trois choses la
+donnent, et le barème les valorise toutes les trois.
+
+**Ses aptitudes.** Une faiblesse décide d'un combat : elle coûte plus cher
+qu'une force.
+
+**Son histoire.** Un passé, une dette, une faute donnent barre sur un homme
+sans qu'aucun coup ne soit porté — `details` vaut donc autant que les
+meilleures aptitudes.
+
+**Ses proches.** Souvent le plus précieux. La petite sœur d'un grand ninja n'a
+peut-être aucun talent : son dossier vaut cher **parce qu'elle est sa sœur**.
+Un lien est donc valorisé selon le **rang de la personne qu'il désigne**, et
+non au forfait. Le plafond `relationCap` retient les liens **les plus
+précieux** — sinon il écarterait au hasard le seul qui comptait.
 
 | Poste | Défaut | Pourquoi |
 |---|---:|---|
 | Faiblesses | 2 500 | le plus cher — c'est ce qui décide d'un combat |
 | Kekkei Genkai | 2 000 | rare et déterminant |
 | Techniques de clan | 1 600 | savoir qu'un non-membre les porte vaut cher |
+| **Histoire (`details`)** | **1 600** | on la retourne contre lui sans combattre |
 | Forces, artefacts | 1 500 | |
 | Subjutsu | 1 400 | |
 | Styles, natures | 1 000–1 200 | |
 | Clan, faction, grade | 700–900 | sert à trouver, pas à vaincre |
 | Portrait | 900 | reconnaître quelqu'un a un prix |
 | Apparence (taille, cheveux, peau) | 100–200 | complète, ne décide rien |
-| Parenté | 400 par lien, 8 au plus | |
+| Parenté | 500 par lien × levier, 8 au plus | pondérée par le rang du proche |
 
-À quoi s'ajoutent un **prix plancher** (ouvrir un dossier a déjà coûté), un
-**multiplicateur de grade** (`1 + (rang − 1) × pas`, plafonné — le dossier d'un
-Kage n'a pas le prix de celui d'un apprenti) et un **multiplicateur global**
-pour l'inflation du serveur. Le taux `ryosPerPoint` convertit la valeur en
-points de mérite.
+### Deux multiplicateurs, pas un
+
+| Multiplicateur | Sur quoi | Effet |
+|---|---|---|
+| **Grade de la cible** | tout le dossier | `1 + (rang − 1) × gradeStep`, plafonné à `gradeMax` — celui d'un Kage n'a pas le prix de celui d'un apprenti |
+| **Grade des proches** | chaque lien | `1 + (mult. du lié − 1) × relationLeverage` — un lien vers un haut gradé est un levier |
+
+`relationLeverage` vaut 0,75 par défaut : la sœur d'un Kage pèse nettement plus
+qu'une connaissance anonyme, sans que le lien vaille autant que le dossier du
+Kage lui-même. À 0, tous les liens redeviennent équivalents.
+
+S'y ajoutent un **prix plancher** (ouvrir un dossier a déjà coûté) et un
+**multiplicateur global** pour l'inflation du serveur. Le taux `ryosPerPoint`
+convertit la valeur en points de mérite.
 
 Seuls les renseignements **acquis** (`KNOWN`) se facturent : une absence
 confirmée ou une contradiction sont utiles, mais ce n'est pas ce qu'on achète.

@@ -395,6 +395,7 @@ export async function updateProfilePricingAction(input: {
   gradeMax: number;
   relationValue: number;
   relationCap: number;
+  relationLeverage: number;
   ryosPerPoint: number;
   globalMultiplier: number;
   fieldValues: Record<string, number>;
@@ -403,7 +404,7 @@ export async function updateProfilePricingAction(input: {
   if (!actor) return { ok: false, error: "Permission refusée." };
 
   const positive = (value: number) => Number.isFinite(value) && value >= 0;
-  if (![input.basePrice, input.relationValue, input.ryosPerPoint].every(positive)) {
+  if (![input.basePrice, input.relationValue, input.ryosPerPoint, input.relationLeverage].every(positive)) {
     return { ok: false, error: "Les montants doivent être positifs." };
   }
   if (input.globalMultiplier <= 0 || input.gradeMax < 1) {

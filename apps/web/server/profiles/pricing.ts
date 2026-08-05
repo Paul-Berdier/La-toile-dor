@@ -50,24 +50,37 @@ export async function estimateProfilePrice(profileId: string): Promise<ProfileEs
         // Seuls les renseignements ACQUIS se facturent : une absence confirmée
         // ou une contradiction sont utiles, mais ce n'est pas ce qu'on achète.
         fieldIntel: { where: { knowledgeState: "KNOWN" }, select: { fieldKey: true } },
-        _count: { select: { relationsFrom: true, relationsTo: true } },
+        // Le GRADE des personnes liées, pas seulement leur nombre : c'est lui
+        // qui fait qu'un lien est un levier. Les dossiers archivés ou fusionnés
+        // sont écartés — on ne monnaye pas une prise sur un dossier retiré.
+        relationsFrom: {
+          where: { toProfile: { archivedAt: null, mergedIntoId: null } },
+          select: { toProfile: { select: { rank: { select: { order: true } } } } },
+        },
+        relationsTo: {
+          where: { fromProfile: { archivedAt: null, mergedIntoId: null } },
+          select: { fromProfile: { select: { rank: { select: { order: true } } } } },
+        },
       },
     }),
   ]);
   if (!profile) return null;
 
-  const relationCount = profile._count.relationsFrom + profile._count.relationsTo;
+  const relationGradeRanks = [
+    ...profile.relationsFrom.map((rel) => rel.toProfile.rank?.order ?? null),
+    ...profile.relationsTo.map((rel) => rel.fromProfile.rank?.order ?? null),
+  ];
   const knownFields = profile.fieldIntel.map((row) => row.fieldKey as ProfileFieldKey);
 
   const result = priceProfile(
-    { knownFields, relationCount, gradeRank: profile.rank?.order ?? null },
+    { knownFields, relationGradeRanks, gradeRank: profile.rank?.order ?? null },
     pricing,
   );
 
   return {
     ...result,
     knownCount: knownFields.length,
-    relationCount,
+    relationCount: relationGradeRanks.length,
     gradeLabel: profile.rank?.label ?? null,
   };
 }

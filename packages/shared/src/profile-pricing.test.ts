@@ -7,7 +7,7 @@ import {
 } from "./profile-pricing";
 
 const P = DEFAULT_PROFILE_PRICING;
-const empty = { knownFields: [], relationCount: 0, gradeRank: null };
+const empty = { knownFields: [], relationGradeRanks: [], gradeRank: null };
 
 describe("priceProfile — un dossier vide ne vaut que son ouverture", () => {
   it("prix plancher quand rien n'est renseigné", () => {
@@ -63,21 +63,62 @@ describe("priceProfile — le grade multiplie l'ensemble", () => {
   });
 });
 
-describe("priceProfile — parenté", () => {
+describe("priceProfile — les proches donnent prise", () => {
   it("les liens ajoutent de la valeur", () => {
     const sans = priceProfile(empty, P).price;
-    const avec = priceProfile({ ...empty, relationCount: 3 }, P).price;
+    const avec = priceProfile({ ...empty, relationGradeRanks: [null, null, null] }, P).price;
     expect(avec).toBe(sans + 3 * P.relationValue);
   });
 
+  it("la petite sœur d'un grand ninja vaut plus cher qu'une inconnue", () => {
+    // Aucun talent, aucune aptitude : toute sa valeur tient à son frère.
+    const soeurDeKage = priceProfile({ ...empty, relationGradeRanks: [6] }, P).price;
+    const soeurDinconnu = priceProfile({ ...empty, relationGradeRanks: [null] }, P).price;
+    expect(soeurDeKage).toBeGreaterThan(soeurDinconnu);
+  });
+
+  it("un dossier vide mais bien apparenté vaut plus qu'un dossier vide", () => {
+    const vide = priceProfile(empty, P).price;
+    const apparente = priceProfile({ ...empty, relationGradeRanks: [6, 5] }, P).price;
+    expect(apparente).toBeGreaterThan(vide * 2);
+  });
+
   it("au-delà du plafond, les liens n'ajoutent plus rien", () => {
-    const plafond = priceProfile({ ...empty, relationCount: P.relationCap }, P).price;
-    const au_dela = priceProfile({ ...empty, relationCount: P.relationCap + 50 }, P).price;
+    const ranks = Array.from({ length: P.relationCap }, () => null);
+    const plafond = priceProfile({ ...empty, relationGradeRanks: ranks }, P).price;
+    const au_dela = priceProfile(
+      { ...empty, relationGradeRanks: [...ranks, ...Array.from({ length: 50 }, () => null)] },
+      P,
+    ).price;
     expect(au_dela).toBe(plafond);
   });
 
-  it("un nombre négatif ne retire jamais de valeur", () => {
-    expect(priceProfile({ ...empty, relationCount: -5 }, P).price).toBe(P.basePrice);
+  it("le plafond retient les liens les PLUS précieux", () => {
+    // Un lien vers un Kage noyé parmi des inconnus ne doit pas être écarté.
+    const petitCap = { ...P, relationCap: 1 };
+    const avecKage = priceProfile({ ...empty, relationGradeRanks: [null, null, 6] }, petitCap).price;
+    const sansKage = priceProfile({ ...empty, relationGradeRanks: [null, null, null] }, petitCap).price;
+    expect(avecKage).toBeGreaterThan(sansKage);
+  });
+
+  it("aucun lien ne retire de valeur", () => {
+    expect(priceProfile(empty, P).price).toBe(P.basePrice);
+  });
+
+  it("un levier nul rend tous les liens équivalents", () => {
+    const sansLevier = { ...P, relationLeverage: 0 };
+    const kage = priceProfile({ ...empty, relationGradeRanks: [6] }, sansLevier).price;
+    const inconnu = priceProfile({ ...empty, relationGradeRanks: [null] }, sansLevier).price;
+    expect(kage).toBe(inconnu);
+  });
+});
+
+describe("priceProfile — l'histoire donne barre sans porter un coup", () => {
+  it("le passé pèse autant que les meilleures aptitudes", () => {
+    const plancher = priceProfile(empty, P).price;
+    const histoire = priceProfile({ ...empty, knownFields: ["details"] }, P).price - plancher;
+    const force = priceProfile({ ...empty, knownFields: ["strengths"] }, P).price - plancher;
+    expect(histoire).toBeGreaterThan(force);
   });
 });
 
@@ -105,12 +146,14 @@ describe("priceProfile — barème réglable", () => {
 
 describe("priceProfile — le prix doit pouvoir s'expliquer", () => {
   it("le détail couvre l'intégralité du montant", () => {
-    const input = {
-      knownFields: ["weaknesses", "kekkeiGenkai", "clans", "hairColor"] as const,
-      relationCount: 2,
-      gradeRank: 3,
-    };
-    const result = priceProfile({ ...input, knownFields: [...input.knownFields] }, P);
+    const result = priceProfile(
+      {
+        knownFields: ["weaknesses", "kekkeiGenkai", "clans", "hairColor"],
+        relationGradeRanks: [4, null],
+        gradeRank: 3,
+      },
+      P,
+    );
     const somme = result.lines.reduce((total, line) => total + line.amount, 0);
     // Le détail est le sous-total AVANT multiplicateur : le prix final en
     // découle, et l'écart s'explique par le grade.

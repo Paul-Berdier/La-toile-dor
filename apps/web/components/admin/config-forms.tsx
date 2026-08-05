@@ -60,13 +60,19 @@ export function ProfilePricingForm({ current }: { current: ProfilePricing }) {
   const setField = (field: string, value: number) =>
     setPricing((p) => ({ ...p, fieldValues: { ...p.fieldValues, [field]: value } }));
 
-  // Aperçu : un dossier bien renseigné sur une cible de rang moyen
-  const preview = priceProfile(
+  // Deux aperçus qui disent des choses différentes : un dossier de combattant,
+  // et celui d'un proche sans aucun talent — dont toute la valeur tient au
+  // lien. Régler le barème sans voir le second, c'est passer à côté.
+  const previewCombattant = priceProfile(
     {
       knownFields: ["weaknesses", "strengths", "kekkeiGenkai", "combatStyles", "clans", "rank"],
-      relationCount: 3,
+      relationGradeRanks: [null, null],
       gradeRank: 4,
     },
+    pricing,
+  );
+  const previewProche = priceProfile(
+    { knownFields: ["lastName", "clans"], relationGradeRanks: [6], gradeRank: 1 },
     pricing,
   );
 
@@ -97,7 +103,8 @@ export function ProfilePricingForm({ current }: { current: ProfilePricing }) {
         {num("Par échelon de grade", "gradeStep", 0.1, "multiplicateur")}
         {num("Multiplicateur maximal", "gradeMax", 0.5)}
         {num("Valeur d'un lien", "relationValue", 50)}
-        {num("Liens comptés au plus", "relationCap", 1)}
+        {num("Liens comptés au plus", "relationCap", 1, "les plus précieux d'abord")}
+        {num("Levier de parenté", "relationLeverage", 0.05, "0 = tous les liens se valent")}
         {num("Ryōs pour 1 point", "ryosPerPoint", 50)}
         {num("Multiplicateur global", "globalMultiplier", 0.1, "inflation du serveur")}
       </div>
@@ -125,15 +132,24 @@ export function ProfilePricingForm({ current }: { current: ProfilePricing }) {
         </fieldset>
       ))}
 
-      <div className="border border-border-gold bg-elevated p-3">
-        <p className="text-[0.65rem] uppercase tracking-wider text-ink-faint">
-          Aperçu — dossier bien renseigné, cible de rang moyen
-        </p>
-        <p className="mt-1 font-mono-toile text-lg text-gold">
-          <span aria-hidden className="mr-1 text-sm text-gold-dim">両</span>
-          {preview.price.toLocaleString("fr-FR")}
-          <span className="ml-3 text-xs text-ink-muted">{preview.points} points</span>
-        </p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {[
+          ["Combattant bien renseigné, rang moyen", previewCombattant],
+          ["Proche sans talent d'un haut gradé", previewProche],
+        ].map(([label, preview]) => (
+          <div key={label as string} className="border border-border-gold bg-elevated p-3">
+            <p className="text-[0.65rem] uppercase tracking-wider text-ink-faint">
+              {label as string}
+            </p>
+            <p className="mt-1 font-mono-toile text-lg text-gold">
+              <span aria-hidden className="mr-1 text-sm text-gold-dim">両</span>
+              {(preview as typeof previewCombattant).price.toLocaleString("fr-FR")}
+              <span className="ml-3 text-xs text-ink-muted">
+                {(preview as typeof previewCombattant).points} points
+              </span>
+            </p>
+          </div>
+        ))}
       </div>
 
       <Button
@@ -149,6 +165,7 @@ export function ProfilePricingForm({ current }: { current: ProfilePricing }) {
                 gradeMax: pricing.gradeMax,
                 relationValue: pricing.relationValue,
                 relationCap: pricing.relationCap,
+                relationLeverage: pricing.relationLeverage,
                 ryosPerPoint: pricing.ryosPerPoint,
                 globalMultiplier: pricing.globalMultiplier,
                 fieldValues: pricing.fieldValues as Record<string, number>,
