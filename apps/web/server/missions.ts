@@ -441,6 +441,20 @@ export async function getMissionDetail(current: CurrentUser, missionId: string) 
       reports: { orderBy: { submittedAt: "desc" } },
       attachments: true,
       minRecommendedLevel: { select: { label: true } },
+      // Cibles et leur sort. Le décompte des renseignements acquis sert à
+      // signaler un dossier resté vide avant de clore la mission.
+      targets: {
+        include: {
+          profile: {
+            select: {
+              code: true,
+              characterFirstName: true,
+              fieldIntel: { where: { knowledgeState: "KNOWN" }, select: { fieldKey: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: "asc" },
+      },
     },
   });
   if (!mission) return null;

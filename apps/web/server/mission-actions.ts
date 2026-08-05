@@ -21,6 +21,11 @@ import {
   userIdsWithPermission,
 } from "@/server/notifications";
 import { getAccessContext } from "@/server/missions";
+import {
+  applyMissionOutcomeToProfiles,
+  type TargetIntelResult,
+} from "@/server/missions/target-intel";
+import { checkTargetIntel } from "@/server/missions/target-requirements";
 
 export interface ActionResult {
   ok: boolean;
@@ -75,6 +80,11 @@ export async function moveMissionAction(input: {
       participants: { select: { userId: true, groupId: true } },
     },
   });
+  // Renseigné par la résolution, puis rapporté à l'appelant : le modérateur
+  // doit savoir ce que sa décision a changé dans les dossiers.
+  // Volontairement non initialisée : l'affectation a lieu dans la transaction,
+  // et TypeScript réduirait sinon le type à `null` faute de suivre la closure.
+  let intelResult: TargetIntelResult | undefined;
   if (!mission) return { ok: false, error: "Mission introuvable." };
   if (mission.status === toStatus) return { ok: true };
   if (mission.status === "COMPLETED") {
@@ -116,6 +126,24 @@ export async function moveMissionAction(input: {
       error: `La somme distribuée doit être comprise entre ${mission.rewardRyoMin} et ${mission.rewardRyoMax} ryō.`,
     };
   }
+  // Renseignement des cibles : la modération règle le niveau d'exigence.
+  // Sans cela, la prime est touchée et le dossier reste vide — or c'est
+  // précisément ce renseignement que la Toile revend.
+  let intelIssues: string[] = [];
+  if (toStatus === "COMPLETED" || toStatus === "FAILED") {
+    const check = await checkTargetIntel(missionId);
+    intelIssues = check.issues;
+    if (check.blocking) {
+      return {
+        ok: false,
+        error:
+          "Le renseignement des cibles est incomplet : " +
+          check.issues.join(" ") +
+          " Complétez les dossiers, ou assouplissez la règle dans la configuration.",
+      };
+    }
+  }
+
   if (toStatus === "COMPLETED") {
     if (mission.participants.length === 0) {
       return { ok: false, error: "Ajoutez les agents engagés avant d'accomplir la mission." };
@@ -246,6 +274,28 @@ export async function moveMissionAction(input: {
           }
         }
       }
+
+      // Répercussions sur les dossiers : état vital des cibles, accès des
+      // groupes engagés, trace chez le commanditaire. Dans la MÊME transaction
+      // que la résolution — une mission dont les effets échouent ne doit pas
+      // rester close à moitié.
+      if (toStatus === "COMPLETED" || toStatus === "FAILED") {
+        intelResult = await applyMissionOutcomeToProfiles(tx, {
+          missionId,
+          missionCode: mission.code,
+          // Les groupes qui ont réellement engagé des agents, pas les simples
+          // attributions : c'est la participation qui ouvre l'accès.
+          groupIds: [
+            ...new Set(
+              mission.participants
+                .map((participant) => participant.groupId)
+                .filter((groupId): groupId is string => Boolean(groupId)),
+            ),
+          ],
+          actorId: current.session.userId,
+          clientProfileId: mission.clientProfileId,
+        });
+      }
     });
   } catch (error) {
     if (error instanceof Error && error.message === "CONCURRENT_MOVE") {
@@ -281,6 +331,14 @@ export async function moveMissionAction(input: {
       ...(completionRyo !== null
         ? { awardedRyo: completionRyo, participantCount: mission.participants.length }
         : {}),
+      // Ce que la résolution a changé dans les dossiers : une modification
+      // automatique doit rester traçable au même titre qu'une saisie.
+      ...(intelResult
+        ? {
+            dossiersMisAJour: intelResult.lifeStatusUpdated,
+            accesOuverts: intelResult.grantsCreated,
+          }
+        : {}),
     },
     reason,
     ...meta,
@@ -311,7 +369,28 @@ export async function moveMissionAction(input: {
   }
 
   revalidatePath("/missions");
-  return { ok: true };
+  // Les dossiers touchés changent aussi de contenu pour leurs lecteurs
+  if (intelResult) revalidatePath("/profils");
+
+  // Ce que la clôture a produit dans les dossiers, dit au modérateur : une
+  // mise à jour automatique qu'on ne voit pas est une mise à jour qu'on ne
+  // vérifie jamais.
+  const warnings = [...intelIssues];
+  if (intelResult) {
+    if (intelResult.lifeStatusUpdated.length > 0) {
+      warnings.push(
+        `État vital mis à jour : ${intelResult.lifeStatusUpdated.join(", ")}.`,
+      );
+    }
+    if (intelResult.grantsCreated > 0) {
+      warnings.push(
+        `${intelResult.grantsCreated} accès au dossier de la cible ouvert${
+          intelResult.grantsCreated > 1 ? "s" : ""
+        } aux groupes engagés.`,
+      );
+    }
+  }
+  return { ok: true, warnings: warnings.length > 0 ? warnings : undefined };
 }
 
 // ─────────────────────────────────────────────────────────────

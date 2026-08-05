@@ -25,6 +25,17 @@ export interface ProfileListFilters {
   clanOptionId?: string;
   lifeStatus?: string;
   rankId?: string;
+  sexCode?: string;
+  /**
+   * Traits recherchés — nature de chakra, Kekkei Genkai, technique de clan,
+   * style de combat, artefact. Combinés en ET : « Fûton ET Sharingan »
+   * répond à une vraie question d'enquête, là où un OU noierait le résultat.
+   */
+  traitOptionIds?: string[];
+  /** Ne garder que les dossiers portant un portrait */
+  withPortrait?: boolean;
+  /** Nombre minimal de renseignements acquis */
+  minIntel?: number;
   /** Filtres sans fuite pour chefs/agents */
   access?: "granted" | "pending" | "refused";
 }
@@ -86,8 +97,21 @@ export async function listProfiles(
     if (filters.factionId) where.factionId = filters.factionId;
     if (filters.rankId) where.rankId = filters.rankId;
     if (filters.lifeStatus) where.lifeStatus = filters.lifeStatus as never;
-    if (filters.clanOptionId) {
-      where.traits = { some: { optionId: filters.clanOptionId } };
+    if (filters.sexCode) where.sexCode = filters.sexCode as never;
+    if (filters.withPortrait) where.imageMime = { not: null };
+
+    // Traits cumulés : une clause par trait, sinon Prisma ne garderait que le
+    // dernier `some` et « Fûton ET Sharingan » deviendrait « Sharingan ».
+    const traitIds = [
+      ...(filters.clanOptionId ? [filters.clanOptionId] : []),
+      ...(filters.traitOptionIds ?? []),
+    ].filter(Boolean);
+    if (traitIds.length > 0) {
+      where.AND = traitIds.map((optionId) => ({ traits: { some: { optionId } } }));
+    }
+
+    if (filters.minIntel && filters.minIntel > 0) {
+      where.fieldIntel = { some: { knowledgeState: "KNOWN" } };
     }
   }
 
