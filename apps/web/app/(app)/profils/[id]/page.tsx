@@ -402,6 +402,48 @@ export default async function DossierPage({
                     </p>
                   </div>
                 </div>
+                {/* Prix conseillé par le barème — un repère de négociation,
+                    pas un montant prélevé : rien n'est débité nulle part. */}
+                {detail.estimate && (
+                  <div className="mb-3 border border-border-gold bg-elevated p-3">
+                    <p className="font-mono-toile text-[0.6rem] uppercase tracking-widest text-ink-faint">
+                      Valeur estimée du dossier
+                    </p>
+                    <p className="mt-1 font-mono-toile text-lg text-gold">
+                      <span aria-hidden className="mr-1 text-sm text-gold-dim">両</span>
+                      {detail.estimate.price.toLocaleString("fr-FR")}
+                    </p>
+                    <p className="text-[0.65rem] text-ink-faint">
+                      {detail.estimate.knownCount} renseignement
+                      {detail.estimate.knownCount > 1 ? "s" : ""}
+                      {detail.estimate.relationCount > 0 &&
+                        `, ${detail.estimate.relationCount} lien${detail.estimate.relationCount > 1 ? "s" : ""}`}
+                      {detail.estimate.gradeLabel &&
+                        ` · ${detail.estimate.gradeLabel} (×${detail.estimate.gradeMultiplier.toFixed(1)})`}
+                    </p>
+                    {viewer.canViewAll && (
+                      <details className="mt-2">
+                        <summary className="cursor-pointer text-[0.65rem] text-ink-faint hover:text-gold">
+                          Détail du calcul
+                        </summary>
+                        <dl className="mt-1 space-y-0.5">
+                          {detail.estimate.lines.map((line) => (
+                            <div key={line.label} className="flex justify-between gap-2 text-[0.65rem]">
+                              <dt className="text-ink-faint">{line.label}</dt>
+                              <dd className="font-mono-toile text-ink-muted">
+                                {line.amount.toLocaleString("fr-FR")}
+                              </dd>
+                            </div>
+                          ))}
+                        </dl>
+                        <p className="mt-1 text-[0.6rem] text-ink-faint italic">
+                          Le tarif final reste à votre appréciation ; rien n&rsquo;est prélevé.
+                        </p>
+                      </details>
+                    )}
+                  </div>
+                )}
+
                 {detail.myPendingRequest ? (
                   <p className="border border-warning/50 bg-warning/10 px-3 py-2 text-xs text-warning">
                     Une demande de votre groupe attend la décision d&rsquo;un tisseur.

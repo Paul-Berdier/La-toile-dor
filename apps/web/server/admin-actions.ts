@@ -381,6 +381,56 @@ export async function revokeInvitationAction(invitationId: string): Promise<Resu
 
 // ── Configuration ────────────────────────────────────────────
 
+/**
+ * Barème de valorisation des dossiers.
+ *
+ * Le prix d'un dossier n'est pas une constante du produit : ce qu'une
+ * faiblesse vaut face à un Kekkei Genkai relève de l'équilibre du serveur, et
+ * c'est donc à la modération de le fixer. Les valeurs absentes retombent sur
+ * le barème par défaut — un réglage partiel reste cohérent.
+ */
+export async function updateProfilePricingAction(input: {
+  basePrice: number;
+  gradeStep: number;
+  gradeMax: number;
+  relationValue: number;
+  relationCap: number;
+  relationLeverage: number;
+  ryosPerPoint: number;
+  globalMultiplier: number;
+  fieldValues: Record<string, number>;
+}): Promise<Result> {
+  const actor = await guard(PERMISSIONS.SETTINGS_MANAGE);
+  if (!actor) return { ok: false, error: "Permission refusée." };
+
+  const positive = (value: number) => Number.isFinite(value) && value >= 0;
+  if (![input.basePrice, input.relationValue, input.ryosPerPoint, input.relationLeverage].every(positive)) {
+    return { ok: false, error: "Les montants doivent être positifs." };
+  }
+  if (input.globalMultiplier <= 0 || input.gradeMax < 1) {
+    return { ok: false, error: "Un multiplicateur nul rendrait tous les dossiers gratuits." };
+  }
+  if (Object.values(input.fieldValues).some((value) => !positive(value))) {
+    return { ok: false, error: "La valeur d'un champ ne peut pas être négative." };
+  }
+
+  await prisma.appSetting.upsert({
+    where: { key: "profile_pricing" },
+    update: { value: input, updatedById: actor.userId },
+    create: { key: "profile_pricing", value: input, updatedById: actor.userId },
+  });
+  const meta = await requestMeta();
+  await audit({
+    actorId: actor.userId,
+    action: "settings.profile_pricing_updated",
+    newValues: input,
+    ...meta,
+  });
+  revalidatePath("/admin/configuration");
+  revalidatePath("/profils");
+  return { ok: true };
+}
+
 export async function updateRpTimeAction(input: {
   realMsPerRpMonth: number;
   rpMonthsPerYear: number;

@@ -10,7 +10,14 @@ import {
   adjustScoreAction,
   createFactionAction,
   createGroupAction,
+  updateProfilePricingAction,
 } from "@/server/admin-actions";
+import {
+  PRICING_GROUPS,
+  PROFILE_FIELD_LABELS,
+  priceProfile,
+  type ProfilePricing,
+} from "@toile/shared";
 import { Button } from "@/components/ui/button";
 
 const input =
@@ -35,6 +42,142 @@ function Feedback({ message }: { message: { ok: boolean; text: string } | null }
     <p role="status" className={`mt-2 text-xs ${message.ok ? "text-success" : "text-blood-bright"}`}>
       {message.text}
     </p>
+  );
+}
+
+// ── Valeur des dossiers ──────────────────────────────────────
+
+/**
+ * Barème de valorisation. Chaque réglage montre son effet immédiatement sur
+ * un dossier d'exemple : un barème qu'on règle à l'aveugle se règle mal.
+ */
+export function ProfilePricingForm({ current }: { current: ProfilePricing }) {
+  const [pricing, setPricing] = useState<ProfilePricing>(current);
+  const { run, message, isPending } = useAction();
+
+  const set = <K extends keyof ProfilePricing>(key: K, value: ProfilePricing[K]) =>
+    setPricing((p) => ({ ...p, [key]: value }));
+  const setField = (field: string, value: number) =>
+    setPricing((p) => ({ ...p, fieldValues: { ...p.fieldValues, [field]: value } }));
+
+  // Deux aperçus qui disent des choses différentes : un dossier de combattant,
+  // et celui d'un proche sans aucun talent — dont toute la valeur tient au
+  // lien. Régler le barème sans voir le second, c'est passer à côté.
+  const previewCombattant = priceProfile(
+    {
+      knownFields: ["weaknesses", "strengths", "kekkeiGenkai", "combatStyles", "clans", "rank"],
+      relationGradeRanks: [null, null],
+      gradeRank: 4,
+    },
+    pricing,
+  );
+  const previewProche = priceProfile(
+    { knownFields: ["lastName", "clans"], relationGradeRanks: [6], gradeRank: 1 },
+    pricing,
+  );
+
+  const num = (label: string, key: keyof ProfilePricing, step = 100, hint?: string) => (
+    <label className="text-xs text-ink-faint">
+      {label}
+      <input
+        type="number"
+        min={0}
+        step={step}
+        value={pricing[key] as number}
+        onChange={(e) => set(key, (Number(e.target.value) || 0) as never)}
+        className={`${input} mt-1 block w-28`}
+      />
+      {hint && <span className="mt-0.5 block text-[0.6rem] text-ink-faint">{hint}</span>}
+    </label>
+  );
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-ink-muted">
+        Ce barème calcule un prix <strong>conseillé</strong>. Rien n&rsquo;est prélevé :
+        aucun compte n&rsquo;existe, le règlement se fait en jeu.
+      </p>
+
+      <div className="flex flex-wrap gap-4">
+        {num("Ouverture du dossier", "basePrice", 500, "prix plancher")}
+        {num("Par échelon de grade", "gradeStep", 0.1, "multiplicateur")}
+        {num("Multiplicateur maximal", "gradeMax", 0.5)}
+        {num("Valeur d'un lien", "relationValue", 50)}
+        {num("Liens comptés au plus", "relationCap", 1, "les plus précieux d'abord")}
+        {num("Levier de parenté", "relationLeverage", 0.05, "0 = tous les liens se valent")}
+        {num("Ryōs pour 1 point", "ryosPerPoint", 50)}
+        {num("Multiplicateur global", "globalMultiplier", 0.1, "inflation du serveur")}
+      </div>
+
+      {PRICING_GROUPS.map((group) => (
+        <fieldset key={group.label} className="border border-border-default p-3">
+          <legend className="px-1 text-[0.65rem] uppercase tracking-wider text-ink-faint">
+            {group.label}
+          </legend>
+          <div className="flex flex-wrap gap-3">
+            {group.fields.map((field) => (
+              <label key={field} className="text-[0.7rem] text-ink-faint">
+                {PROFILE_FIELD_LABELS[field]}
+                <input
+                  type="number"
+                  min={0}
+                  step={50}
+                  value={pricing.fieldValues[field] ?? 0}
+                  onChange={(e) => setField(field, Number(e.target.value) || 0)}
+                  className={`${input} mt-1 block w-24`}
+                />
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      ))}
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        {[
+          ["Combattant bien renseigné, rang moyen", previewCombattant],
+          ["Proche sans talent d'un haut gradé", previewProche],
+        ].map(([label, preview]) => (
+          <div key={label as string} className="border border-border-gold bg-elevated p-3">
+            <p className="text-[0.65rem] uppercase tracking-wider text-ink-faint">
+              {label as string}
+            </p>
+            <p className="mt-1 font-mono-toile text-lg text-gold">
+              <span aria-hidden className="mr-1 text-sm text-gold-dim">両</span>
+              {(preview as typeof previewCombattant).price.toLocaleString("fr-FR")}
+              <span className="ml-3 text-xs text-ink-muted">
+                {(preview as typeof previewCombattant).points} points
+              </span>
+            </p>
+          </div>
+        ))}
+      </div>
+
+      <Button
+        size="sm"
+        variant="gold"
+        disabled={isPending}
+        onClick={() =>
+          run(
+            () =>
+              updateProfilePricingAction({
+                basePrice: pricing.basePrice,
+                gradeStep: pricing.gradeStep,
+                gradeMax: pricing.gradeMax,
+                relationValue: pricing.relationValue,
+                relationCap: pricing.relationCap,
+                relationLeverage: pricing.relationLeverage,
+                ryosPerPoint: pricing.ryosPerPoint,
+                globalMultiplier: pricing.globalMultiplier,
+                fieldValues: pricing.fieldValues as Record<string, number>,
+              }),
+            "Barème enregistré.",
+          )
+        }
+      >
+        {isPending ? "Enregistrement…" : "Enregistrer le barème"}
+      </Button>
+      <Feedback message={message} />
+    </div>
   );
 }
 
