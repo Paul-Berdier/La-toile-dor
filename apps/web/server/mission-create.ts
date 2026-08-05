@@ -21,6 +21,25 @@ export interface CreateMissionResult {
 
 export type UpdateMissionResult = CreateMissionResult;
 
+/**
+ * Valide un dossier rattaché à une mission (cible ou commanditaire).
+ *
+ * Un identifiant fabriqué, ou pointant vers un dossier archivé ou fusionné,
+ * est ignoré plutôt que de faire échouer la création : le nom en texte libre
+ * reste enregistré, et la mission n'a pas à être perdue pour un rattachement
+ * accessoire. Un dossier fusionné suit sa redirection — le lien reste utile.
+ */
+async function resolveLinkedProfile(profileId?: string | null): Promise<string | null> {
+  if (!profileId) return null;
+  const profile = await prisma.characterProfile.findUnique({
+    where: { id: profileId },
+    select: { id: true, archivedAt: true, mergedIntoId: true },
+  });
+  if (!profile) return null;
+  if (profile.mergedIntoId) return profile.mergedIntoId;
+  return profile.archivedAt ? null : profile.id;
+}
+
 /** Prochain numéro de code de mission (TO-<rang>-XXXX). */
 async function nextMissionCode(rank: string): Promise<string> {
   const count = await prisma.mission.count();
@@ -74,6 +93,14 @@ export async function createMissionAction(raw: unknown): Promise<CreateMissionRe
     };
   }
 
+  // Les dossiers rattachés doivent exister et être vivants : un identifiant
+  // fabriqué ou pointant vers un dossier archivé est simplement ignoré plutôt
+  // que d'échouer — le nom en texte libre reste, lui, enregistré.
+  const [linkedTargetId, linkedClientId] = await Promise.all([
+    resolveLinkedProfile(data.targetProfileId),
+    resolveLinkedProfile(data.clientProfileId),
+  ]);
+
   const code = await nextMissionCode(data.rank);
   const mission = await prisma.mission.create({
     data: {
@@ -88,9 +115,12 @@ export async function createMissionAction(raw: unknown): Promise<CreateMissionRe
       primaryObjective: data.primaryObjective ?? null,
       secondaryObjectives: data.secondaryObjectives,
       targetIdentity: data.targetIdentity ?? null,
+      // Dossiers rattachés : vérifiés plus haut, jamais pris au mot du client
+      targetProfileId: linkedTargetId,
       targetFactionId: targetFaction?.id ?? null,
       location: data.location ?? null,
       clientName: data.clientName ?? null,
+      clientProfileId: linkedClientId,
       constraints: data.constraints ?? null,
       prohibitions: data.prohibitions ?? null,
       evidence: data.evidence ?? null,
@@ -230,9 +260,11 @@ export async function updateMissionAction(input: {
           primaryObjective: data.primaryObjective ?? null,
           secondaryObjectives: data.secondaryObjectives,
           targetIdentity: data.targetIdentity ?? null,
+          targetProfileId: await resolveLinkedProfile(data.targetProfileId),
           targetFactionId: targetFaction?.id ?? null,
           location: data.location ?? null,
           clientName: data.clientName ?? null,
+          clientProfileId: await resolveLinkedProfile(data.clientProfileId),
           constraints: data.constraints ?? null,
           prohibitions: data.prohibitions ?? null,
           evidence: data.evidence ?? null,

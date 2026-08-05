@@ -206,7 +206,19 @@ export default async function MissionDetailPage({
                 )}
                 <div className="grid gap-x-8 sm:grid-cols-2">
                   {"targetIdentity" in view && view.targetIdentity && (
-                    <Field label="Cible(s)">{mask("CIBLE", view.targetIdentity)}</Field>
+                    <Field label="Cible(s)">
+                      {mask("CIBLE", view.targetIdentity)}
+                      {/* Le lien suit exactement la visibilité de la cible :
+                          il n'apparaît que dans les vues qui la révèlent. */}
+                      {view.targetProfileId && (
+                        <Link
+                          href={`/profils/${view.targetProfileId}`}
+                          className="ml-2 font-mono-toile text-[0.65rem] text-gold underline-offset-2 hover:underline"
+                        >
+                          諜 dossier
+                        </Link>
+                      )}
+                    </Field>
                   )}
                   {"targetFactionId" in view &&
                     view.targetFactionId &&
@@ -217,7 +229,17 @@ export default async function MissionDetailPage({
                     )}
                   {view.location && <Field label="Lieu">{mask("LIEU", view.location)}</Field>}
                   {"clientName" in view && view.clientName && (
-                    <Field label="Commanditaire">{mask("CMD", view.clientName)}</Field>
+                    <Field label="Commanditaire">
+                      {mask("CMD", view.clientName)}
+                      {view.clientProfileId && (
+                        <Link
+                          href={`/profils/${view.clientProfileId}`}
+                          className="ml-2 font-mono-toile text-[0.65rem] text-gold underline-offset-2 hover:underline"
+                        >
+                          諜 dossier
+                        </Link>
+                      )}
+                    </Field>
                   )}
                   {view.evidence && <Field label="Preuves à rapporter">{mask("PRV", view.evidence)}</Field>}
                 </div>

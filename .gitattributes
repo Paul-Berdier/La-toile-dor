@@ -1,0 +1,10 @@
+# Les migrations Prisma sont empreintées (checksum) au moment où elles sont
+# appliquées. Sous Windows, `core.autocrlf` les réécrit en CRLF au checkout :
+# l'empreinte change, et Prisma croit qu'une migration déjà appliquée a été
+# modifiée — il propose alors un `migrate reset`, c'est-à-dire la perte de la
+# base. Ces fichiers restent donc en LF sur toutes les plateformes.
+*.sql text eol=lf
+
+# Même raison de fond pour le reste : un seul style de fin de ligne dans le
+# dépôt évite les diffs fantômes entre postes.
+* text=auto eol=lf

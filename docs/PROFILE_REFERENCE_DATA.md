@@ -15,8 +15,31 @@ Sans référentiel, la base se remplit de variantes : `Uchiha`, `uchiha`,
 migration. Les enums sont réservés aux états réellement stables.
 
 Types : `HAIR_COLOR`, `SKIN_TONE`, `CLAN_FAMILY`, `CHAKRA_NATURE`,
-`KEKKEI_GENKAI`, `JUTSU_TYPE`, `COMBAT_STYLE`, `KENJUTSU_STYLE`,
-`LEGENDARY_ARTIFACT`.
+`KEKKEI_GENKAI`, `CLAN_TECHNIQUE`, `JUTSU_TYPE`, `COMBAT_STYLE`,
+`KENJUTSU_STYLE`, `LEGENDARY_ARTIFACT`.
+
+## Nature, lignée, technique : trois choses distinctes
+
+| Référentiel | Ce qu'il contient | Exemples |
+|---|---|---|
+| `CHAKRA_NATURE` | **les cinq éléments primaires, et rien d'autre** | Katon, Suiton, Fûton, Raiton, Doton |
+| `KEKKEI_GENKAI` | les capacités **héritées**, dont tous les dérivés élémentaires | Mokuton, Hyôton, Yôton (lave), Ranton, Sakin, Shôton, Sharingan, Byakugan |
+| `CLAN_TECHNIQUE` | les **techniques** nées dans un clan | Susanoo, Amaterasu, Kamui, Jûken, Kaiten, Marque maudite |
+
+Le référentiel des natures mélangeait auparavant les trois : un dérivé comme
+le Mokuton pouvait être saisi comme « nature » chez un personnage sans aucune
+lignée, et la distinction qui fonde le Kekkei Genkai disparaissait. Les entrées
+déclassées sont **désactivées, jamais supprimées** — un dossier qui portait
+« Mokuton » en nature continue de l'afficher, car effacer un renseignement déjà
+recueilli serait pire que de laisser une entrée dépréciée.
+
+### Pourquoi les techniques de clan ne sont pas des Kekkei Genkai
+
+Un Kekkei Genkai s'hérite ; une technique de clan **se transmet, s'apprend ou
+se vole**. Un Sharingan implanté, un Susanoo observé chez qui n'est pas Uchiha :
+c'est précisément le genre de renseignement que la Toile monnaye. Les deux
+notions ont donc leur propre champ dans le dossier, et un porteur hors clan se
+lit d'un coup d'œil.
 
 ## Provenance des données (`sourceScope`)
 

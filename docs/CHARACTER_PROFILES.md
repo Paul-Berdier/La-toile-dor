@@ -128,6 +128,25 @@ renouvellerait les props sans réinitialiser les champs).
 Couvert par l'e2e « deux rédacteurs simultanés : le second n'écrase pas le
 premier ».
 
+## Subjutsu et techniques de clan
+
+Deux champs voisins, deux natures différentes :
+
+- **Subjutsu** (`CharacterSignatureTechnique`) : les techniques propres au
+  personnage, en saisie libre — Rasengan, Chidori, Hiraishin… Elles portent un
+  nom, un type de jutsu et un rang.
+- **Techniques de clan** (`CLAN_TECHNIQUE`) : un référentiel contrôlé, car ces
+  techniques circulent entre personnages et méritent un libellé stable.
+
+Les Subjutsu se saisissent depuis la page du dossier, mais leur **état** se
+déclare dans le formulaire, avec les autres champs : sans cela, il était
+impossible d'affirmer « la Toile a vérifié, ce personnage n'a aucune technique
+propre » — l'absence se confondait avec le simple fait de ne pas savoir.
+
+Déclarer « Aucun » alors que le dossier liste des techniques ne les efface
+pas : ces fiches sont trop riches pour disparaître sur un choix de liste
+déroulante. Le serveur renvoie un avertissement et laisse arbitrer.
+
 ## Conflits
 
 Quand une nouvelle valeur contredit une information déjà **connue**, le serveur

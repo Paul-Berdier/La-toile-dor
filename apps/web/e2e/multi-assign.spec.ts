@@ -99,8 +99,17 @@ test("chaque groupe assigné voit l'équipe ; l'historique et l'audit existent",
   const assignments = await prisma.missionAssignment.findMany({
     where: { missionId, active: true },
   });
+  // Le CHEF, explicitement : il dirige les deux groupes engagés et voit donc
+  // l'équipe entière. Un simple agent ne voit que son propre groupe — c'est le
+  // comportement voulu, mais ce n'est pas ce que ce test vérifie. S'en remettre
+  // à l'ordre implicite de `findFirst` faisait dépendre le résultat de l'ordre
+  // de création des membres.
   const member = await prisma.groupMember.findFirstOrThrow({
-    where: { groupId: assignments[0]!.groupId, user: { status: "ACTIVE", profileCompleted: true } },
+    where: {
+      groupId: assignments[0]!.groupId,
+      isLeader: true,
+      user: { status: "ACTIVE", profileCompleted: true },
+    },
   });
 
   await loginAs(context, member.userId);

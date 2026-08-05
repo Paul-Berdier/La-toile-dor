@@ -18,8 +18,15 @@ const ASSIGNED_KEYS = [
   "evidence",
 ] as const;
 
-const LEADER_KEYS = ["targetIdentity", "targetFactionId"] as const;
-const MODERATOR_KEYS = ["clientName", "internalTitle", "moderatorNotes"] as const;
+// Le dossier de la cible suit la cible, celui du client suit le client :
+// un identifiant de dossier désigne la personne aussi sûrement que son nom.
+const LEADER_KEYS = ["targetIdentity", "targetProfileId", "targetFactionId"] as const;
+const MODERATOR_KEYS = [
+  "clientName",
+  "clientProfileId",
+  "internalTitle",
+  "moderatorNotes",
+] as const;
 
 function mission(overrides: Partial<MissionRecord> = {}): MissionRecord {
   return {
@@ -45,8 +52,10 @@ function mission(overrides: Partial<MissionRecord> = {}): MissionRecord {
       { label: "objectif SECRET", secret: true, points: 25 },
     ],
     targetIdentity: "SECRET cible",
+    targetProfileId: "SECRETdossiercible",
     location: "SECRET lieu",
     clientName: "SECRET commanditaire",
+    clientProfileId: "SECRETdossierclient",
     constraints: "SECRET contraintes",
     prohibitions: "SECRET interdits",
     evidence: "SECRET preuves",

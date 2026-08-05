@@ -17,6 +17,7 @@ import {
 import { createMissionAction, updateMissionAction } from "@/server/mission-create";
 import { Button } from "@/components/ui/button";
 import { RankSeal } from "./rank-seal";
+import { ProfileLink } from "./profile-link";
 
 const STEPS = [
   "Informations générales",
@@ -92,6 +93,27 @@ export function CreateWizard({
   const { register, watch, setValue, trigger, getValues, formState } = form;
   const values = watch();
   const objectives = useFieldArray({ control: form.control, name: "secondaryObjectives" });
+
+  // Dossiers rattachés : le formulaire ne porte que l'identifiant, le libellé
+  // n'existe que pour l'affichage du rattachement.
+  const [targetProfile, setTargetProfileState] = useState<{ id: string; label: string } | null>(
+    initialValues?.targetProfileId
+      ? { id: initialValues.targetProfileId, label: initialValues.targetIdentity || "dossier rattaché" }
+      : null,
+  );
+  const [clientProfile, setClientProfileState] = useState<{ id: string; label: string } | null>(
+    initialValues?.clientProfileId
+      ? { id: initialValues.clientProfileId, label: initialValues.clientName || "dossier rattaché" }
+      : null,
+  );
+  const setTargetProfile = (next: { id: string; label: string } | null) => {
+    setTargetProfileState(next);
+    setValue("targetProfileId", next?.id ?? null, { shouldDirty: true });
+  };
+  const setClientProfile = (next: { id: string; label: string } | null) => {
+    setClientProfileState(next);
+    setValue("clientProfileId", next?.id ?? null, { shouldDirty: true });
+  };
 
   const applyRankDefaults = (rank: Rank) => {
     const defaults = RANK_DEFAULTS[rank];
@@ -285,6 +307,15 @@ export function CreateWizard({
               <div>
                 <label htmlFor="targetIdentity" className={label}>Nom(s) de la ou des cibles</label>
                 <textarea id="targetIdentity" rows={2} {...register("targetIdentity")} className={input} />
+                {/* Rattachement au dossier : c'est ce qui permettra de verser
+                    les renseignements de la mission dans la bonne fiche. */}
+                <ProfileLink
+                  label="Cible"
+                  hint="Cherchez la cible parmi les dossiers ouverts, ou ouvrez-en un nouveau si la Toile ne la connaît pas encore."
+                  value={targetProfile}
+                  onChange={setTargetProfile}
+                  suggestedName={watch("targetIdentity")}
+                />
               </div>
               <div>
                 <label htmlFor="targetFactionId" className={label}>Faction de la ou des cibles</label>
@@ -308,6 +339,13 @@ export function CreateWizard({
                 <label htmlFor="clientName" className={label}>Commanditaire</label>
                 <input id="clientName" {...register("clientName")} className={input} />
                 <p className="mt-1 text-xs text-ink-faint">Visible uniquement par la modération.</p>
+                <ProfileLink
+                  label="Commanditaire"
+                  hint="Le dossier du commanditaire reste, comme son nom, réservé à la modération."
+                  value={clientProfile}
+                  onChange={setClientProfile}
+                  suggestedName={watch("clientName")}
+                />
               </div>
               <div>
                 <label htmlFor="evidence" className={label}>Preuves à rapporter</label>
