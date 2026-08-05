@@ -412,6 +412,9 @@ model Mission {
   // reste la source d'affichage ; ce lien ouvre la fiche et laisse verser les
   // renseignements de la mission dans le bon dossier. MÊME confidentialité
   // que targetIdentity : ne jamais l'exposer plus largement.
+  // DÉPRÉCIÉ : conservé pour ne rien perdre des missions déjà saisies. Les
+  // cibles vivent désormais dans `targets` — une mission peut en viser
+  // plusieurs, et chacune a son propre sort.
   targetProfileId         String?
   // Réservée aux chefs des groupes attribués et à la modération.
   targetFactionId         String?
@@ -457,6 +460,7 @@ model Mission {
   assignedFaction     Faction? @relation("MissionAssignedFaction", fields: [assignedFactionId], references: [id])
   assignedGroup       Group?   @relation("MissionAssignedGroup", fields: [assignedGroupId], references: [id])
 
+  targets       MissionTarget[]
   visibility    MissionVisibility?
   claims        MissionClaim[]
   assignments   MissionAssignment[]
@@ -566,6 +570,42 @@ model MissionAssignment {
 
   @@index([missionId, active])
   @@index([groupId, active])
+}
+
+// Sort d'une cible à la résolution. UNKNOWN tant que rien n'est constaté :
+// une mission accomplie ne dit pas forcément ce qu'il est advenu de chacun.
+enum MissionTargetOutcome {
+  UNKNOWN
+  ELIMINATED // cible tuée
+  CAPTURED   // capturée vivante
+  ESCAPED    // en fuite
+  UNHARMED   // épargnée ou jamais atteinte
+  MISSING    // disparue
+}
+
+// Cible d'une mission. Une mission peut en viser PLUSIEURS, et chacune a son
+// propre sort : « mission accomplie » ne signifie pas que toutes sont mortes.
+// Le dossier est facultatif — une cible peut n'être qu'un nom sans fiche.
+model MissionTarget {
+  id        String  @id @default(cuid())
+  missionId String
+  profileId String?
+  // Nom libre quand la cible n'a pas (encore) de dossier
+  label     String?
+  outcome   MissionTargetOutcome @default(UNKNOWN)
+  note      String?
+  // Qui a constaté le sort de cette cible, et quand
+  recordedAt   DateTime?
+  recordedById String?
+  createdAt DateTime @default(now())
+
+  mission Mission           @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  profile CharacterProfile? @relation("MissionTargets", fields: [profileId], references: [id], onDelete: SetNull)
+
+  // Une même cible n'apparaît qu'une fois par mission
+  @@unique([missionId, profileId])
+  @@index([missionId])
+  @@index([profileId])
 }
 
 model MissionParticipant {
@@ -1005,6 +1045,7 @@ model CharacterProfile {
   // Missions où ce personnage est la cible ou le commanditaire
   missionsAsTarget Mission[] @relation("MissionTargetProfile")
   missionsAsClient Mission[] @relation("MissionClientProfile")
+  targetedBy       MissionTarget[] @relation("MissionTargets")
 
   @@index([firstNameNorm])
   @@index([archivedAt])

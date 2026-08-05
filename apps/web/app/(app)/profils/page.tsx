@@ -28,6 +28,17 @@ export default async function ProfilsPage({
     lifeStatus: first(sp.etat),
     access: first(sp.acces) as "granted" | "pending" | "refused" | undefined,
     page: Number(first(sp.page)) || 1,
+    sexCode: first(sp.sexe),
+    rankId: first(sp.grade),
+    withPortrait: first(sp.portrait) === "1",
+    // Traits cumulés : chacun restreint davantage la recherche
+    traitOptionIds: [
+      first(sp.nature),
+      first(sp.kg),
+      first(sp.technique),
+      first(sp.artefact),
+      first(sp.style),
+    ].filter((value): value is string => Boolean(value)),
   });
 
   /** Conserve les filtres courants en changeant de page. */
@@ -42,8 +53,28 @@ export default async function ProfilsPage({
     return query ? `/profils?${query}` : "/profils";
   };
 
+  /** Référentiel proposé en filtre — modération uniquement. */
+  const loadRefOptions = (type: string) =>
+    viewer.canViewAll
+      ? prisma.profileReferenceOption.findMany({
+          where: { type, isActive: true },
+          select: { id: true, label: true },
+          orderBy: { sortOrder: "asc" },
+        })
+      : Promise.resolve([]);
+
   // Options de filtre : modération uniquement (aucune fuite par les filtres)
-  const [factions, clans, attachMission] = await Promise.all([
+  const [
+    factions,
+    clans,
+    attachMission,
+    natures,
+    kekkeiGenkai,
+    clanTechniques,
+    artifacts,
+    combatStyles,
+    ranks,
+  ] = await Promise.all([
     viewer.canViewAll
       ? prisma.faction.findMany({ where: { isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } })
       : [],
@@ -57,7 +88,18 @@ export default async function ProfilsPage({
     viewer.canManage && missionId
       ? prisma.mission.findUnique({ where: { id: missionId }, select: { id: true, code: true, publicTitle: true } })
       : null,
+    loadRefOptions(REFERENCE_TYPES.CHAKRA_NATURE),
+    loadRefOptions(REFERENCE_TYPES.KEKKEI_GENKAI),
+    loadRefOptions(REFERENCE_TYPES.CLAN_TECHNIQUE),
+    loadRefOptions(REFERENCE_TYPES.LEGENDARY_ARTIFACT),
+    loadRefOptions(REFERENCE_TYPES.COMBAT_STYLE),
+    viewer.canViewAll
+      ? prisma.playerLevel.findMany({ select: { id: true, label: true }, orderBy: { order: "asc" } })
+      : [],
   ]);
+
+  const asOptions = (rows: { id: string; label: string }[]) =>
+    rows.map((row) => ({ value: row.id, label: row.label }));
 
   const withMission = (href: string) =>
     attachMission ? `${href}?mission=${attachMission.id}` : href;
@@ -101,7 +143,21 @@ export default async function ProfilsPage({
           clan: first(sp.clan) ?? "",
           etat: first(sp.etat) ?? "",
           acces: first(sp.acces) ?? "",
+          nature: first(sp.nature) ?? "",
+          kg: first(sp.kg) ?? "",
+          technique: first(sp.technique) ?? "",
+          artefact: first(sp.artefact) ?? "",
+          style: first(sp.style) ?? "",
+          grade: first(sp.grade) ?? "",
+          sexe: first(sp.sexe) ?? "",
+          portrait: first(sp.portrait) ?? "",
         }}
+        natures={asOptions(natures)}
+        kekkeiGenkai={asOptions(kekkeiGenkai)}
+        clanTechniques={asOptions(clanTechniques)}
+        artifacts={asOptions(artifacts)}
+        combatStyles={asOptions(combatStyles)}
+        ranks={asOptions(ranks)}
         canViewAll={viewer.canViewAll}
         factions={factions.map((f) => ({ value: f.id, label: f.name }))}
         clans={clans.map((c) => ({ value: c.id, label: c.label }))}

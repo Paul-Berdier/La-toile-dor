@@ -19,6 +19,8 @@ import { ClaimDecide } from "@/components/missions/claim-decide";
 import { ReportForm } from "@/components/missions/report-form";
 import { ManageTeamButton } from "@/components/missions/manage-team";
 import { MissionAdminActions } from "@/components/missions/mission-admin-actions";
+import { MissionTargets } from "@/components/missions/mission-targets";
+import { getTargetIntelRule } from "@/server/missions/target-requirements";
 import { PanelWatermark } from "@/components/shell/watermark";
 
 export const dynamic = "force-dynamic";
@@ -35,6 +37,9 @@ export default async function MissionDetailPage({
 
   const { mission, view, level, ctx } = detail;
   const streamer = await isStreamerMode();
+  // Règle de renseignement en vigueur : sert à signaler les dossiers restés
+  // vides avant la clôture, sans avoir à la deviner côté client.
+  const targetIntelRule = await getTargetIntelRule();
   const confidentialAccess = level !== "public";
   const visibleAssignments = mission.assignments.filter((assignment) =>
     canViewAssignmentRoster({
@@ -273,6 +278,25 @@ export default async function MissionDetailPage({
             <section className="border border-border-default bg-raised p-6 text-center">
               <SealedNotice />
             </section>
+          )}
+
+          {/* Cibles et leur sort — modération : c'est ce qui met les dossiers
+              à jour à la clôture et ouvre l'accès aux groupes engagés. */}
+          {level === "moderator" && (
+            <MissionTargets
+              missionId={mission.id}
+              minFields={targetIntelRule.minFields}
+              targets={mission.targets.map((target) => ({
+                id: target.id,
+                profileId: target.profileId,
+                profileCode: target.profile?.code ?? null,
+                profileName: target.profile?.characterFirstName ?? null,
+                label: target.label,
+                outcome: target.outcome,
+                note: target.note,
+                knownFields: target.profile?.fieldIntel.length ?? 0,
+              }))}
+            />
           )}
 
           {/* Renseignement : verser les informations récoltées dans un dossier */}
