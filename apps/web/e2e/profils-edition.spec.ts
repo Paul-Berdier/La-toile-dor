@@ -217,6 +217,32 @@ async function makeProfile(firstName: string) {
   });
 }
 
+test("deux rédacteurs simultanés : le second n'écrase pas le premier", async ({
+  context,
+  page,
+}) => {
+  const cible = await makeProfile(`Cible${suffix}Concurrent`);
+  await loginAs(context, "demo-mod");
+  await page.goto(`/profils/${cible.id}/modifier`);
+  await page.getByRole("button", { name: /Analyse/ }).click();
+  await page.getByLabel("Détails", { exact: true }).fill("Ma saisie à moi.");
+
+  // Pendant la saisie, un autre rédacteur enregistre le dossier
+  await prisma.characterProfile.update({
+    where: { id: cible.id },
+    data: { version: { increment: 1 }, details: "Écrit par l'autre rédacteur." },
+  });
+
+  await page.getByRole("button", { name: "Enregistrer le dossier" }).click();
+  // L'interface rend des apostrophes typographiques (’) : la classe accepte
+  // les deux formes, sans quoi le texte affiché ne correspondrait jamais.
+  await expect(page.getByText(/enregistré par quelqu['’]un d['’]autre/)).toBeVisible();
+
+  // Rien n'a été écrit : le travail de l'autre est intact
+  const after = await prisma.characterProfile.findUniqueOrThrow({ where: { id: cible.id } });
+  expect(after.details).toBe("Écrit par l'autre rédacteur.");
+});
+
 test("la suppression est réservée aux super-modérateurs et exige le code", async ({
   context,
   page,
