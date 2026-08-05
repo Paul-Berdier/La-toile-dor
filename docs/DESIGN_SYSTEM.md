@@ -100,6 +100,12 @@ Tailles : échelle Tailwind par défaut ; titres de page `text-xl` +
   1024×768, 768×1024, 390×844, 360×800.
 - Coquille : barre latérale 14 rem (≥ md), navigation par onglets en bas
   d'écran (< md).
+- La barre latérale est **ancrée** (`sticky top-0 h-dvh self-start`) : elle ne
+  défile pas avec le contenu. `self-start` n'est pas décoratif — sans lui, le
+  flex étire l'aside à la hauteur de tout le contenu et `sticky` n'a plus rien
+  contre quoi coller. Sa liste de liens défile pour elle-même (`overflow-y-auto`)
+  afin que l'identité et la déconnexion restent atteignables sur un écran peu
+  haut. Vérifié par `e2e/shell.spec.ts`.
 
 ## 6. Animations
 

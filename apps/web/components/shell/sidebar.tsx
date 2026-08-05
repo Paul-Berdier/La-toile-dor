@@ -25,8 +25,12 @@ export function Sidebar({
 
   return (
     <>
-      {/* Barre latérale (desktop) */}
-      <aside className="hidden w-56 shrink-0 flex-col border-r border-border-default bg-raised md:flex">
+      {/* Barre latérale (desktop) — fixe au défilement.
+          `self-start` est indispensable : en flex, l'aside est autrement
+          étirée à la hauteur de TOUT le contenu, et `sticky` n'a alors rien
+          contre quoi coller. Avec sa propre hauteur d'écran, elle reste en
+          place pendant que la page défile. */}
+      <aside className="sticky top-0 hidden h-dvh w-56 shrink-0 flex-col self-start border-r border-border-default bg-raised md:flex">
         <Link
           href="/missions"
           className="flex items-center gap-3 border-b border-border-default px-4 py-4"
@@ -37,7 +41,12 @@ export function Sidebar({
           </span>
         </Link>
 
-        <nav aria-label="Navigation principale" className="flex flex-1 flex-col gap-1 p-3">
+        {/* La liste défile pour elle-même sur les écrans peu hauts : le bloc
+            d'identité et la déconnexion doivent rester atteignables. */}
+        <nav
+          aria-label="Navigation principale"
+          className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-3"
+        >
           {items.map((item) => {
             const active = pathname.startsWith(item.href);
             return (
