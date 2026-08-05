@@ -372,10 +372,16 @@ export async function findSimilarProfiles(firstName: string, excludeId?: string)
   const norm = normalizeRefLabel(firstName);
   return prisma.characterProfile.findMany({
     where: {
-      // « contains » et non égalité stricte : « Aki » doit faire ressortir
+      // « startsWith » et non égalité stricte : « Aki » doit faire ressortir
       // « Akira », sinon le doublon n'est signalé que si l'on tape le prénom
       // exact — c'est-à-dire quasiment jamais.
-      firstNameNorm: { contains: norm },
+      //
+      // Mais PAS « contains » non plus : cette recherche BLOQUE la création
+      // jusqu'à confirmation, donc un « Ran » qui ressortirait dans « Kiran »
+      // ferait réclamer une confirmation à presque chaque ouverture de
+      // dossier, et l'avertissement finirait par être cliqué sans être lu.
+      // Les doublons RP se ressemblent par le début du prénom.
+      firstNameNorm: { startsWith: norm },
       archivedAt: null,
       mergedIntoId: null,
       ...(excludeId ? { id: { not: excludeId } } : {}),

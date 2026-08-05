@@ -134,9 +134,14 @@ export default async function ProfilsPage({
                 <span className="block truncate text-sm text-ink">
                   {row.firstName}
                   {/* Le nom n'est présent dans la charge utile que si le
-                      lecteur y a droit — rien n'est masqué en CSS. */}
+                      lecteur y a droit — rien n'est masqué en CSS.
+                      L'espace est un vrai caractère, non une marge : sinon le
+                      texte lu et copié serait « AkiraKaguya ». */}
                   {row.lastName && (
-                    <span className="ml-1 text-ink-muted">{row.lastName}</span>
+                    <>
+                      {" "}
+                      <span className="text-ink-muted">{row.lastName}</span>
+                    </>
                   )}
                 </span>
                 <span className="mt-1 flex flex-wrap gap-1">
