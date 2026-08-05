@@ -78,6 +78,58 @@ test("un membre voit les identités réelles de SON groupe", async ({ context, p
   await expect(page.getByText(teammate.firstName!, { exact: false }).first()).toBeVisible();
 });
 
+test("un membre peut fermer son nom à ses propres coéquipiers", async ({ context, page }) => {
+  // La portée appartient à l'intéressé : s'il choisit « la modération seule »,
+  // même un coéquipier cesse de voir son nom — et pas seulement à l'écran :
+  // la valeur ne doit plus figurer dans la réponse du serveur.
+  const group = await groupOf("demo-member-0-0-0");
+  const teammate = await prisma.user.findFirstOrThrow({
+    where: {
+      id: { not: "demo-member-0-0-0" },
+      firstName: { not: null },
+      groupMemberships: { some: { groupId: group.id } },
+    },
+  });
+
+  await prisma.user.update({
+    where: { id: teammate.id },
+    data: { identityVisibility: "MODERATORS" },
+  });
+  try {
+    const bodies: string[] = [];
+    page.on("response", async (response) => {
+      const type = response.headers()["content-type"] ?? "";
+      if (type.includes("text") || type.includes("json")) {
+        bodies.push(await response.text().catch(() => ""));
+      }
+    });
+
+    await loginAs(context, "demo-member-0-0-0");
+    await page.goto(`/groupes/${group.id}`);
+    // La page a bien chargé le groupe…
+    await expect(page.getByRole("heading", { name: new RegExp(group.name) })).toBeVisible();
+    // …mais le prénom du coéquipier n'y est plus, DOM et réseau compris
+    const html = await page.content();
+    expect(html).not.toContain(teammate.firstName!);
+    for (const body of bodies) {
+      expect(body).not.toContain(teammate.firstName!);
+    }
+
+    // La modération, elle, continue de le voir
+    const ctx2 = await page.context().browser()!.newContext();
+    await loginAs(ctx2, "demo-mod");
+    const page2 = await ctx2.newPage();
+    await page2.goto(`/groupes/${group.id}`);
+    await expect(page2.getByText(teammate.firstName!, { exact: false }).first()).toBeVisible();
+    await ctx2.close();
+  } finally {
+    await prisma.user.update({
+      where: { id: teammate.id },
+      data: { identityVisibility: "MY_GROUPS" },
+    });
+  }
+});
+
 test("les identités réelles d'un AUTRE groupe ne quittent jamais le serveur", async ({
   context,
   page,

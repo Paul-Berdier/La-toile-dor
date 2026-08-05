@@ -20,6 +20,7 @@ export default async function ComptePage() {
         lastName: true,
         displayName: true,
         playerLevelId: true,
+        identityVisibility: true,
         playerLevel: { select: { label: true } },
         roles: { select: { role: { select: { name: true } } } },
         groupMemberships: {
@@ -47,25 +48,11 @@ export default async function ComptePage() {
             lastName: user.lastName ?? "",
             displayName: user.displayName,
             playerLevelId: user.playerLevelId ?? "",
+            identityVisibility: user.identityVisibility,
           }}
           levels={levels}
         />
       </section>
-
-      <aside className="mt-5 border border-gold-dim bg-gold-faint/20 p-4">
-        <h2 className="font-display text-xs tracking-[0.2em] text-gold uppercase">
-          Qui voit quoi
-        </h2>
-        <p className="mt-2 text-xs leading-relaxed text-ink-muted">
-          Votre <strong>Titre</strong> et votre <strong>grade</strong> sont visibles par
-          tous les membres autorisés.
-        </p>
-        <p className="mt-1 text-xs leading-relaxed text-ink-muted">
-          Votre <strong>prénom</strong> et votre <strong>nom</strong> restent
-          confidentiels : seuls les modérateurs, les super-modérateurs et les membres
-          de vos propres groupes y ont accès.
-        </p>
-      </aside>
 
       {/* Position dans la hiérarchie : lecture seule */}
       <section className="mt-5 border border-border-default bg-raised p-5">

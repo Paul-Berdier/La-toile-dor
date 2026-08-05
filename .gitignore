@@ -27,6 +27,7 @@ audit-profils*/
 audit-screens*/
 audit-invitation*/
 audit-classement*/
+audit-identite*/
 
 # IDE
 .idea/

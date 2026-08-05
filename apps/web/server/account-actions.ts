@@ -61,7 +61,7 @@ export async function updateOwnIdentityAction(raw: unknown): Promise<Result> {
 
   const before = await prisma.user.findUniqueOrThrow({
     where: { id: current.session.userId },
-    select: { displayName: true, playerLevelId: true },
+    select: { displayName: true, playerLevelId: true, identityVisibility: true },
   });
 
   try {
@@ -73,6 +73,7 @@ export async function updateOwnIdentityAction(raw: unknown): Promise<Result> {
         displayName,
         displayNameNorm: norm,
         playerLevelId: level.id,
+        identityVisibility: data.identityVisibility,
       },
     });
   } catch {
@@ -90,9 +91,19 @@ export async function updateOwnIdentityAction(raw: unknown): Promise<Result> {
     action: "profile.identity_updated",
     resourceType: "user",
     resourceId: current.session.userId,
-    // Jamais le prénom/nom dans l'audit — uniquement ce qui est public
-    oldValues: { displayName: before.displayName, playerLevelId: before.playerLevelId },
-    newValues: { displayName, playerLevelId: level.id },
+    // Jamais le prénom/nom dans l'audit — uniquement ce qui est public.
+    // La portée choisie y figure : c'est une décision de confidentialité, et
+    // savoir quand elle a changé peut compter.
+    oldValues: {
+      displayName: before.displayName,
+      playerLevelId: before.playerLevelId,
+      identityVisibility: before.identityVisibility,
+    },
+    newValues: {
+      displayName,
+      playerLevelId: level.id,
+      identityVisibility: data.identityVisibility,
+    },
     ...meta,
   });
 

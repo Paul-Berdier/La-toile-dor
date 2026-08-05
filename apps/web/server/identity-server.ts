@@ -43,6 +43,9 @@ export async function serializeUsersForViewer(
       displayName: true,
       firstName: true,
       lastName: true,
+      // Portée choisie par l'intéressé — sans elle, on retomberait en silence
+      // sur la règle par défaut et le choix ne servirait à rien.
+      identityVisibility: true,
       groupMemberships: { select: { groupId: true } },
     },
   });
@@ -54,6 +57,7 @@ export async function serializeUsersForViewer(
         displayName: user.displayName,
         firstName: user.firstName,
         lastName: user.lastName,
+        identityVisibility: user.identityVisibility,
         groupIds: user.groupMemberships.map((m) => m.groupId),
       }),
     ]),
