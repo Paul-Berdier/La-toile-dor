@@ -2,6 +2,12 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import {
+  IDENTITY_VISIBILITIES,
+  IDENTITY_VISIBILITY_LABELS,
+  IDENTITY_VISIBILITY_HINTS,
+  type IdentityVisibility,
+} from "@toile/shared";
 import { updateOwnIdentityAction } from "@/server/account-actions";
 import { Button } from "@/components/ui/button";
 
@@ -22,6 +28,7 @@ export function IdentityEditForm({
     lastName: string;
     displayName: string;
     playerLevelId: string;
+    identityVisibility: IdentityVisibility;
   };
   levels: { id: string; label: string }[];
 }) {
@@ -30,6 +37,9 @@ export function IdentityEditForm({
   const [lastName, setLastName] = useState(initial.lastName);
   const [displayName, setDisplayName] = useState(initial.displayName);
   const [playerLevelId, setPlayerLevelId] = useState(initial.playerLevelId);
+  const [identityVisibility, setIdentityVisibility] = useState<IdentityVisibility>(
+    initial.identityVisibility,
+  );
   const [errors, setErrors] = useState<Record<string, string[]>>({});
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -39,7 +49,8 @@ export function IdentityEditForm({
     firstName !== initial.firstName ||
     lastName !== initial.lastName ||
     displayName !== initial.displayName ||
-    playerLevelId !== initial.playerLevelId;
+    playerLevelId !== initial.playerLevelId ||
+    identityVisibility !== initial.identityVisibility;
 
   const submit = () => {
     if (isPending) return;
@@ -49,6 +60,7 @@ export function IdentityEditForm({
         lastName,
         displayName,
         playerLevelId,
+        identityVisibility,
       });
       if (!res.ok) {
         setErrors(res.fieldErrors ?? {});
@@ -163,6 +175,50 @@ export function IdentityEditForm({
           )}
         </div>
       </div>
+
+      {/* Portée du prénom et du nom : le choix appartient à l'intéressé. */}
+      <fieldset className="border border-gold-dim bg-gold-faint/10 p-4">
+        <legend className="px-1 font-display text-xs tracking-[0.2em] text-gold uppercase">
+          Qui peut voir votre nom
+        </legend>
+        <p className="mb-2 text-xs text-ink-muted">
+          Votre Titre et votre grade restent visibles par tous. Vous décidez en revanche
+          qui accède à votre prénom et à votre nom.
+        </p>
+        <div className="space-y-1.5">
+          {IDENTITY_VISIBILITIES.map((scope) => (
+            <label
+              key={scope}
+              className={`flex cursor-pointer items-start gap-2 border p-2 transition-colors ${
+                identityVisibility === scope
+                  ? "border-gold bg-gold-faint/30"
+                  : "border-border-default hover:border-border-gold"
+              }`}
+            >
+              <input
+                type="radio"
+                name="identity-visibility"
+                value={scope}
+                checked={identityVisibility === scope}
+                onChange={() => { setIdentityVisibility(scope); setSaved(false); }}
+                className="mt-0.5 accent-[var(--toile-gold)]"
+              />
+              <span className="min-w-0">
+                <span className="block text-sm text-ink">
+                  {IDENTITY_VISIBILITY_LABELS[scope]}
+                </span>
+                <span className="block text-[0.7rem] leading-relaxed text-ink-faint">
+                  {IDENTITY_VISIBILITY_HINTS[scope]}
+                </span>
+              </span>
+            </label>
+          ))}
+        </div>
+        <p className="mt-2 text-[0.65rem] leading-relaxed text-ink-faint">
+          Quel que soit votre choix, les modérateurs et super-modérateurs y ont accès :
+          ils en ont besoin pour arbitrer les litiges et vérifier les dossiers.
+        </p>
+      </fieldset>
 
       {globalError && (
         <p role="alert" className="border border-blood bg-blood/10 px-3 py-2 text-xs text-blood-bright">

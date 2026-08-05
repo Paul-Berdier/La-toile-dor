@@ -74,18 +74,38 @@ de l'entrée, et aucune permission n'est requise puisqu'il s'agit de soi.
 La case de confidentialité n'est pas rejouée et `privacyAcknowledgedAt` n'est
 pas réécrit : l'accord initial reste horodaté à sa date d'origine.
 
+La page porte aussi le choix de **qui peut voir son nom** (voir la matrice
+ci-dessous). Chaque option affiche sa conséquence en clair plutôt qu'un
+libellé technique : quelqu'un doit pouvoir décider sans connaître le modèle de
+données.
+
 Rôle et groupes figurent sur la page en **lecture seule** : ils relèvent de la
 hiérarchie d'invitation. L'audit `profile.identity_updated` ne consigne que le
-Titre et le grade — jamais le prénom ni le nom.
+Titre, le grade et la portée choisie — jamais le prénom ni le nom. La portée y
+figure parce que c'est une décision de confidentialité, et que savoir quand
+elle a changé peut compter.
 
 ## Matrice de visibilité
 
+La portée du prénom et du nom est **choisie par l'intéressé**
+(`User.identityVisibility`), sur la page « Mes informations ».
+
+| Choix | Qui voit le prénom et le nom |
+|---|---|
+| `MODERATORS` | la modération seule — pas même ses coéquipiers |
+| `MY_GROUPS` (défaut) | + les membres de ses propres groupes |
+| `EVERYONE` | + tout membre autorisé de la Toile |
+
+Deux accès ne dépendent **jamais** de ce choix :
+
 | Visiteur | Identité réelle de la cible |
 |---|---|
-| La cible elle-même | Visible |
-| Membre d'au moins un même groupe | Visible |
-| Détenteur de `identity.view.real` | Visible |
-| Tout autre compte | Absente de la réponse |
+| La cible elle-même | Toujours visible |
+| Détenteur de `identity.view.real` | Toujours visible — la modération doit pouvoir arbitrer, et l'intéressé en est informé au moment où il choisit |
+| Tout autre compte | Selon le choix ci-dessus ; sinon **absente de la réponse** |
+
+`MY_GROUPS` est la valeur par défaut en base : les comptes créés avant ce
+réglage ne voient aucun changement tant qu'ils n'ont rien décidé.
 
 La règle centrale est `canViewRealIdentity` dans
 `packages/shared/src/identity.ts`. Les pages serveur construisent un

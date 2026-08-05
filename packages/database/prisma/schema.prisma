@@ -22,6 +22,15 @@ enum UserStatus {
   REVOKED
 }
 
+// Qui peut voir le prénom et le nom d'un membre — décidé par l'intéressé.
+// La modération conserve l'accès dans tous les cas : elle en a besoin pour
+// arbitrer, et c'est annoncé sur la page « Mes informations ».
+enum IdentityVisibility {
+  MODERATORS // la modération seule
+  MY_GROUPS  // + les membres de ses propres groupes (règle historique)
+  EVERYONE   // + tout membre autorisé de la Toile
+}
+
 model User {
   id            String     @id @default(cuid())
   // Pseudonyme public — seul nom visible hors du groupe et de la modération
@@ -34,6 +43,10 @@ model User {
   // (voir apps/web/server/identity.ts — jamais envoyée aux autres).
   firstName     String?
   lastName      String? // certains personnages n'ont pas de nom de famille
+  // Qui peut voir ce prénom et ce nom — choix de l'intéressé.
+  // MY_GROUPS reproduit la règle d'origine : les comptes existants ne voient
+  // donc aucun changement tant qu'ils n'ont rien décidé.
+  identityVisibility IdentityVisibility @default(MY_GROUPS)
   // Onboarding de première connexion
   profileCompleted     Boolean   @default(false)
   privacyAcknowledgedAt DateTime?

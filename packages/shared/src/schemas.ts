@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { IDENTITY_VISIBILITIES, DEFAULT_IDENTITY_VISIBILITY } from "./identity";
 
 // ── Validation serveur (Zod) — utilisée par les API routes et le bot ──
 
@@ -220,9 +221,12 @@ export type OnboardingIdentityInput = z.infer<typeof onboardingIdentitySchema>;
  * première connexion, sans la case de confidentialité : elle a déjà été
  * acceptée et son horodatage ne doit pas être réécrit.
  */
-export const selfIdentityUpdateSchema = onboardingIdentitySchema.omit({
-  privacyAcknowledged: true,
-});
+export const selfIdentityUpdateSchema = onboardingIdentitySchema
+  .omit({ privacyAcknowledged: true })
+  .extend({
+    // Portée de son prénom et de son nom : c'est à l'intéressé de la fixer.
+    identityVisibility: z.enum(IDENTITY_VISIBILITIES).default(DEFAULT_IDENTITY_VISIBILITY),
+  });
 
 export type SelfIdentityUpdateInput = z.infer<typeof selfIdentityUpdateSchema>;
 

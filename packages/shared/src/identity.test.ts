@@ -42,6 +42,44 @@ describe("canViewRealIdentity — matrice de visibilité", () => {
     const isole = { id: "isole", groupIds: [] };
     expect(canViewRealIdentity(viewer({ groupIds: new Set(["groupe-a"]) }), isole)).toBe(false);
   });
+
+  it("sans choix explicite, la règle historique s'applique (MY_GROUPS)", () => {
+    // Les comptes créés avant ce réglage ne doivent voir AUCUN changement.
+    expect(canViewRealIdentity(viewer({ groupIds: new Set(["groupe-a"]) }), target)).toBe(true);
+    expect(canViewRealIdentity(viewer({ groupIds: new Set(["groupe-b"]) }), target)).toBe(false);
+  });
+});
+
+describe("canViewRealIdentity — la portée est choisie par l'intéressé", () => {
+  const coequipier = viewer({ groupIds: new Set(["groupe-a"]) });
+  const etranger = viewer({ groupIds: new Set(["groupe-b"]) });
+  const moderation = viewer({ permissions: new Set([PERMISSIONS.IDENTITY_VIEW_REAL]) });
+
+  it("MODERATORS ferme la porte même aux coéquipiers", () => {
+    const ferme = { ...target, identityVisibility: "MODERATORS" as const };
+    expect(canViewRealIdentity(coequipier, ferme)).toBe(false);
+    expect(canViewRealIdentity(etranger, ferme)).toBe(false);
+    // …mais jamais à la modération ni à l'intéressé
+    expect(canViewRealIdentity(moderation, ferme)).toBe(true);
+    expect(canViewRealIdentity(viewer({ userId: "cible" }), ferme)).toBe(true);
+  });
+
+  it("MY_GROUPS ouvre aux coéquipiers, à eux seuls", () => {
+    const groupes = { ...target, identityVisibility: "MY_GROUPS" as const };
+    expect(canViewRealIdentity(coequipier, groupes)).toBe(true);
+    expect(canViewRealIdentity(etranger, groupes)).toBe(false);
+  });
+
+  it("EVERYONE ouvre à tout membre autorisé", () => {
+    const ouvert = { ...target, identityVisibility: "EVERYONE" as const };
+    expect(canViewRealIdentity(etranger, ouvert)).toBe(true);
+    expect(canViewRealIdentity(viewer(), ouvert)).toBe(true);
+  });
+
+  it("le choix le plus fermé n'enferme pas l'intéressé lui-même", () => {
+    const ferme = { id: "cible", groupIds: [], identityVisibility: "MODERATORS" as const };
+    expect(canViewRealIdentity(viewer({ userId: "cible" }), ferme)).toBe(true);
+  });
 });
 
 describe("serializeUserIdentity — DTO à deux niveaux", () => {
@@ -69,6 +107,22 @@ describe("serializeUserIdentity — DTO à deux niveaux", () => {
       expect(view.realName).not.toContain("undefined");
       expect(view.realName).not.toContain("Inconnu");
     }
+  });
+
+  it("le choix de la cible est respecté par le sérialiseur", () => {
+    // Un coéquipier qui voyait le nom ne le voit plus si la cible se ferme :
+    // la clé disparaît de la charge utile, elle n'est pas vidée.
+    const ferme = { ...record, identityVisibility: "MODERATORS" as const };
+    const view = serializeUserIdentity(
+      viewer({ groupIds: new Set(["groupe-a"]) }),
+      ferme,
+    ) as unknown as Record<string, unknown>;
+    expect(view).not.toHaveProperty("firstName");
+    expect(JSON.stringify(view)).not.toContain("Akira");
+
+    // …et un étranger le voit si la cible s'ouvre
+    const ouvert = { ...record, identityVisibility: "EVERYONE" as const };
+    expect(isRealUserView(serializeUserIdentity(viewer(), ouvert))).toBe(true);
   });
 });
 
