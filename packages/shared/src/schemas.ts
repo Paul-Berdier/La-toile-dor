@@ -58,9 +58,12 @@ export const missionCreateSchema = z
     primaryObjective: z.string().max(2000).optional(),
     secondaryObjectives: z.array(secondaryObjectiveSchema).max(20).default([]),
     targetIdentity: z.string().max(500).optional(),
+    // Dossiers rattachés — même confidentialité que le nom correspondant
+    targetProfileId: z.string().cuid().optional().nullable(),
     targetFactionId: z.union([z.string().cuid(), z.literal("")]).optional(),
     location: z.string().max(500).optional(),
     clientName: z.string().max(300).optional(),
+    clientProfileId: z.string().cuid().optional().nullable(),
     constraints: z.string().max(3000).optional(),
     prohibitions: z.string().max(3000).optional(),
     evidence: z.string().max(3000).optional(),

@@ -37,8 +37,10 @@ export interface MissionRecord {
   primaryObjective: string | null;
   secondaryObjectives: unknown;
   targetIdentity: string | null;
+  targetProfileId: string | null;
   location: string | null;
   clientName: string | null;
+  clientProfileId: string | null;
   constraints: string | null;
   prohibitions: string | null;
   evidence: string | null;
@@ -106,6 +108,12 @@ export interface LeaderMissionView extends Omit<AssignedMissionView, "level"> {
   level: "leader";
   /** Noms de la ou des cibles, révélés uniquement après attribution. */
   targetIdentity: string | null;
+  /**
+   * Dossier de renseignement de la cible. Même niveau de confidentialité que
+   * `targetIdentity` : l'identifiant seul suffirait à désigner la cible, il ne
+   * doit donc jamais descendre d'un cran dans la hiérarchie des vues.
+   */
+  targetProfileId: string | null;
   /** Faction RP de la cible, jamais la faction du groupe assigné. */
   targetFactionId: string | null;
 }
@@ -115,6 +123,8 @@ export interface ModeratorMissionView
   level: "moderator";
   /** Le commanditaire est strictement réservé à la modération. */
   clientName: string | null;
+  /** Son dossier, réservé au même titre que son nom. */
+  clientProfileId: string | null;
   internalTitle: string | null;
   moderatorNotes: string | null;
   eligibilityMode: string;
@@ -210,6 +220,7 @@ export function toLeaderView(m: MissionRecord, ctx: SerializeContext): LeaderMis
     ...assigned,
     level: "leader",
     targetIdentity: m.targetIdentity,
+    targetProfileId: m.targetProfileId,
     targetFactionId: m.targetFactionId,
   };
 }
@@ -220,6 +231,7 @@ export function toModeratorView(m: MissionRecord, ctx: SerializeContext): Modera
     ...leader,
     level: "moderator",
     clientName: m.clientName,
+    clientProfileId: m.clientProfileId,
     internalTitle: m.internalTitle,
     moderatorNotes: m.moderatorNotes,
     eligibilityMode: m.eligibilityMode,

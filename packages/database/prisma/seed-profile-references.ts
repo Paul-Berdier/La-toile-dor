@@ -89,26 +89,40 @@ const CLANS: RefDef[] = [
 ].map((d, i) => ({ ...d, sortOrder: (i + 1) * 10 }));
 
 // ── Natures de chakra ──
+/**
+ * Natures de chakra : **les cinq éléments primaires, et rien d'autre**.
+ *
+ * Tout le reste — Yin, Yang, et l'ensemble des dérivés (Mokuton, Hyôton, Lave,
+ * Ranton, Sakin…) — relève des Kekkei Genkai. Le référentiel mélangeait les
+ * deux, si bien qu'un dérivé pouvait être saisi comme « nature » chez un
+ * personnage qui n'a aucune lignée : la distinction qui fonde le Kekkei Genkai
+ * disparaissait. Les entrées retirées sont désactivées et non supprimées
+ * (voir DEPRECATED_CHAKRA_NATURES) : les dossiers existants les conservent.
+ */
 const CHAKRA_NATURES: RefDef[] = [
   { code: "KATON", label: "Katon", kanji: "火遁", romaji: "Katon", aliases: ["Feu"], category: "BASIC_ELEMENT", sourceScope: "MANGA_CANON", sourceUrl: `${WIKI}/Katon`, descriptionShort: "Nature élémentaire du feu." },
   { code: "SUITON", label: "Suiton", kanji: "水遁", romaji: "Suiton", aliases: ["Eau"], category: "BASIC_ELEMENT", sourceScope: "MANGA_CANON", sourceUrl: `${WIKI}/Suiton`, descriptionShort: "Nature élémentaire de l'eau." },
   { code: "FUTON", label: "Fûton", kanji: "風遁", romaji: "Fūton", aliases: ["Vent", "Futon"], category: "BASIC_ELEMENT", sourceScope: "MANGA_CANON", sourceUrl: `${WIKI}/F%C3%BBton`, descriptionShort: "Nature élémentaire du vent." },
   { code: "RAITON", label: "Raiton", kanji: "雷遁", romaji: "Raiton", aliases: ["Foudre"], category: "BASIC_ELEMENT", sourceScope: "MANGA_CANON", sourceUrl: `${WIKI}/Raiton`, descriptionShort: "Nature élémentaire de la foudre." },
   { code: "DOTON", label: "Doton", kanji: "土遁", romaji: "Doton", aliases: ["Terre"], category: "BASIC_ELEMENT", sourceScope: "MANGA_CANON", sourceUrl: `${WIKI}/Doton`, descriptionShort: "Nature élémentaire de la terre." },
-  { code: "INTON", label: "Inton — Yin", kanji: "陰遁", romaji: "Inton", aliases: ["Yin"], category: "YIN_YANG", sourceScope: "MANGA_CANON", descriptionShort: "Énergie spirituelle, socle des illusions et de la forme." },
-  { code: "YOTON_YANG", label: "Yôton — Yang", kanji: "陽遁", romaji: "Yōton (Yang)", aliases: ["Yang"], category: "YIN_YANG", sourceScope: "MANGA_CANON", descriptionShort: "Énergie physique, socle de la vitalité. À ne pas confondre avec la Lave." },
-  { code: "MOKUTON", label: "Mokuton", kanji: "木遁", romaji: "Mokuton", aliases: ["Bois"], category: "KEKKEI_GENKAI", sourceScope: "MANGA_CANON", sourceUrl: `${WIKI}/Mokuton`, descriptionShort: "Bois — union de la terre et de l'eau." },
-  { code: "HYOTON", label: "Hyôton", kanji: "氷遁", romaji: "Hyōton", aliases: ["Glace", "Hyoton"], category: "KEKKEI_GENKAI", sourceScope: "MANGA_CANON", sourceUrl: `${WIKI}/Hy%C3%B4ton`, descriptionShort: "Glace — union du vent et de l'eau." },
-  { code: "YOTON_LAVA", label: "Yôton — Lave", kanji: "熔遁", romaji: "Yōton (Lave)", aliases: ["Lave"], category: "KEKKEI_GENKAI", sourceScope: "MANGA_CANON", sourceUrl: `${WIKI}/Y%C3%B4ton`, descriptionShort: "Lave — union du feu et de la terre. Homonyme du Yang : codes distincts." },
-  { code: "FUTTON", label: "Futton", kanji: "沸遁", romaji: "Futton", aliases: ["Vapeur", "Ébullition"], category: "KEKKEI_GENKAI", sourceScope: "MANGA_CANON", sourceUrl: `${WIKI}/Futton`, descriptionShort: "Vapeur corrosive — union du feu et de l'eau." },
-  { code: "RANTON", label: "Ranton", kanji: "嵐遁", romaji: "Ranton", aliases: ["Tempête"], category: "KEKKEI_GENKAI", sourceScope: "MANGA_CANON", sourceUrl: `${WIKI}/Ranton`, descriptionShort: "Tempête — union de la foudre et de l'eau." },
-  { code: "JITON", label: "Jiton — Magnétisme", kanji: "磁遁", romaji: "Jiton", aliases: ["Magnétisme"], category: "KEKKEI_GENKAI", sourceScope: "MANGA_CANON", sourceUrl: `${WIKI}/Jiton`, descriptionShort: "Magnétisme — manipulation de particules aimantées." },
-  { code: "SHAKUTON", label: "Shakuton", kanji: "灼遁", romaji: "Shakuton", aliases: ["Brûlure"], category: "KEKKEI_GENKAI", sourceScope: "MANGA_CANON", sourceUrl: `${WIKI}/Shakuton`, descriptionShort: "Combustion desséchante — union du feu et du vent." },
-  { code: "BAKUTON", label: "Bakuton", kanji: "爆遁", romaji: "Bakuton", aliases: ["Explosion"], category: "KEKKEI_GENKAI", sourceScope: "MANGA_CANON", sourceUrl: `${WIKI}/Bakuton`, descriptionShort: "Chakra explosif — union de la foudre et de la terre." },
-  { code: "ENTON", label: "Enton", kanji: "炎遁", romaji: "Enton", aliases: ["Flammes noires", "Blaze"], category: "KEKKEI_GENKAI", sourceScope: "MANGA_CANON", sourceUrl: `${WIKI}/Enton`, descriptionShort: "Maîtrise des flammes d'Amaterasu." },
-  { code: "SHOTON", label: "Shôton", kanji: "晶遁", romaji: "Shōton", aliases: ["Cristal", "Shoton"], category: "KEKKEI_GENKAI", sourceScope: "ANIME", sourceUrl: `${WIKI}/Sh%C3%B4ton`, descriptionShort: "Cristallisation de la matière (arc anime)." },
-  { code: "JINTON_DUST", label: "Jinton — Poussière", kanji: "塵遁", romaji: "Jinton", aliases: ["Poussière"], category: "KEKKEI_TOTA", sourceScope: "MANGA_CANON", sourceUrl: `${WIKI}/Jinton`, descriptionShort: "Désintégration moléculaire — trois natures combinées." },
 ].map((d, i) => ({ ...d, sortOrder: (i + 1) * 10 }));
+
+/** Anciennes « natures » désormais classées ailleurs — désactivées, jamais supprimées. */
+const DEPRECATED_CHAKRA_NATURES = [
+  "INTON",
+  "YOTON_YANG",
+  "MOKUTON",
+  "HYOTON",
+  "YOTON_LAVA",
+  "FUTTON",
+  "RANTON",
+  "JITON",
+  "SHAKUTON",
+  "BAKUTON",
+  "ENTON",
+  "SHOTON",
+  "JINTON_DUST",
+];
 
 // ── Kekkei Genkai ──
 const KEKKEI_GENKAI: RefDef[] = [
@@ -130,6 +144,36 @@ const KEKKEI_GENKAI: RefDef[] = [
   { code: "KURAMA_CLAN", label: "Kekkei Genkai du clan Kurama", category: "CLAN_ABILITY", sourceScope: "ANIME", sourceUrl: `${WIKI}/Clan_Kurama`, descriptionShort: "Genjutsu si puissants qu'ils blessent réellement (arc anime)." },
   { code: "SAKON_UKON", label: "Kekkei Genkai de Sakon et Ukon", romaji: "Sōma no Kō", category: "CLAN_ABILITY", sourceScope: "MANGA_CANON", descriptionShort: "Fusion de deux corps en un seul hôte." },
   { code: "JINTON_DUST", label: "Jinton — Poussière", kanji: "塵遁", category: "KEKKEI_TOTA", sourceScope: "MANGA_CANON", descriptionShort: "Kekkei Tôta de la désintégration." },
+  // Dérivés qui figuraient à tort parmi les natures de chakra
+  { code: "ENTON", label: "Enton — Flammes noires", kanji: "炎遁", romaji: "Enton", aliases: ["Amaterasu", "Blaze"], category: "ELEMENTAL", sourceScope: "MANGA_CANON", sourceUrl: `${WIKI}/Enton`, descriptionShort: "Maîtrise des flammes noires d'Amaterasu — lié au Mangekyô." },
+  { code: "SHOTON", label: "Shôton — Cristal", kanji: "晶遁", romaji: "Shōton", aliases: ["Cristal", "Shoton"], category: "ELEMENTAL", sourceScope: "ANIME", sourceUrl: `${WIKI}/Sh%C3%B4ton`, descriptionShort: "Cristallisation de la matière (arc anime)." },
+  { code: "SAKIN", label: "Sakin — Poudre d'or", kanji: "砂金", romaji: "Sakin", aliases: ["Sable doré", "Or"], category: "ELEMENTAL", sourceScope: "MANGA_CANON", descriptionShort: "Poudre d'or manipulée par magnétisme — arme du Quatrième Kazekage." },
+].map((d, i) => ({ ...d, sortOrder: (i + 1) * 10 }));
+
+// ── Techniques de clan ──
+// Elles naissent dans un clan mais ne lui restent pas nécessairement : un
+// Sharingan se vole, un Susanoo s'observe chez qui n'est pas Uchiha. C'est
+// précisément ce qui en fait un renseignement — d'où un référentiel séparé
+// des Kekkei Genkai, qui sont eux hérités.
+const CLAN_TECHNIQUES: RefDef[] = [
+  { code: "SUSANOO", label: "Susanoo", kanji: "須佐能乎", romaji: "Susanoo", category: "UCHIHA", sourceScope: "MANGA_CANON", sourceUrl: `${WIKI}/Susanoo`, descriptionShort: "Avatar de chakra du Mangekyô — des côtes au corps parfait." },
+  { code: "SUSANOO_PARFAIT", label: "Susanoo parfait", kanji: "完成体須佐能乎", category: "UCHIHA", sourceScope: "MANGA_CANON", descriptionShort: "Forme achevée du Susanoo, réservée à de très rares porteurs." },
+  { code: "AMATERASU", label: "Amaterasu", kanji: "天照", category: "UCHIHA", sourceScope: "MANGA_CANON", sourceUrl: `${WIKI}/Amaterasu`, descriptionShort: "Flammes noires inextinguibles du Mangekyô." },
+  { code: "TSUKUYOMI", label: "Tsukuyomi", kanji: "月読", category: "UCHIHA", sourceScope: "MANGA_CANON", descriptionShort: "Genjutsu absolu du Mangekyô, distorsion du temps perçu." },
+  { code: "KAMUI", label: "Kamui", kanji: "神威", category: "UCHIHA", sourceScope: "MANGA_CANON", descriptionShort: "Déplacement dimensionnel — intangibilité et téléportation." },
+  { code: "KOTOAMATSUKAMI", label: "Kotoamatsukami", kanji: "別天神", category: "UCHIHA", sourceScope: "MANGA_CANON", descriptionShort: "Manipulation mentale sans que la victime s'en aperçoive." },
+  { code: "IZANAGI", label: "Izanagi", kanji: "伊邪那岐", category: "UCHIHA", sourceScope: "MANGA_CANON", descriptionShort: "Réécrit la réalité au prix d'un œil." },
+  { code: "IZANAMI", label: "Izanami", kanji: "伊邪那美", category: "UCHIHA", sourceScope: "MANGA_CANON", descriptionShort: "Enferme la cible dans une boucle jusqu'à ce qu'elle s'accepte." },
+  { code: "JUKEN", label: "Jûken — Poing souple", kanji: "柔拳", category: "HYUGA", sourceScope: "MANGA_CANON", descriptionShort: "Frappe les méridiens à travers la chair, associée au Byakugan." },
+  { code: "HAKKESHO_KAITEN", label: "Hakkeshô Kaiten", kanji: "八卦掌回天", category: "HYUGA", sourceScope: "MANGA_CANON", descriptionShort: "Rotation défensive absolue rejetant toute attaque." },
+  { code: "HAKKE_ROKUJUYON", label: "Hakke Rokujûyon Shô", kanji: "八卦六十四掌", category: "HYUGA", sourceScope: "MANGA_CANON", descriptionShort: "Soixante-quatre frappes scellant le flux de chakra." },
+  { code: "SHIKOTSUMYAKU_ARMES", label: "Ossature offensive (Shikotsumyaku)", category: "KAGUYA", sourceScope: "MANGA_CANON", descriptionShort: "Extraction d'armes depuis sa propre ossature." },
+  { code: "HIDEN_NARA", label: "Techniques d'ombre (Nara)", kanji: "影真似の術", category: "NARA", sourceScope: "MANGA_CANON", descriptionShort: "Capture et imitation par l'ombre." },
+  { code: "HIDEN_YAMANAKA", label: "Transfert d'esprit (Yamanaka)", kanji: "心転身の術", category: "YAMANAKA", sourceScope: "MANGA_CANON", descriptionShort: "Prise de contrôle de l'esprit d'autrui." },
+  { code: "HIDEN_AKIMICHI", label: "Multiplication corporelle (Akimichi)", kanji: "倍化の術", category: "AKIMICHI", sourceScope: "MANGA_CANON", descriptionShort: "Amplification de la masse corporelle." },
+  { code: "HIDEN_ABURAME", label: "Symbiose des insectes (Aburame)", category: "ABURAME", sourceScope: "MANGA_CANON", descriptionShort: "Colonies de kikaichû nourries au chakra." },
+  { code: "HIDEN_INUZUKA", label: "Combat symbiotique (Inuzuka)", category: "INUZUKA", sourceScope: "MANGA_CANON", descriptionShort: "Combat en meute avec un canidé partenaire." },
+  { code: "JUINJUTSU_MARQUE", label: "Marque maudite", kanji: "呪印", aliases: ["Sceau maudit", "Juin"], category: "JUINJUTSU", sourceScope: "MANGA_CANON", descriptionShort: "Sceau greffé conférant une puissance empruntée — et une emprise." },
 ].map((d, i) => ({ ...d, sortOrder: (i + 1) * 10 }));
 
 // ── Types de jutsu ──
@@ -190,6 +234,7 @@ const ALL_REFERENCES: [string, RefDef[]][] = [
   ["CLAN_FAMILY", CLANS],
   ["CHAKRA_NATURE", CHAKRA_NATURES],
   ["KEKKEI_GENKAI", KEKKEI_GENKAI],
+  ["CLAN_TECHNIQUE", CLAN_TECHNIQUES],
   ["JUTSU_TYPE", JUTSU_TYPES],
   ["COMBAT_STYLE", COMBAT_STYLES],
   ["KENJUTSU_STYLE", KENJUTSU_STYLES],
@@ -236,5 +281,22 @@ export async function seedProfileReferences(prisma: PrismaClient): Promise<numbe
       count += 1;
     }
   }
+
+  // Natures reclassées en Kekkei Genkai : elles sortent du choix mais ne sont
+  // PAS supprimées. Un dossier qui porte « Mokuton » comme nature continue de
+  // l'afficher — effacer une information déjà recueillie serait pire que de
+  // laisser une entrée dépréciée.
+  const retired = await prisma.profileReferenceOption.updateMany({
+    where: {
+      type: "CHAKRA_NATURE",
+      code: { in: DEPRECATED_CHAKRA_NATURES },
+      isActive: true,
+    },
+    data: { isActive: false },
+  });
+  if (retired.count > 0) {
+    console.log(`Natures de chakra reclassées en Kekkei Genkai : ${retired.count} retirées du choix.`);
+  }
+
   return count;
 }

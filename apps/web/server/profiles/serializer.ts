@@ -140,6 +140,7 @@ export function serializeDossier(
       case "clans":
       case "chakraNatures":
       case "kekkeiGenkai":
+      case "clanTechniques":
       case "combatStyles":
       case "kenjutsuStyles":
       case "artifacts": {

@@ -229,6 +229,21 @@ export async function updateProfileAction(raw: unknown): Promise<ProfileActionRe
   }
   const strategy = input.conflictStrategy ?? "REPLACE";
 
+  // « Aucun Subjutsu » alors que le dossier en liste : on ne supprime rien —
+  // ces fiches sont trop riches pour partir sur un choix de liste déroulante —
+  // mais on signale la contradiction plutôt que de l'enregistrer en silence.
+  if (input.fieldStates?.techniques === "NONE_CONFIRMED") {
+    const owned = await prisma.characterSignatureTechnique.count({
+      where: { profileId: profile.id },
+    });
+    if (owned > 0) {
+      warnings.push(
+        `Le dossier déclare « aucune technique propre » alors qu'il en liste ${owned}. ` +
+          "Retirez-les depuis la page du dossier, ou choisissez un autre état.",
+      );
+    }
+  }
+
   // Artefacts uniques : avertir si déjà portés par un autre personnage vivant
   if (input.artifactIds && input.artifactIds.length > 0) {
     const uniqueArtifacts = await prisma.profileReferenceOption.findMany({
@@ -412,6 +427,7 @@ export async function updateProfileAction(raw: unknown): Promise<ProfileActionRe
     ["clans", input.clanIds],
     ["chakraNatures", input.chakraNatureIds],
     ["kekkeiGenkai", input.kekkeiGenkaiIds],
+    ["clanTechniques", input.clanTechniqueIds],
     ["combatStyles", input.combatStyleIds],
     ["kenjutsuStyles", input.kenjutsuStyleIds],
     ["artifacts", input.artifactIds],

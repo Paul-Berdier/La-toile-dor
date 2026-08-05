@@ -22,7 +22,7 @@ async function loadRef(type: string): Promise<RefOption[]> {
 
 export async function loadProfileRefs() {
   const [
-    hairColors, skinTones, clans, chakraNatures, kekkeiGenkai,
+    hairColors, skinTones, clans, chakraNatures, kekkeiGenkai, clanTechniques,
     combatStyles, kenjutsuStyles, artifacts, jutsuTypes, factions, ranks,
   ] = await Promise.all([
     loadRef(REFERENCE_TYPES.HAIR_COLOR),
@@ -30,6 +30,7 @@ export async function loadProfileRefs() {
     loadRef(REFERENCE_TYPES.CLAN_FAMILY),
     loadRef(REFERENCE_TYPES.CHAKRA_NATURE),
     loadRef(REFERENCE_TYPES.KEKKEI_GENKAI),
+    loadRef(REFERENCE_TYPES.CLAN_TECHNIQUE),
     loadRef(REFERENCE_TYPES.COMBAT_STYLE),
     loadRef(REFERENCE_TYPES.KENJUTSU_STYLE),
     loadRef(REFERENCE_TYPES.LEGENDARY_ARTIFACT),
@@ -37,7 +38,7 @@ export async function loadProfileRefs() {
     prisma.faction.findMany({ where: { isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
     prisma.playerLevel.findMany({ select: { id: true, label: true }, orderBy: { order: "asc" } }),
   ]);
-  return { hairColors, skinTones, clans, chakraNatures, kekkeiGenkai, combatStyles, kenjutsuStyles, artifacts, jutsuTypes, factions, ranks };
+  return { hairColors, skinTones, clans, chakraNatures, kekkeiGenkai, clanTechniques, combatStyles, kenjutsuStyles, artifacts, jutsuTypes, factions, ranks };
 }
 
 export async function loadEditData(profileId: string): Promise<EditFormData | null> {
@@ -46,6 +47,8 @@ export async function loadEditData(profileId: string): Promise<EditFormData | nu
     include: {
       traits: { include: { option: { select: { id: true, type: true } } } },
       fieldIntel: { select: { fieldKey: true, knowledgeState: true } },
+      // Sert à déduire l'état des Subjutsu sur les dossiers antérieurs au suivi
+      techniques: { select: { id: true } },
     },
   });
   if (!profile || profile.archivedAt) return null;
@@ -74,6 +77,8 @@ export async function loadEditData(profileId: string): Promise<EditFormData | nu
   inferKnown("clans", traitIds(REFERENCE_TYPES.CLAN_FAMILY).length > 0);
   inferKnown("chakraNatures", traitIds(REFERENCE_TYPES.CHAKRA_NATURE).length > 0);
   inferKnown("kekkeiGenkai", traitIds(REFERENCE_TYPES.KEKKEI_GENKAI).length > 0);
+  inferKnown("clanTechniques", traitIds(REFERENCE_TYPES.CLAN_TECHNIQUE).length > 0);
+  inferKnown("techniques", profile.techniques.length > 0);
   inferKnown("combatStyles", traitIds(REFERENCE_TYPES.COMBAT_STYLE).length > 0);
   inferKnown("kenjutsuStyles", traitIds(REFERENCE_TYPES.KENJUTSU_STYLE).length > 0);
   inferKnown("artifacts", traitIds(REFERENCE_TYPES.LEGENDARY_ARTIFACT).length > 0);
@@ -101,6 +106,7 @@ export async function loadEditData(profileId: string): Promise<EditFormData | nu
     clanIds: traitIds(REFERENCE_TYPES.CLAN_FAMILY),
     chakraNatureIds: traitIds(REFERENCE_TYPES.CHAKRA_NATURE),
     kekkeiGenkaiIds: traitIds(REFERENCE_TYPES.KEKKEI_GENKAI),
+    clanTechniqueIds: traitIds(REFERENCE_TYPES.CLAN_TECHNIQUE),
     combatStyleIds: traitIds(REFERENCE_TYPES.COMBAT_STYLE),
     kenjutsuStyleIds: traitIds(REFERENCE_TYPES.KENJUTSU_STYLE),
     artifactIds: traitIds(REFERENCE_TYPES.LEGENDARY_ARTIFACT),

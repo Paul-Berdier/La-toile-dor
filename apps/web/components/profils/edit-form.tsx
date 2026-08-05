@@ -41,6 +41,7 @@ export interface EditFormData {
   clanIds: string[];
   chakraNatureIds: string[];
   kekkeiGenkaiIds: string[];
+  clanTechniqueIds: string[];
   combatStyleIds: string[];
   kenjutsuStyleIds: string[];
   artifactIds: string[];
@@ -58,6 +59,7 @@ interface Refs {
   clans: RefOption[];
   chakraNatures: RefOption[];
   kekkeiGenkai: RefOption[];
+  clanTechniques: RefOption[];
   combatStyles: RefOption[];
   kenjutsuStyles: RefOption[];
   artifacts: RefOption[];
@@ -274,6 +276,7 @@ export function ProfileEditForm({
         clanIds: known("clans") ? data.clanIds : [],
         chakraNatureIds: known("chakraNatures") ? data.chakraNatureIds : [],
         kekkeiGenkaiIds: known("kekkeiGenkai") ? data.kekkeiGenkaiIds : [],
+        clanTechniqueIds: known("clanTechniques") ? data.clanTechniqueIds : [],
         combatStyleIds: known("combatStyles") ? data.combatStyleIds : [],
         kenjutsuStyleIds: showKenjutsu ? data.kenjutsuStyleIds : [],
         artifactIds: known("artifacts") ? data.artifactIds : [],
@@ -481,6 +484,16 @@ export function ProfileEditForm({
                 referenceType="KEKKEI_GENKAI" canCreate={canManageReferences}
                 onCreated={(o) => addOption("kekkeiGenkai", o)} />
             </KnowledgeField>
+            {/* Techniques de clan : distinctes des Kekkei Genkai (hérités) et
+                des Subjutsu (propres au personnage). En trouver chez qui n'est
+                pas du clan est un renseignement en soi. */}
+            <KnowledgeField fieldKey="clanTechniques" state={stateOf("clanTechniques")} onStateChange={(s) => setState("clanTechniques", s)}>
+              <ReferencePicker legend="Techniques de clan" hideLegend options={refs.clanTechniques}
+                selected={data.clanTechniqueIds} onChange={(ids) => setValue("clanTechniques", "clanTechniqueIds", ids)}
+                onSuggest={(label) => setSuggestion({ type: "CLAN_TECHNIQUE", label })}
+                referenceType="CLAN_TECHNIQUE" canCreate={canManageReferences}
+                onCreated={(o) => addOption("clanTechniques", o)} />
+            </KnowledgeField>
             <KnowledgeField fieldKey="artifacts" state={stateOf("artifacts")} onStateChange={(s) => setState("artifacts", s)}>
               <ReferencePicker legend="Artefacts légendaires" hideLegend options={refs.artifacts}
                 selected={data.artifactIds} onChange={(ids) => setValue("artifacts", "artifactIds", ids)}
@@ -488,9 +501,17 @@ export function ProfileEditForm({
                 referenceType="LEGENDARY_ARTIFACT" canCreate={canManageReferences}
                 onCreated={(o) => addOption("artifacts", o)} />
             </KnowledgeField>
-            <p className="text-[0.65rem] text-ink-faint">
-              Les Subjutsu (techniques propres) s&rsquo;ajoutent depuis la page du dossier.
-            </p>
+            {/* Les techniques propres se saisissent plus bas, mais leur ÉTAT
+                se déclare ici : sans cela, impossible d'affirmer « la Toile a
+                vérifié, il n'en a aucune » — l'absence se confondait avec le
+                simple fait de ne pas savoir. */}
+            <KnowledgeField fieldKey="techniques" state={stateOf("techniques")} onStateChange={(s) => setState("techniques", s)}>
+              <p className="text-[0.65rem] text-ink-faint">
+                Les Subjutsu (Rasengan, Chidori, Hiraishin…) s&rsquo;ajoutent un par un
+                depuis la page du dossier, plus bas. Les techniques liées à un clan se
+                choisissent dans le champ ci-dessus.
+              </p>
+            </KnowledgeField>
           </div>
         )}
 

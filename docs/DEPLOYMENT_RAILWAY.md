@@ -104,6 +104,32 @@ DATABASE_URL="<url-production>" INVITE_TOKEN_PEPPER="<pepper-production>" APP_UR
 Le seed affiche **une seule fois** le lien d'invitation du super
 administrateur : le consommer immédiatement.
 
+### Empreintes de migration et fins de ligne
+
+Prisma calcule l'empreinte (checksum) de chaque migration au moment où il
+l'applique. Si le fichier change ensuite, il considère qu'une migration
+appliquée a été modifiée et propose un `migrate reset` — **c'est-à-dire la
+destruction de la base**. Ne jamais accepter.
+
+La cause la plus fréquente ne se voit pas dans le SQL : sous Windows,
+`core.autocrlf` réécrit les fichiers en CRLF au checkout, ce qui change
+l'empreinte sans changer une ligne. Le dépôt fige donc les fins de ligne
+(`.gitattributes` : `*.sql text eol=lf`). Le déploiement Railway (Linux) n'est
+pas concerné — il a toujours reçu les fichiers en LF.
+
+Si l'écart existe déjà, la voie non destructive est
+`packages/database/scripts/repair-migration-checksums.mjs` : il réaligne la
+colonne `checksum` de `_prisma_migrations` sur le contenu réel des fichiers,
+sans jamais toucher au schéma ni aux données.
+
+```bash
+node scripts/repair-migration-checksums.mjs
+```
+
+Sans `--apply`, il se contente d'énumérer les écarts. À n'utiliser qu'après
+avoir vérifié que le schéma correspond bien au SQL des fichiers
+(`prisma migrate status` → « Database schema is up to date »).
+
 ### Référentiels après la migration identité/groupes
 
 La migration `20260803150000_identity_groups_multiassign` ajoute trois clés

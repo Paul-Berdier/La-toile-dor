@@ -395,10 +395,17 @@ model Mission {
   primaryObjective        String?
   secondaryObjectives     Json? // [{label, secret: bool, points}]
   targetIdentity          String? // chefs des groupes attribués + modération
+  // Dossier de renseignement de la cible, quand elle en a un. Le texte libre
+  // reste la source d'affichage ; ce lien ouvre la fiche et laisse verser les
+  // renseignements de la mission dans le bon dossier. MÊME confidentialité
+  // que targetIdentity : ne jamais l'exposer plus largement.
+  targetProfileId         String?
   // Réservée aux chefs des groupes attribués et à la modération.
   targetFactionId         String?
   location                String?
   clientName              String? // commanditaire — modération uniquement
+  // Dossier du commanditaire — modération uniquement, comme clientName.
+  clientProfileId         String?
   constraints             String?
   prohibitions            String?
   evidence                String? // preuves à rapporter
@@ -431,6 +438,8 @@ model Mission {
   responsibleModerator User?   @relation("MissionModerator", fields: [responsibleModeratorId], references: [id])
   targetLevel         PlayerLevel? @relation("MissionTargetLevel", fields: [targetLevelId], references: [id])
   targetFaction       Faction? @relation("MissionTargetFaction", fields: [targetFactionId], references: [id], onDelete: SetNull)
+  targetProfile       CharacterProfile? @relation("MissionTargetProfile", fields: [targetProfileId], references: [id], onDelete: SetNull)
+  clientProfile       CharacterProfile? @relation("MissionClientProfile", fields: [clientProfileId], references: [id], onDelete: SetNull)
   minRecommendedLevel PlayerLevel? @relation("MissionMinLevel", fields: [minRecommendedLevelId], references: [id])
   assignedFaction     Faction? @relation("MissionAssignedFaction", fields: [assignedFactionId], references: [id])
   assignedGroup       Group?   @relation("MissionAssignedGroup", fields: [assignedGroupId], references: [id])
@@ -980,6 +989,9 @@ model CharacterProfile {
   revisions     CharacterProfileRevision[]
   purchaseRequests ProfilePurchaseRequest[]
   accessGrants  ProfileAccessGrant[]
+  // Missions où ce personnage est la cible ou le commanditaire
+  missionsAsTarget Mission[] @relation("MissionTargetProfile")
+  missionsAsClient Mission[] @relation("MissionClientProfile")
 
   @@index([firstNameNorm])
   @@index([archivedAt])

@@ -88,6 +88,19 @@ ni dans aucune réponse réseau, sur build de production).
   des groupes effectivement dirigés par l'utilisateur ;
 - `moderator` : vue complète, incluant seule le commanditaire (`clientName`).
 
+### Dossiers rattachés à une mission
+
+Une mission peut pointer vers le dossier de sa cible (`targetProfileId`) et
+celui de son commanditaire (`clientProfileId`). Ces identifiants suivent
+**exactement** la confidentialité du nom correspondant : `targetProfileId` avec
+`targetIdentity` (chefs assignés + modération), `clientProfileId` avec
+`clientName` (modération seule).
+
+Un identifiant de dossier désigne une personne aussi sûrement que son nom : le
+descendre d'un cran dans la hiérarchie des vues reviendrait à publier la cible.
+Les clés sont donc listées dans les jeux vérifiés par
+`packages/shared/src/mission-views.test.ts`, au même titre que les noms.
+
 ⚠ **Le mode développement de React/Next streame des données de débogage
 (valeurs des promesses awaitées) vers le navigateur.** Les garanties de
 non-fuite valent pour le **build de production** — ne jamais exposer un
