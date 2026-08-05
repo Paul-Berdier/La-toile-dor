@@ -73,8 +73,29 @@ Un modérateur ne crée jamais directement une option officielle : il soumet une
 `ProfileReferenceSuggestion` (type, libellé, description, source, provenance,
 motif). Un **super-modérateur** l'approuve (création, avec refus des doublons
 normalisés), la refuse, ou la **fusionne** — la proposition devient alors un
-alias de l'option existante. Les super-modérateurs peuvent aussi créer
-directement une option et désactiver une entrée (`isActive: false` : plus
-sélectionnable, mais les dossiers existants la conservent).
+alias de l'option existante. Les super-modérateurs peuvent aussi désactiver une
+entrée (`isActive: false` : plus sélectionnable, mais les dossiers existants la
+conservent).
 
 Administration : `/admin/referentiels`.
+
+### Saisie directe depuis un dossier
+
+Détenir `profile.reference.manage` permet d'ajouter une entrée **sans quitter
+le dossier** : le sélecteur affiche « Ajouter « X » au référentiel » en pied de
+liste, et pour `HAIR_COLOR` / `SKIN_TONE` un nuancier accompagne la saisie.
+L'entrée créée est immédiatement sélectionnée et apparaît dans la liste sans
+rechargement. Sans cette permission, le pied de liste propose la voie normale :
+soumettre une proposition.
+
+Deux actions serveur cohabitent volontairement :
+
+| Action | Origine | Doublon | Retour |
+|---|---|---|---|
+| `createReferenceOptionAction` | `/admin/referentiels` | **refusé** (erreur explicite) | — |
+| `createInlineReferenceOptionAction` | formulaire de dossier | **idempotent** : l'entrée existante est renvoyée, une entrée désactivée est réactivée | l'option, pour l'afficher aussitôt |
+
+La seconde est incidente — on complète un dossier, pas un référentiel — d'où
+l'idempotence : deux modérateurs saisissant la même valeur en même temps ne
+doivent pas voir d'erreur. Le `code` est dérivé du libellé normalisé et suffixé
+s'il est déjà pris ; `normalizedLabel` reste l'unique garde-fou anti-variantes.

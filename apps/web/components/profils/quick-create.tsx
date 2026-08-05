@@ -1,9 +1,15 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { quickCreateProfileAction } from "@/server/profiles/profile-actions";
 import { Button } from "@/components/ui/button";
+
+interface ExistingProfile {
+  id: string;
+  code: string;
+  firstName: string;
+}
 
 /** « Nouveau profil » : modale minimale (prénom seul), doublons avertis sans blocage. */
 export function QuickCreateProfile({ sourceMissionId }: { sourceMissionId?: string }) {
@@ -11,8 +17,36 @@ export function QuickCreateProfile({ sourceMissionId }: { sourceMissionId?: stri
   const [open, setOpen] = useState(false);
   const [firstName, setFirstName] = useState("");
   const [duplicates, setDuplicates] = useState<{ id: string; code: string; name: string }[]>([]);
+  const [existing, setExisting] = useState<ExistingProfile[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+
+  /**
+   * Dossiers déjà ouverts, cherchés au fil de la frappe : le doublon se
+   * repère AVANT la création, pas après coup dans un message d'erreur.
+   */
+  useEffect(() => {
+    if (!open || firstName.trim().length < 2) {
+      setExisting([]);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `/api/profils/recherche?q=${encodeURIComponent(firstName.trim())}`,
+          { signal: controller.signal },
+        );
+        if (res.ok) setExisting(await res.json());
+      } catch {
+        // Requête annulée par une frappe suivante : rien à signaler
+      }
+    }, 250);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [firstName, open]);
 
   const submit = (thenEdit: boolean, confirmDespiteDuplicates = false) => {
     if (isPending) return;
@@ -73,6 +107,36 @@ export function QuickCreateProfile({ sourceMissionId }: { sourceMissionId?: stri
               autoFocus
               className="mt-1 w-full border border-border-default bg-elevated px-3 py-2 text-sm text-ink focus:border-gold"
             />
+
+            {/* Dossiers existants : ouvrir plutôt que dupliquer */}
+            {existing.length > 0 && duplicates.length === 0 && (
+              <div className="mt-3 border border-border-gold bg-elevated p-2">
+                <p className="text-[0.7rem] uppercase tracking-wider text-ink-faint">
+                  Dossiers déjà ouverts
+                </p>
+                <ul className="mt-1 space-y-0.5">
+                  {existing.map((profile) => (
+                    <li key={profile.id}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpen(false);
+                          router.push(
+                            `/profils/${profile.id}${sourceMissionId ? `?mission=${sourceMissionId}` : ""}`,
+                          );
+                        }}
+                        className="w-full px-1.5 py-1 text-left text-xs text-ink-muted hover:bg-hover-bg hover:text-gold"
+                      >
+                        {profile.firstName}
+                        <span className="ml-1.5 font-mono-toile text-[0.65rem] text-ink-faint">
+                          {profile.code}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {duplicates.length > 0 && (
               <div className="mt-3 border border-warning/50 bg-warning/10 p-3 text-xs text-warning">

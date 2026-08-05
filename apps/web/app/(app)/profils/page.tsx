@@ -4,6 +4,7 @@ import { LIFE_STATUS_LABELS, REFERENCE_TYPES } from "@toile/shared";
 import { requireUser } from "@/lib/session";
 import { listProfiles } from "@/server/profiles/queries";
 import { QuickCreateProfile } from "@/components/profils/quick-create";
+import { ProfileFilters } from "@/components/profils/profile-filters";
 import { buttonClasses } from "@/components/ui/button";
 
 export const dynamic = "force-dynamic";
@@ -79,53 +80,24 @@ export default async function ProfilsPage({
         </p>
       )}
 
-      {/* Recherche + filtres (gradés selon le rôle) */}
-      <form method="get" action="/profils" className="mt-5 border border-border-default bg-raised p-3">
-        {attachMission && <input type="hidden" name="mission" value={attachMission.id} />}
-        <div className="flex flex-wrap items-center gap-2">
-          <label htmlFor="prf-q" className="sr-only">Recherche</label>
-          <input
-            id="prf-q"
-            name="q"
-            defaultValue={first(sp.q) ?? ""}
-            placeholder="Prénom ou code (PRF-…)"
-            className="w-full max-w-xs border border-border-default bg-elevated px-3 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-gold"
-          />
-          {viewer.canViewAll && (
-            <>
-              <select name="faction" defaultValue={first(sp.faction) ?? ""} aria-label="Faction"
-                className="border border-border-default bg-elevated px-2 py-1.5 text-sm text-ink">
-                <option value="">Faction — toutes</option>
-                {factions.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-              </select>
-              <select name="clan" defaultValue={first(sp.clan) ?? ""} aria-label="Clan"
-                className="border border-border-default bg-elevated px-2 py-1.5 text-sm text-ink">
-                <option value="">Clan — tous</option>
-                {clans.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
-              </select>
-              <select name="etat" defaultValue={first(sp.etat) ?? ""} aria-label="État"
-                className="border border-border-default bg-elevated px-2 py-1.5 text-sm text-ink">
-                <option value="">État — tous</option>
-                {Object.entries(LIFE_STATUS_LABELS).map(([code, label]) => (
-                  <option key={code} value={code}>{label}</option>
-                ))}
-              </select>
-            </>
-          )}
-          {!viewer.canViewAll && (
-            <select name="acces" defaultValue={first(sp.acces) ?? ""} aria-label="Accès"
-              className="border border-border-default bg-elevated px-2 py-1.5 text-sm text-ink">
-              <option value="">Tous les dossiers</option>
-              <option value="granted">Accès obtenu</option>
-              <option value="pending">Demande en attente</option>
-              <option value="refused">Demande refusée</option>
-            </select>
-          )}
-          <button type="submit" className="border border-border-gold px-3 py-1.5 text-xs text-gold hover:bg-hover-bg">
-            Filtrer
-          </button>
-        </div>
-      </form>
+      {/* Recherche + filtres (gradés selon le rôle), appliqués au fil de la frappe */}
+      <ProfileFilters
+        initial={{
+          q: first(sp.q) ?? "",
+          faction: first(sp.faction) ?? "",
+          clan: first(sp.clan) ?? "",
+          etat: first(sp.etat) ?? "",
+          acces: first(sp.acces) ?? "",
+        }}
+        canViewAll={viewer.canViewAll}
+        factions={factions.map((f) => ({ value: f.id, label: f.name }))}
+        clans={clans.map((c) => ({ value: c.id, label: c.label }))}
+        lifeStatuses={Object.entries(LIFE_STATUS_LABELS).map(([value, label]) => ({
+          value,
+          label,
+        }))}
+        missionId={attachMission?.id}
+      />
 
       {rows.length === 0 && (
         <p className="mt-6 border border-border-default bg-raised p-8 text-center text-sm text-ink-faint italic">
@@ -159,7 +131,14 @@ export default async function ProfilsPage({
                 <span className="block font-mono-toile text-[0.65rem] tracking-wider text-ink-faint">
                   {row.code}
                 </span>
-                <span className="block truncate text-sm text-ink">{row.firstName}</span>
+                <span className="block truncate text-sm text-ink">
+                  {row.firstName}
+                  {/* Le nom n'est présent dans la charge utile que si le
+                      lecteur y a droit — rien n'est masqué en CSS. */}
+                  {row.lastName && (
+                    <span className="ml-1 text-ink-muted">{row.lastName}</span>
+                  )}
+                </span>
                 <span className="mt-1 flex flex-wrap gap-1">
                   {row.accessBadge === "granted" && (
                     <span className="border border-gold-dim bg-gold-faint/30 px-1.5 py-0.5 text-[0.6rem] uppercase text-gold">

@@ -272,18 +272,24 @@ export async function createInvitationAction(raw: unknown): Promise<Result> {
 
   const role = await prisma.role.findUnique({ where: { slug: data.roleSlug } });
   if (!role) return { ok: false, error: "Rôle inconnu." };
-  const playerLevel = await prisma.playerLevel.findUnique({
-    where: { id: data.playerLevelId },
-    select: { id: true, label: true },
-  });
-  if (!playerLevel) return { ok: false, error: "Niveau de personnage inconnu." };
+  // Le grade appartient au joueur : il le déclare à sa première connexion.
+  // Un niveau transmis reste honoré (compatibilité), mais n'est plus exigé.
+  const playerLevel = data.playerLevelId
+    ? await prisma.playerLevel.findUnique({
+        where: { id: data.playerLevelId },
+        select: { id: true, label: true },
+      })
+    : null;
+  if (data.playerLevelId && !playerLevel) {
+    return { ok: false, error: "Niveau de personnage inconnu." };
+  }
 
   const { token } = await createInvitation({
     createdById: current.session.userId,
     roleId: role.id,
     factionId,
     groupId,
-    playerLevelId: playerLevel.id,
+    playerLevelId: playerLevel?.id,
     groupOnboardingMode,
     expiresInHours: data.expiresInHours,
     requireApproval: data.requireApproval,
@@ -299,7 +305,7 @@ export async function createInvitationAction(raw: unknown): Promise<Result> {
       roleSlug: data.roleSlug,
       factionId: factionId ?? null,
       groupId: groupId ?? null,
-      playerLevelId: playerLevel.id,
+      playerLevelId: playerLevel?.id ?? null,
       expiresInHours: data.expiresInHours,
     },
     ...meta,

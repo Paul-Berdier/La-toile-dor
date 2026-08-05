@@ -164,3 +164,22 @@ export const referenceSuggestionSchema = z.object({
     .default("SERVER_CUSTOM"),
   reason: z.string().max(1000).optional(),
 });
+
+/**
+ * Création directe d'une entrée de référentiel, depuis le formulaire de
+ * dossier. Réservée aux détenteurs de `profile.reference.manage` : les autres
+ * passent par une proposition soumise à validation, afin d'éviter les
+ * variantes (Uchiha / UCHIWA / Uchïha).
+ */
+export const referenceOptionCreateSchema = z.object({
+  type: z.string().min(2).max(40),
+  label: z.string().trim().min(1).max(120),
+  sourceScope: z
+    .enum(["MANGA_CANON", "ANIME", "FILM", "GAME", "SERVER_CUSTOM"])
+    .default("SERVER_CUSTOM"),
+  /** Pastille de couleur — couleurs de cheveux et de peau uniquement */
+  colorHex: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/, "Couleur attendue au format #RRGGBB")
+    .optional(),
+});

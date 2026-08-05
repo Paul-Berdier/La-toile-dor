@@ -74,10 +74,13 @@ export function Sidebar({
         </nav>
 
         <div className="border-t border-border-default p-4">
-          <p className="truncate text-sm text-ink">{userName}</p>
-          <p className="font-mono-toile text-[0.6rem] uppercase tracking-widest text-ink-faint">
-            {roleLabel}
-          </p>
+          {/* Le bloc d'identité mène à ses propres informations */}
+          <Link href="/compte" className="block hover:text-gold">
+            <p className="truncate text-sm text-ink hover:text-gold">{userName}</p>
+            <p className="font-mono-toile text-[0.6rem] uppercase tracking-widest text-ink-faint">
+              {roleLabel}
+            </p>
+          </Link>
           <form action="/api/auth/logout" method="post" className="mt-3">
             <button
               type="submit"

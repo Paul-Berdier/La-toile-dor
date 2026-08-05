@@ -2,9 +2,10 @@ import { expect, test } from "@playwright/test";
 import { loginAs, prisma } from "./helpers";
 
 /**
- * Onboarding d'identité : prénom obligatoire, nom facultatif, pseudonyme
- * unique, case de confidentialité obligatoire, redirection des profils
- * incomplets, blocage des pages sensibles avant complétion.
+ * Onboarding d'identité : Titre RP unique (jamais le pseudo Discord), grade
+ * déclaré par le joueur, prénom obligatoire, nom facultatif, case de
+ * confidentialité obligatoire, redirection des profils incomplets et blocage
+ * des pages sensibles avant complétion.
  */
 const runId = Date.now().toString(36).toUpperCase();
 
@@ -33,7 +34,13 @@ test("un profil incomplet est redirigé vers l'onboarding et bloqué ailleurs", 
   await loginAs(context, "demo-incomplete");
   await page.goto("/missions");
   await expect(page).toHaveURL(/\/bienvenue/);
-  await expect(page.getByLabel("Prénom *")).toBeVisible();
+  await expect(page.getByLabel("Prénom du personnage *")).toBeVisible();
+  // Le Titre est expliqué comme distinct du pseudo Discord
+  await expect(page.getByText(/pas.*votre pseudo Discord/i)).toBeVisible();
+  // Le champ démarre vide : rien à valider machinalement
+  await expect(page.getByLabel("Votre Titre *")).toHaveValue("");
+  // Le grade est proposé au joueur, pas imposé
+  await expect(page.getByLabel("Grade de votre personnage *")).toBeVisible();
   // L'encart de confidentialité est présent
   await expect(page.getByText("Identité confidentielle")).toBeVisible();
   await expect(page.getByText(/resteront confidentiels/)).toBeVisible();
@@ -42,9 +49,10 @@ test("un profil incomplet est redirigé vers l'onboarding et bloqué ailleurs", 
 test("le pseudonyme déjà pris est refusé (insensible à la casse)", async ({ context, page }) => {
   await loginAs(context, "demo-incomplete");
   await page.goto("/bienvenue");
-  await page.getByLabel("Prénom *").fill("Testeur");
+  await page.getByLabel("Prénom du personnage *").fill("Testeur");
   // « [FICTIF] Araignée-Mère » existe déjà (casse différente)
-  await page.getByLabel("Pseudonyme public *").fill("[fictif] araignée-mère");
+  await page.getByLabel("Votre Titre *").fill("[fictif] araignée-mère");
+  await page.getByLabel("Grade de votre personnage *").selectOption({ index: 1 });
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Sceller mon identité" }).click();
   await expect(page.getByText(/déjà pris/)).toBeVisible();
@@ -56,9 +64,10 @@ test("l'onboarding complet ouvre l'accès (nom de famille absent → prénom seu
 }) => {
   await loginAs(context, "demo-incomplete");
   await page.goto("/bienvenue");
-  await page.getByLabel("Prénom *").fill("Akira");
+  await page.getByLabel("Prénom du personnage *").fill("Akira");
   // Nom de famille volontairement vide : le personnage n'en possède pas
-  await page.getByLabel("Pseudonyme public *").fill(`Fil-Nouveau-${runId}`);
+  await page.getByLabel("Votre Titre *").fill(`Fil-Nouveau-${runId}`);
+  await page.getByLabel("Grade de votre personnage *").selectOption({ index: 1 });
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Sceller mon identité" }).click();
 

@@ -160,7 +160,10 @@ export const invitationCreateSchema = z.object({
   roleSlug: z.enum(["super_admin", "moderator", "group_leader", "group_member"]),
   factionId: z.string().cuid().optional(),
   groupId: z.string().cuid().optional(),
-  playerLevelId: z.string().cuid("Niveau invalide."),
+  // Le grade n'est PLUS choisi par l'inviteur : l'invité le renseigne à sa
+  // première connexion. Le champ reste accepté pour ne pas invalider les
+  // appels existants, mais le formulaire ne l'envoie plus.
+  playerLevelId: z.string().cuid("Niveau invalide.").optional(),
   // Parcours de groupe d'un chef invité :
   // EXISTING_GROUP → rejoint groupId ; CREATE_NEW_GROUP → fondera son groupe
   groupOnboardingMode: z
@@ -200,12 +203,25 @@ export const onboardingIdentitySchema = z.object({
     .min(2, "Le pseudonyme doit compter au moins 2 caractères.")
     .max(60)
     .refine((v) => v.replace(/\s+/g, "").length > 0, "Le pseudonyme ne peut pas être vide."),
+  // Grade RP déclaré par le joueur lui-même à sa première connexion
+  playerLevelId: z.string().cuid("Sélectionnez votre grade."),
   privacyAcknowledged: z
     .boolean()
     .refine((v) => v === true, "Vous devez confirmer avoir compris la confidentialité."),
 });
 
 export type OnboardingIdentityInput = z.infer<typeof onboardingIdentitySchema>;
+
+/**
+ * Modification de sa PROPRE identité après l'onboarding. Mêmes règles que la
+ * première connexion, sans la case de confidentialité : elle a déjà été
+ * acceptée et son horodatage ne doit pas être réécrit.
+ */
+export const selfIdentityUpdateSchema = onboardingIdentitySchema.omit({
+  privacyAcknowledged: true,
+});
+
+export type SelfIdentityUpdateInput = z.infer<typeof selfIdentityUpdateSchema>;
 
 // ── Groupes ──
 

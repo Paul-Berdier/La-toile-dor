@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { prisma } from "@toile/database";
 import { getCurrentUser } from "@/lib/session";
 import { getOnboardingState } from "@/server/onboarding-state";
 import { ToileEmblem, ToileWordmark } from "@/components/ui/logo";
@@ -21,6 +22,11 @@ export default async function BienvenuePage() {
 
   const state = await getOnboardingState(current.session.userId);
   const step: "identity" | "group" = state.identityDone ? "group" : "identity";
+  // Le grade est déclaré par le joueur lui-même à cette étape
+  const levels = await prisma.playerLevel.findMany({
+    orderBy: { order: "asc" },
+    select: { id: true, label: true },
+  });
 
   return (
     <main className="relative flex min-h-dvh items-center justify-center px-4 py-8">
@@ -32,7 +38,7 @@ export default async function BienvenuePage() {
             <ToileWordmark className="text-lg" />
             <p className="font-mono-toile text-[0.65rem] uppercase tracking-[0.3em] text-ink-faint">
               {step === "identity"
-                ? "Déclinez votre identité de l'ombre"
+                ? "Choisissez le Titre sous lequel la Toile vous connaîtra"
                 : "Fondez votre groupe"}
             </p>
             {state.groupStepNeeded && (
@@ -47,7 +53,7 @@ export default async function BienvenuePage() {
           </div>
 
           {step === "identity" ? (
-            <IdentityForm initialDisplayName={state.user.displayName} />
+            <IdentityForm levels={levels} />
           ) : (
             <>
               <p className="mb-4 text-xs leading-relaxed text-ink-muted">

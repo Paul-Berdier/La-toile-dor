@@ -7,12 +7,22 @@ confidentialité applicable au prénom et au nom de famille.
 
 `User` distingue deux niveaux de données :
 
-- le pseudonyme public (`displayName`), visible dans l'application ;
-- l'identité réelle (`firstName`, `lastName`), confidentielle.
+- le **Titre** public (`displayName`), visible dans l'application ;
+- l'identité réelle (`firstName`, `lastName`), confidentielle ;
+- le **grade** (`playerLevelId`), public, déclaré par le joueur lui-même.
 
 `firstName` est obligatoire après l'onboarding. `lastName` est facultatif :
 l'interface emploie exactement le libellé « Nom de famille — facultatif, votre
 personnage peut ne pas en posséder. ».
+
+### Le Titre n'est pas le pseudo Discord
+
+`displayName` est un **Titre de jeu de rôle** — « L'assassin de l'ombre », « La
+Vipère de Kiri » — et non le pseudonyme Discord du joueur. C'est la confusion
+la plus fréquente à l'inscription, aussi le champ est-il placé **en premier**,
+expliqué avec des exemples, et **jamais pré-rempli** avec le nom Discord : un
+champ déjà rempli serait validé machinalement, ce qui produirait exactement le
+contraire de l'effet recherché.
 
 `displayNameNorm` contient le pseudonyme normalisé (espaces réduits, casse
 ignorée) et porte un index unique. Deux variantes telles que `Kitsune` et
@@ -22,16 +32,22 @@ un message lisible et l'index protège également les écritures concurrentes.
 ## Onboarding `/bienvenue`
 
 Tout compte dont `profileCompleted` vaut `false` est redirigé vers
-`/bienvenue` après la connexion. Le formulaire demande :
+`/bienvenue` après la connexion. Le formulaire demande, dans cet ordre :
 
-1. le prénom ;
-2. le nom de famille facultatif ;
-3. un pseudonyme public unique ;
-4. la confirmation explicite de l'encart de confidentialité.
+1. le **Titre** public unique ;
+2. le **grade** du personnage ;
+3. le prénom ;
+4. le nom de famille facultatif ;
+5. la confirmation explicite de l'encart de confidentialité.
+
+Le grade est déclaré **par le joueur**, jamais par celui qui l'invite : une
+invitation ne porte plus de niveau (`Invitation.playerLevelId` reste nullable
+et n'est renseigné que sur les fils historiques). Les positions qui relèvent de
+la hiérarchie — rôle et groupe — restent, elles, décidées par l'inviteur.
 
 La date de confirmation est conservée dans `privacyAcknowledgedAt`. Les
 prénoms et noms ne sont jamais copiés dans le journal d'audit : l'événement
-`profile.identity_completed` ne contient que le pseudonyme public.
+`profile.identity_completed` ne contient que le Titre public.
 
 Une invitation de chef peut ensuite imposer une seconde étape :
 
@@ -46,6 +62,21 @@ ne peut produire qu'un premier groupe.
 La faction éventuellement portée par cette invitation est seulement le
 rattachement facultatif du futur groupe. Aucune faction n'est créée
 automatiquement et aucune autorité n'en découle.
+
+## Modifier ses informations — `/compte`
+
+Chacun reste maître de sa fiche : `/compte` rejoue les mêmes champs que la
+première connexion (Titre, grade, prénom, nom) avec les mêmes règles —
+unicité du Titre insensible à la casse, grade existant. `updateOwnIdentityAction`
+n'écrit **jamais** sur un autre compte : l'identifiant vient de la session, pas
+de l'entrée, et aucune permission n'est requise puisqu'il s'agit de soi.
+
+La case de confidentialité n'est pas rejouée et `privacyAcknowledgedAt` n'est
+pas réécrit : l'accord initial reste horodaté à sa date d'origine.
+
+Rôle et groupes figurent sur la page en **lecture seule** : ils relèvent de la
+hiérarchie d'invitation. L'audit `profile.identity_updated` ne consigne que le
+Titre et le grade — jamais le prénom ni le nom.
 
 ## Matrice de visibilité
 

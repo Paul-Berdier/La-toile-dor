@@ -87,9 +87,14 @@ const input =
 const labelCls = "mb-1 block text-xs uppercase tracking-wider text-ink-faint";
 
 /**
- * Encadre un champ avec son état de connaissance. La saisie n'apparaît que
- * lorsque l'état est « Valeur connue » — les autres états signifient qu'il
- * n'y a rien à saisir (inconnu, absence confirmée, contradiction).
+ * Encadre un champ avec son état de connaissance.
+ *
+ * La saisie reste ACCESSIBLE tant que le champ n'est pas déclaré « absent » ou
+ * « contradictoire » : exiger de basculer l'état avant de pouvoir écrire
+ * donnait l'impression que le champ n'existait pas (couleur des cheveux, de
+ * peau…). Renseigner une valeur suffit désormais à passer en « connu ».
+ * Seuls « Absence confirmée » et « Contradictoire » masquent la saisie — dans
+ * ces deux cas, il n'y a effectivement rien à écrire.
  */
 function KnowledgeField({
   fieldKey,
@@ -134,8 +139,16 @@ function KnowledgeField({
           ))}
         </select>
       </div>
-      {state === "KNOWN" ? (
-        children
+      {state === "KNOWN" || state === "UNKNOWN" ? (
+        <>
+          {children}
+          {state === "UNKNOWN" && (
+            <p className="mt-1 text-[0.65rem] text-ink-faint italic">
+              Rien de saisi : la Toile affichera « Inconnu ». Renseignez ce champ
+              pour le déclarer acquis.
+            </p>
+          )}
+        </>
       ) : (
         <p className="text-xs text-ink-faint italic">
           {KNOWLEDGE_CHOICES.find((c) => c.value === state)?.hint}.
@@ -157,16 +170,29 @@ const SECTIONS = [
 
 export function ProfileEditForm({
   initial,
-  refs,
+  refs: initialRefs,
   sourceMissionId,
+  canManageReferences = false,
 }: {
   initial: EditFormData;
   refs: Refs;
   sourceMissionId?: string;
+  /** Autorise l'ajout d'entrées de référentiel sans passer par une validation */
+  canManageReferences?: boolean;
 }) {
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [data, setData] = useState<EditFormData>(initial);
+  // Les référentiels vivent côté client : une entrée créée depuis un
+  // sélecteur doit apparaître sans recharger la page.
+  const [refs, setRefs] = useState<Refs>(initialRefs);
+
+  type RefListKey = {
+    [K in keyof Refs]: Refs[K] extends RefOption[] ? K : never;
+  }[keyof Refs];
+
+  const addOption = (list: RefListKey, option: RefOption) =>
+    setRefs((r) => (r[list].some((o) => o.id === option.id) ? r : { ...r, [list]: [...r[list], option] }));
   const [confidence, setConfidence] = useState("PROBABLE");
   const [justification, setJustification] = useState("");
   const [observedAtRp, setObservedAtRp] = useState("");
@@ -185,6 +211,28 @@ export function ProfileEditForm({
   const stateOf = (key: ProfileFieldKey): KnowledgeChoice => data.fieldStates[key] ?? "UNKNOWN";
   const setState = (key: ProfileFieldKey, state: KnowledgeChoice) =>
     setData((d) => ({ ...d, fieldStates: { ...d.fieldStates, [key]: state } }));
+
+  const isFilled = (value: unknown) =>
+    Array.isArray(value) ? value.length > 0 : value !== "" && value != null;
+
+  /**
+   * Saisir une valeur vaut déclaration : le champ passe de lui-même en
+   * « connu ». Un état déjà choisi explicitement (absence, contradiction)
+   * n'est jamais écrasé — seul « Inconnu » est promu.
+   */
+  const setValue = <K extends keyof EditFormData>(
+    fieldKey: ProfileFieldKey,
+    key: K,
+    value: EditFormData[K],
+  ) =>
+    setData((d) => ({
+      ...d,
+      [key]: value,
+      fieldStates:
+        isFilled(value) && (d.fieldStates[fieldKey] ?? "UNKNOWN") === "UNKNOWN"
+          ? { ...d.fieldStates, [fieldKey]: "KNOWN" as KnowledgeChoice }
+          : d.fieldStates,
+    }));
 
   const showKenjutsu =
     stateOf("combatStyles") === "KNOWN" &&
@@ -285,18 +333,18 @@ export function ProfileEditForm({
             </div>
 
             <KnowledgeField fieldKey="lastName" state={stateOf("lastName")} onStateChange={(s) => setState("lastName", s)}>
-              <input aria-label="Nom du personnage" value={data.lastName} onChange={(e) => set("lastName", e.target.value)} className={input} maxLength={80} />
+              <input aria-label="Nom du personnage" value={data.lastName} onChange={(e) => setValue("lastName", "lastName", e.target.value)} className={input} maxLength={80} />
             </KnowledgeField>
 
             <KnowledgeField fieldKey="sex" state={stateOf("sex")} onStateChange={(s) => setState("sex", s)}>
-              <select aria-label="Sexe" value={data.sexCode} onChange={(e) => set("sexCode", e.target.value)} className={input}>
+              <select aria-label="Sexe" value={data.sexCode} onChange={(e) => setValue("sex", "sexCode", e.target.value)} className={input}>
                 <option value="">— choisir —</option>
                 {SEX_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               </select>
             </KnowledgeField>
 
             <KnowledgeField fieldKey="lifeStatus" state={stateOf("lifeStatus")} onStateChange={(s) => setState("lifeStatus", s)}>
-              <select aria-label="État vital" value={data.lifeStatus} onChange={(e) => set("lifeStatus", e.target.value)} className={input}>
+              <select aria-label="État vital" value={data.lifeStatus} onChange={(e) => setValue("lifeStatus", "lifeStatus", e.target.value)} className={input}>
                 <option value="">— choisir —</option>
                 {LIFE_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               </select>
@@ -311,15 +359,15 @@ export function ProfileEditForm({
                 </select>
                 {data.ageMode === "AGE_AT_REFERENCE" && (
                   <input type="number" min={0} max={500} value={data.ageYearsNow ?? ""} placeholder="Âge en années"
-                    aria-label="Âge actuel" onChange={(e) => set("ageYearsNow", e.target.value ? Number(e.target.value) : null)} className={input} />
+                    aria-label="Âge actuel" onChange={(e) => setValue("age", "ageYearsNow", e.target.value ? Number(e.target.value) : null)} className={input} />
                 )}
                 {data.ageMode === "AGE_RANGE_AT_REFERENCE" && (
                   <div className="flex items-center gap-2">
                     <input type="number" min={0} value={data.ageMinNow ?? ""} placeholder="min" aria-label="Âge minimum"
-                      onChange={(e) => set("ageMinNow", e.target.value ? Number(e.target.value) : null)} className={input} />
+                      onChange={(e) => setValue("age", "ageMinNow", e.target.value ? Number(e.target.value) : null)} className={input} />
                     <span aria-hidden className="text-ink-faint">–</span>
                     <input type="number" min={0} value={data.ageMaxNow ?? ""} placeholder="max" aria-label="Âge maximum"
-                      onChange={(e) => set("ageMaxNow", e.target.value ? Number(e.target.value) : null)} className={input} />
+                      onChange={(e) => setValue("age", "ageMaxNow", e.target.value ? Number(e.target.value) : null)} className={input} />
                   </div>
                 )}
                 <p className="text-[0.65rem] text-ink-faint">
@@ -335,30 +383,36 @@ export function ProfileEditForm({
             <KnowledgeField fieldKey="height" state={stateOf("height")} onStateChange={(s) => setState("height", s)}>
               <div className="flex items-center gap-2">
                 <input type="number" min={30} max={400} value={data.heightMinCm ?? ""} placeholder="min" aria-label="Taille minimum"
-                  onChange={(e) => set("heightMinCm", e.target.value ? Number(e.target.value) : null)} className={input} />
+                  onChange={(e) => setValue("height", "heightMinCm", e.target.value ? Number(e.target.value) : null)} className={input} />
                 <span aria-hidden className="text-ink-faint">–</span>
                 <input type="number" min={30} max={400} value={data.heightMaxCm ?? ""} placeholder="max" aria-label="Taille maximum"
-                  onChange={(e) => set("heightMaxCm", e.target.value ? Number(e.target.value) : null)} className={input} />
+                  onChange={(e) => setValue("height", "heightMaxCm", e.target.value ? Number(e.target.value) : null)} className={input} />
               </div>
             </KnowledgeField>
 
             <KnowledgeField fieldKey="hairColor" state={stateOf("hairColor")} onStateChange={(s) => setState("hairColor", s)}>
               <ReferencePicker
-                legend="Couleur des cheveux"
+                legend="Couleur des cheveux" hideLegend
                 options={refs.hairColors}
                 selected={data.hairColorId ? [data.hairColorId] : []}
-                onChange={(ids) => set("hairColorId", ids[ids.length - 1] ?? "")}
+                onChange={(ids) => setValue("hairColor", "hairColorId", ids[ids.length - 1] ?? "")}
                 onSuggest={(label) => setSuggestion({ type: "HAIR_COLOR", label })}
+                referenceType="HAIR_COLOR"
+                canCreate={canManageReferences}
+                onCreated={(o) => addOption("hairColors", o)}
               />
             </KnowledgeField>
 
             <KnowledgeField fieldKey="skinTone" state={stateOf("skinTone")} onStateChange={(s) => setState("skinTone", s)}>
               <ReferencePicker
-                legend="Couleur de peau"
+                legend="Couleur de peau" hideLegend
                 options={refs.skinTones}
                 selected={data.skinToneId ? [data.skinToneId] : []}
-                onChange={(ids) => set("skinToneId", ids[ids.length - 1] ?? "")}
+                onChange={(ids) => setValue("skinTone", "skinToneId", ids[ids.length - 1] ?? "")}
                 onSuggest={(label) => setSuggestion({ type: "SKIN_TONE", label })}
+                referenceType="SKIN_TONE"
+                canCreate={canManageReferences}
+                onCreated={(o) => addOption("skinTones", o)}
               />
             </KnowledgeField>
 
@@ -371,14 +425,14 @@ export function ProfileEditForm({
         {step === 2 && (
           <div className="space-y-3">
             <KnowledgeField fieldKey="faction" state={stateOf("faction")} onStateChange={(s) => setState("faction", s)}>
-              <select aria-label="Faction" value={data.factionId} onChange={(e) => set("factionId", e.target.value)} className={input}>
+              <select aria-label="Faction" value={data.factionId} onChange={(e) => setValue("faction", "factionId", e.target.value)} className={input}>
                 <option value="">— choisir —</option>
                 {refs.factions.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
               </select>
             </KnowledgeField>
 
             <KnowledgeField fieldKey="rank" state={stateOf("rank")} onStateChange={(s) => setState("rank", s)}>
-              <select aria-label="Grade" value={data.rankId} onChange={(e) => set("rankId", e.target.value)} className={input}>
+              <select aria-label="Grade" value={data.rankId} onChange={(e) => setValue("rank", "rankId", e.target.value)} className={input}>
                 <option value="">— choisir —</option>
                 {refs.ranks.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
               </select>
@@ -386,11 +440,14 @@ export function ProfileEditForm({
 
             <KnowledgeField fieldKey="clans" state={stateOf("clans")} onStateChange={(s) => setState("clans", s)}>
               <ReferencePicker
-                legend="Clan(s) et famille(s)"
+                legend="Clan(s) et famille(s)" hideLegend
                 options={refs.clans}
                 selected={data.clanIds}
-                onChange={(ids) => set("clanIds", ids)}
+                onChange={(ids) => setValue("clans", "clanIds", ids)}
                 onSuggest={(label) => setSuggestion({ type: "CLAN_FAMILY", label })}
+                referenceType="CLAN_FAMILY"
+                canCreate={canManageReferences}
+                onCreated={(o) => addOption("clans", o)}
               />
             </KnowledgeField>
           </div>
@@ -399,19 +456,25 @@ export function ProfileEditForm({
         {step === 3 && (
           <div className="space-y-3">
             <KnowledgeField fieldKey="chakraNatures" state={stateOf("chakraNatures")} onStateChange={(s) => setState("chakraNatures", s)}>
-              <ReferencePicker legend="Natures de chakra" options={refs.chakraNatures}
-                selected={data.chakraNatureIds} onChange={(ids) => set("chakraNatureIds", ids)}
-                onSuggest={(label) => setSuggestion({ type: "CHAKRA_NATURE", label })} />
+              <ReferencePicker legend="Natures de chakra" hideLegend options={refs.chakraNatures}
+                selected={data.chakraNatureIds} onChange={(ids) => setValue("chakraNatures", "chakraNatureIds", ids)}
+                onSuggest={(label) => setSuggestion({ type: "CHAKRA_NATURE", label })}
+                referenceType="CHAKRA_NATURE" canCreate={canManageReferences}
+                onCreated={(o) => addOption("chakraNatures", o)} />
             </KnowledgeField>
             <KnowledgeField fieldKey="kekkeiGenkai" state={stateOf("kekkeiGenkai")} onStateChange={(s) => setState("kekkeiGenkai", s)}>
-              <ReferencePicker legend="Kekkei Genkai" options={refs.kekkeiGenkai}
-                selected={data.kekkeiGenkaiIds} onChange={(ids) => set("kekkeiGenkaiIds", ids)}
-                onSuggest={(label) => setSuggestion({ type: "KEKKEI_GENKAI", label })} />
+              <ReferencePicker legend="Kekkei Genkai" hideLegend options={refs.kekkeiGenkai}
+                selected={data.kekkeiGenkaiIds} onChange={(ids) => setValue("kekkeiGenkai", "kekkeiGenkaiIds", ids)}
+                onSuggest={(label) => setSuggestion({ type: "KEKKEI_GENKAI", label })}
+                referenceType="KEKKEI_GENKAI" canCreate={canManageReferences}
+                onCreated={(o) => addOption("kekkeiGenkai", o)} />
             </KnowledgeField>
             <KnowledgeField fieldKey="artifacts" state={stateOf("artifacts")} onStateChange={(s) => setState("artifacts", s)}>
-              <ReferencePicker legend="Artefacts légendaires" options={refs.artifacts}
-                selected={data.artifactIds} onChange={(ids) => set("artifactIds", ids)}
-                onSuggest={(label) => setSuggestion({ type: "LEGENDARY_ARTIFACT", label })} />
+              <ReferencePicker legend="Artefacts légendaires" hideLegend options={refs.artifacts}
+                selected={data.artifactIds} onChange={(ids) => setValue("artifacts", "artifactIds", ids)}
+                onSuggest={(label) => setSuggestion({ type: "LEGENDARY_ARTIFACT", label })}
+                referenceType="LEGENDARY_ARTIFACT" canCreate={canManageReferences}
+                onCreated={(o) => addOption("artifacts", o)} />
             </KnowledgeField>
             <p className="text-[0.65rem] text-ink-faint">
               Les Subjutsu (techniques propres) s&rsquo;ajoutent depuis la page du dossier.
@@ -422,16 +485,20 @@ export function ProfileEditForm({
         {step === 4 && (
           <div className="space-y-3">
             <KnowledgeField fieldKey="combatStyles" state={stateOf("combatStyles")} onStateChange={(s) => setState("combatStyles", s)}>
-              <ReferencePicker legend="Styles de combat" options={refs.combatStyles}
-                selected={data.combatStyleIds} onChange={(ids) => set("combatStyleIds", ids)}
-                onSuggest={(label) => setSuggestion({ type: "COMBAT_STYLE", label })} />
+              <ReferencePicker legend="Styles de combat" hideLegend options={refs.combatStyles}
+                selected={data.combatStyleIds} onChange={(ids) => setValue("combatStyles", "combatStyleIds", ids)}
+                onSuggest={(label) => setSuggestion({ type: "COMBAT_STYLE", label })}
+                referenceType="COMBAT_STYLE" canCreate={canManageReferences}
+                onCreated={(o) => addOption("combatStyles", o)} />
             </KnowledgeField>
             {/* Les sous-styles n'apparaissent que si Kenjutsu est retenu */}
             {showKenjutsu && (
               <KnowledgeField fieldKey="kenjutsuStyles" state={stateOf("kenjutsuStyles")} onStateChange={(s) => setState("kenjutsuStyles", s)}>
-                <ReferencePicker legend="Spécialités Kenjutsu" options={refs.kenjutsuStyles}
-                  selected={data.kenjutsuStyleIds} onChange={(ids) => set("kenjutsuStyleIds", ids)}
-                  onSuggest={(label) => setSuggestion({ type: "KENJUTSU_STYLE", label })} />
+                <ReferencePicker legend="Spécialités Kenjutsu" hideLegend options={refs.kenjutsuStyles}
+                  selected={data.kenjutsuStyleIds} onChange={(ids) => setValue("kenjutsuStyles", "kenjutsuStyleIds", ids)}
+                  onSuggest={(label) => setSuggestion({ type: "KENJUTSU_STYLE", label })}
+                  referenceType="KENJUTSU_STYLE" canCreate={canManageReferences}
+                  onCreated={(o) => addOption("kenjutsuStyles", o)} />
               </KnowledgeField>
             )}
           </div>
@@ -443,7 +510,7 @@ export function ProfileEditForm({
               <KnowledgeField key={key} fieldKey={key} state={stateOf(key)} onStateChange={(s) => setState(key, s)}>
                 <>
                   <textarea aria-label={PROFILE_FIELD_LABELS[key]} value={data[key]}
-                    onChange={(e) => set(key, e.target.value)} rows={4} maxLength={10_000} className={input} />
+                    onChange={(e) => setValue(key, key, e.target.value)} rows={4} maxLength={10_000} className={input} />
                   <p className="mt-0.5 text-right text-[0.6rem] text-ink-faint">{data[key].length} / 10000</p>
                 </>
               </KnowledgeField>

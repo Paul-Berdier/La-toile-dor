@@ -34,6 +34,9 @@ test.afterAll(async () => {
   await prisma.profileReferenceSuggestion.deleteMany({
     where: { proposedLabel: { startsWith: "Clan" } },
   });
+  await prisma.profileReferenceOption.deleteMany({
+    where: { label: { startsWith: "Clan" }, type: "CLAN_FAMILY" },
+  });
 });
 
 test("« Absence confirmée » enregistre NONE_CONFIRMED et affiche « Aucun »", async ({
@@ -83,6 +86,29 @@ test("l'autocomplete trouve un clan par alias et sans accent", async ({ context,
     include: { option: true },
   });
   expect(traits.map((t) => t.option.code)).toContain("UCHIHA");
+});
+
+test("un super-modérateur ajoute directement une entrée au référentiel", async ({
+  context,
+  page,
+}) => {
+  // demo-admin détient profile.reference.manage : il crée sans validation
+  await loginAs(context, "demo-admin");
+  await page.goto(`/profils/${profileId}/modifier`);
+  await page.getByRole("button", { name: /Affiliation/ }).click();
+
+  const label = `Clan${suffix}Direct`;
+  await page.getByRole("combobox", { name: "Clan(s) et famille(s)" }).fill(label);
+  await page.getByRole("button", { name: /Ajouter .* au référentiel/ }).click();
+
+  // L'entrée créée est immédiatement sélectionnée, sans rechargement
+  await expect(page.getByRole("button", { name: `Retirer ${label}` })).toBeVisible();
+
+  const option = await prisma.profileReferenceOption.findFirst({
+    where: { label, type: "CLAN_FAMILY" },
+  });
+  expect(option).not.toBeNull();
+  expect(option?.isActive).toBe(true);
 });
 
 test("proposer une entrée absente crée une suggestion en attente", async ({ context, page }) => {
@@ -173,4 +199,70 @@ test("la fusion absorbe un doublon et fait rediriger l'ancien code", async ({
   // L'ancien code redirige vers le dossier conservé
   await page.goto(`/profils/${doublon.id}`);
   await expect(page.getByRole("heading", { name: new RegExp(NAME) })).toBeVisible();
+});
+
+/** Ouvre un dossier minimal avec un code définitif. */
+async function makeProfile(firstName: string) {
+  const created = await prisma.characterProfile.create({
+    data: {
+      code: `tmp-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
+      characterFirstName: firstName,
+      firstNameNorm: firstName.toLowerCase(),
+      createdById: "demo-mod",
+    },
+  });
+  return prisma.characterProfile.update({
+    where: { id: created.id },
+    data: { code: `PRF-${String(created.codeNumber).padStart(6, "0")}` },
+  });
+}
+
+test("la fusion de deux dossiers ayant un parent commun ne casse pas", async ({
+  context,
+  page,
+}) => {
+  // Reproduit le P2002 observé en production : deux doublons partagent presque
+  // toujours un parent, donc la même relation (parent → X, PARENT_OF). Le
+  // déplacement en bloc violait alors la contrainte unique et perdait tout.
+  const pere = await makeProfile(`Cible${suffix}Pere`);
+  const src = await makeProfile(`Cible${suffix}Src`);
+  const dst = await makeProfile(`Cible${suffix}Dst`);
+  const enfant = await makeProfile(`Cible${suffix}Fils`);
+
+  await prisma.characterRelationship.createMany({
+    data: [
+      // Le lien partagé, qui faisait tout échouer
+      { fromProfileId: pere.id, toProfileId: src.id, type: "PARENT_OF" },
+      { fromProfileId: pere.id, toProfileId: dst.id, type: "PARENT_OF" },
+      // Un lien porté par la source seule : il doit être transféré
+      { fromProfileId: src.id, toProfileId: enfant.id, type: "PARENT_OF" },
+    ],
+  });
+
+  await loginAs(context, "demo-admin");
+  await page.goto(`/profils/${src.id}/modifier`);
+  await page.getByRole("button", { name: "Fusionner avec un autre dossier" }).click();
+  await page.getByLabel("Dossier à conserver").fill(`Cible${suffix}Dst`);
+  await page.getByRole("button", { name: new RegExp(`Cible${suffix}Dst.*PRF-`) }).first().click();
+  await page.getByRole("button", { name: "Fusionner", exact: true }).click();
+  await page.getByRole("button", { name: "Confirmer la fusion" }).click();
+
+  // La fusion aboutit : plus d'erreur serveur
+  await page.waitForURL(new RegExp(`/profils/${dst.id}$`));
+
+  const merged = await prisma.characterProfile.findUniqueOrThrow({ where: { id: src.id } });
+  expect(merged.mergedIntoId).toBe(dst.id);
+
+  // Le parent commun n'apparaît qu'UNE fois, le doublon a disparu
+  const duPere = await prisma.characterRelationship.findMany({
+    where: { fromProfileId: pere.id, type: "PARENT_OF" },
+  });
+  expect(duPere).toHaveLength(1);
+  expect(duPere[0]?.toProfileId).toBe(dst.id);
+
+  // Le lien propre à la source a bien suivi
+  const versEnfant = await prisma.characterRelationship.findFirst({
+    where: { toProfileId: enfant.id, type: "PARENT_OF" },
+  });
+  expect(versEnfant?.fromProfileId).toBe(dst.id);
 });

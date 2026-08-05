@@ -24,6 +24,12 @@ export interface ProfileListRow {
   id: string;
   code: string;
   firstName: string;
+  /**
+   * Nom de famille — renseigné UNIQUEMENT pour un lecteur autorisé. Le nom
+   * est un renseignement comme un autre : il n'existe pas dans la charge utile
+   * envoyée à un lecteur sans accès (même garantie que le sérialiseur).
+   */
+  lastName?: string;
   canViewValues: boolean;
   hasVisiblePortrait: boolean;
   updatedAt: string;
@@ -51,6 +57,11 @@ export async function listProfiles(
       { firstNameNorm: { contains: norm } },
       { code: { contains: filters.q.toUpperCase() } },
     ];
+    // Le nom de famille n'est cherchable que par la modération : sinon un
+    // lecteur pourrait deviner un nom protégé par essais successifs.
+    if (viewer.canViewAll) {
+      where.OR.push({ characterLastName: { contains: filters.q, mode: "insensitive" } });
+    }
   }
 
   // Filtres avancés : STRICTEMENT modération — un chef ne peut pas déduire
@@ -86,6 +97,7 @@ export async function listProfiles(
       id: true,
       code: true,
       characterFirstName: true,
+      characterLastName: true,
       imageMime: true,
       updatedAt: true,
       _count: { select: { fieldIntel: true } },
@@ -115,6 +127,11 @@ export async function listProfiles(
       id: profile.id,
       code: profile.code,
       firstName: profile.characterFirstName,
+      // La clé n'est ajoutée que si le lecteur y a droit ET que le nom est
+      // renseigné : rien à masquer côté client, il n'y a rien à masquer.
+      ...(canView && profile.characterLastName
+        ? { lastName: profile.characterLastName }
+        : {}),
       canViewValues: canView,
       hasVisiblePortrait: canView && profile.imageMime != null,
       updatedAt: profile.updatedAt.toISOString(),
@@ -355,7 +372,10 @@ export async function findSimilarProfiles(firstName: string, excludeId?: string)
   const norm = normalizeRefLabel(firstName);
   return prisma.characterProfile.findMany({
     where: {
-      firstNameNorm: norm,
+      // « contains » et non égalité stricte : « Aki » doit faire ressortir
+      // « Akira », sinon le doublon n'est signalé que si l'on tape le prénom
+      // exact — c'est-à-dire quasiment jamais.
+      firstNameNorm: { contains: norm },
       archivedAt: null,
       mergedIntoId: null,
       ...(excludeId ? { id: { not: excludeId } } : {}),

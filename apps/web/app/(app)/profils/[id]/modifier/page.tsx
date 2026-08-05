@@ -14,9 +14,21 @@ import { MergePanel } from "@/components/profils/merge-panel";
 
 export const dynamic = "force-dynamic";
 
-const RELATION_GROUP_LABELS: Record<string, string> = {
+/**
+ * Les relations sont stockées sous une forme canonique orientée : « enfant de »
+ * est enregistré comme le PARENT_OF de l'autre profil. Le dossier courant peut
+ * donc être à la source (`relationsFrom`) OU à la cible (`relationsTo`) ; il
+ * faut lire les deux sens, sinon les relations saisies « à l'envers »
+ * (enfant, création) disparaissent de l'écran juste après leur création.
+ */
+const RELATION_LABELS_FROM: Record<string, string> = {
   PARENT_OF: "Parent de",
   CREATOR_OF: "Créateur de",
+  SIBLING_OF: "Frère / sœur de",
+};
+const RELATION_LABELS_TO: Record<string, string> = {
+  PARENT_OF: "Enfant de",
+  CREATOR_OF: "Création de",
   SIBLING_OF: "Frère / sœur de",
 };
 
@@ -39,18 +51,39 @@ export default async function ModifierDossierPage({
       where: { id },
       include: {
         techniques: { include: { jutsuType: { select: { label: true } } }, orderBy: { createdAt: "asc" } },
-        relationsFrom: { include: { toProfile: { select: { code: true, characterFirstName: true } } } },
+        relationsFrom: {
+          include: {
+            toProfile: { select: { code: true, characterFirstName: true, archivedAt: true } },
+          },
+        },
+        relationsTo: {
+          include: {
+            fromProfile: { select: { code: true, characterFirstName: true, archivedAt: true } },
+          },
+        },
       },
     }),
   ]);
   if (!editData || !profile) notFound();
 
-  const relations = profile.relationsFrom.map((rel) => ({
-    relationId: rel.id,
-    groupLabel: RELATION_GROUP_LABELS[rel.type] ?? rel.type,
-    relatedName: rel.toProfile.characterFirstName,
-    relatedCode: rel.toProfile.code,
-  }));
+  const relations = [
+    ...profile.relationsFrom
+      .filter((rel) => !rel.toProfile.archivedAt)
+      .map((rel) => ({
+        relationId: rel.id,
+        groupLabel: RELATION_LABELS_FROM[rel.type] ?? rel.type,
+        relatedName: rel.toProfile.characterFirstName,
+        relatedCode: rel.toProfile.code,
+      })),
+    ...profile.relationsTo
+      .filter((rel) => !rel.fromProfile.archivedAt)
+      .map((rel) => ({
+        relationId: rel.id,
+        groupLabel: RELATION_LABELS_TO[rel.type] ?? rel.type,
+        relatedName: rel.fromProfile.characterFirstName,
+        relatedCode: rel.fromProfile.code,
+      })),
+  ];
 
   return (
     <main className="mx-auto max-w-4xl px-4 py-6 lg:px-6">
@@ -64,7 +97,12 @@ export default async function ModifierDossierPage({
         Chaque section peut être enregistrée partiellement. Les conflits seront signalés.
       </p>
 
-      <ProfileEditForm initial={editData} refs={refs} sourceMissionId={mission} />
+      <ProfileEditForm
+        initial={editData}
+        refs={refs}
+        sourceMissionId={mission}
+        canManageReferences={current.permissions.has(PERMISSIONS.PROFILE_REFERENCE_MANAGE)}
+      />
 
       <div className="mt-6 grid gap-5 lg:grid-cols-2">
         <section className="border border-border-default bg-raised p-5">
@@ -97,7 +135,7 @@ export default async function ModifierDossierPage({
         {current.permissions.has(PERMISSIONS.PROFILE_MERGE) && (
           <section className="border border-copper/50 bg-raised p-5">
             <h2 className="mb-3 font-display text-sm tracking-widest text-copper uppercase">
-              Doublons et archivage
+              Doublons, archivage et suppression
             </h2>
             <MergePanel
               profileId={id}

@@ -15,6 +15,7 @@ import {
   purchaseRequestSchema,
   purchaseDecisionSchema,
   referenceSuggestionSchema,
+  referenceOptionCreateSchema,
   PROFILE_FIELD_LABELS,
   TRAIT_FIELD_TO_TYPE,
   type ProfileFieldKey,
@@ -1087,6 +1088,134 @@ export async function archiveProfileAction(profileId: string): Promise<ProfileAc
 }
 
 /**
+ * Suppression définitive d'un dossier — super-modérateurs uniquement.
+ *
+ * L'archivage reste la voie normale : il conserve l'historique et la
+ * redirection des doublons. La suppression sert aux dossiers ouverts par
+ * erreur. Les dépendances (renseignements, traits, techniques, relations,
+ * révisions, demandes, accès) tombent en cascade ; seuls les doublons qui
+ * redirigeaient ICI doivent être détachés d'abord, leur clé étrangère étant
+ * restrictive — sinon la suppression échouerait.
+ */
+export async function deleteProfileAction(profileId: string): Promise<ProfileActionResult> {
+  const current = await requireUser();
+  if (!current.permissions.has(PERMISSIONS.PROFILE_MERGE)) {
+    return { ok: false, error: "Seul un super-modérateur peut supprimer un dossier." };
+  }
+  const profile = await prisma.characterProfile.findUnique({
+    where: { id: profileId },
+    select: { id: true, code: true, characterFirstName: true, characterLastName: true },
+  });
+  if (!profile) return { ok: false, error: "Dossier introuvable." };
+
+  await prisma.$transaction(async (tx) => {
+    await tx.characterProfile.updateMany({
+      where: { mergedIntoId: profileId },
+      data: { mergedIntoId: null },
+    });
+    await tx.characterProfile.delete({ where: { id: profileId } });
+  });
+
+  const meta = await requestMeta();
+  await audit({
+    actorId: current.session.userId,
+    action: "profile.deleted",
+    resourceType: "characterProfile",
+    resourceId: profileId,
+    // Trace de ce qui a disparu : la suppression est irréversible
+    oldValues: {
+      code: profile.code,
+      firstName: profile.characterFirstName,
+      lastName: profile.characterLastName,
+    },
+    ...meta,
+  });
+  revalidatePath("/profils");
+  return { ok: true };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Référentiels : création directe
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Ajout d'une entrée de référentiel DEPUIS un formulaire de dossier.
+ *
+ * Distincte de `createReferenceOptionAction` (page d'administration), qui est
+ * volontairement stricte et refuse un libellé déjà pris. Ici la saisie est
+ * incidente — on complète un dossier, pas un référentiel — donc l'action est
+ * idempotente : une entrée existante est renvoyée telle quelle, et une entrée
+ * désactivée réactivée. Elle retourne l'option pour que le sélecteur puisse
+ * l'afficher sans recharger la page.
+ *
+ * Réservé à `profile.reference.manage` ; les autres rédacteurs proposent.
+ */
+export async function createInlineReferenceOptionAction(
+  raw: unknown,
+): Promise<ProfileActionResult & { option?: { id: string; label: string; colorHex: string | null } }> {
+  const current = await requireUser();
+  if (!current.permissions.has(PERMISSIONS.PROFILE_REFERENCE_MANAGE)) {
+    return { ok: false, error: "Proposez cette entrée : sa validation revient à un super-modérateur." };
+  }
+  const parsed = referenceOptionCreateSchema.safeParse(raw);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.errors[0]?.message ?? "Entrée invalide." };
+  }
+  const { type, label, sourceScope, colorHex } = parsed.data;
+  const normalizedLabel = normalizeRefLabel(label);
+
+  const existing = await prisma.profileReferenceOption.findUnique({
+    where: { type_normalizedLabel: { type, normalizedLabel } },
+    select: { id: true, label: true, colorHex: true, isActive: true },
+  });
+  if (existing) {
+    // Une entrée désactivée est réactivée plutôt que dupliquée
+    if (!existing.isActive) {
+      await prisma.profileReferenceOption.update({
+        where: { id: existing.id },
+        data: { isActive: true },
+      });
+    }
+    return { ok: true, option: { id: existing.id, label: existing.label, colorHex: existing.colorHex } };
+  }
+
+  // `code` est unique par type : dérivé du libellé, suffixé si déjà pris
+  const base = normalizedLabel.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").toUpperCase();
+  let code = base || `OPT_${Date.now()}`;
+  if (await prisma.profileReferenceOption.findUnique({ where: { type_code: { type, code } } })) {
+    code = `${code}_${Date.now().toString(36).toUpperCase()}`;
+  }
+
+  const option = await prisma.profileReferenceOption.create({
+    data: {
+      type,
+      code,
+      label: label.replace(/\s+/g, " "),
+      normalizedLabel,
+      colorHex: colorHex ?? null,
+      sourceScope,
+      createdById: current.session.userId,
+      approvedById: current.session.userId,
+      // Après les entrées vérifiées, qui gardent leur ordre d'origine
+      sortOrder: 500,
+    },
+    select: { id: true, label: true, colorHex: true },
+  });
+
+  const meta = await requestMeta();
+  await audit({
+    actorId: current.session.userId,
+    action: "profile.reference_created",
+    resourceType: "profileReferenceOption",
+    resourceId: option.id,
+    newValues: { type, label: option.label, sourceScope },
+    ...meta,
+  });
+  revalidatePath("/admin/referentiels");
+  return { ok: true, option };
+}
+
+/**
  * Fusion de doublons : tout est déplacé vers le dossier cible (traits,
  * techniques, relations, renseignements, historiques, achats, demandes),
  * l'ancien code redirige, rien n'est perdu silencieusement.
@@ -1135,17 +1264,43 @@ export async function mergeProfilesAction(input: {
       where: { profileId: source.id },
       data: { profileId: target.id },
     });
-    // Relations : rediriger, en neutralisant celles devenues réflexives
-    await tx.characterRelationship.deleteMany({
-      where: {
-        OR: [
-          { fromProfileId: source.id, toProfileId: target.id },
-          { fromProfileId: target.id, toProfileId: source.id },
-        ],
-      },
+    // Relations : rediriger UNE PAR UNE.
+    //
+    // Un `updateMany` en bloc violait `@@unique([fromProfileId, toProfileId,
+    // type])` dès que la cible portait déjà la même relation (deux doublons
+    // ont presque toujours des parents ou des frères communs — c'est même ce
+    // qui les fait repérer). La fusion échouait alors sur un P2002 et toute la
+    // transaction était perdue.
+    const sourceRelations = await tx.characterRelationship.findMany({
+      where: { OR: [{ fromProfileId: source.id }, { toProfileId: source.id }] },
     });
-    await tx.characterRelationship.updateMany({ where: { fromProfileId: source.id }, data: { fromProfileId: target.id } });
-    await tx.characterRelationship.updateMany({ where: { toProfileId: source.id }, data: { toProfileId: target.id } });
+    for (const rel of sourceRelations) {
+      let from = rel.fromProfileId === source.id ? target.id : rel.fromProfileId;
+      let to = rel.toProfileId === source.id ? target.id : rel.toProfileId;
+
+      // La relation liait les deux dossiers fusionnés : elle devient réflexive
+      if (from === to) {
+        await tx.characterRelationship.delete({ where: { id: rel.id } });
+        continue;
+      }
+      // SIBLING_OF est stockée avec fromProfileId < toProfileId : la
+      // redirection peut casser cet ordre, il faut le rétablir sans quoi la
+      // même fratrie existerait sous deux formes.
+      if (rel.type === "SIBLING_OF" && from > to) [from, to] = [to, from];
+
+      const clash = await tx.characterRelationship.findFirst({
+        where: { fromProfileId: from, toProfileId: to, type: rel.type, id: { not: rel.id } },
+      });
+      if (clash) {
+        // La cible possède déjà ce lien : le doublon disparaît avec le dossier
+        await tx.characterRelationship.delete({ where: { id: rel.id } });
+      } else {
+        await tx.characterRelationship.update({
+          where: { id: rel.id },
+          data: { fromProfileId: from, toProfileId: to },
+        });
+      }
+    }
     // Achats et demandes suivent le dossier fusionné (doublons neutralisés)
     const sourceGrants = await tx.profileAccessGrant.findMany({ where: { profileId: source.id, revokedAt: null } });
     for (const grant of sourceGrants) {
