@@ -237,6 +237,14 @@ async function main() {
     create: { userId: demoMod.id, roleId: modRole.id },
   });
 
+  // Deux groupes par faction, nommés dans le ton de leur maison
+  const GROUP_NAMES: string[][] = [
+    ["Lances de Foudre", "Veilleurs du Col"],
+    ["Ossuaire", "Croc Blanc"],
+    ["Racines Profondes", "Sève Amère"],
+    ["Voile Rouge", "Marée Basse"],
+  ];
+
   // Chefs, membres et groupes par faction
   const groups = [];
   for (let i = 0; i < factions.length; i++) {
@@ -252,10 +260,23 @@ async function main() {
       create: { userId: chief.id, roleId: leaderRole.id },
     });
     for (let g = 0; g < 2; g++) {
+      // Noms distincts d'une faction à l'autre : « Cellule 1 » partout rendait
+      // le classement et la toile illisibles, huit nœuds portant deux noms.
+      const groupName = GROUP_NAMES[i]?.[g] ?? `Cellule ${g + 1}`;
+      // Reprise des bases déjà semées : sans ce renommage ciblé, l'upsert
+      // ci-dessous créerait un SECOND groupe au lieu de renommer l'ancien.
+      // Ne touche que les groupes de démonstration, jamais un groupe créé
+      // par un joueur — le nom recherché est exactement l'ancien libellé.
+      const legacy = await prisma.group.findFirst({
+        where: { factionId: faction.id, name: `Cellule ${g + 1}` },
+      });
+      if (legacy && groupName !== `Cellule ${g + 1}`) {
+        await prisma.group.update({ where: { id: legacy.id }, data: { name: groupName } });
+      }
       const group = await prisma.group.upsert({
-        where: { factionId_name: { factionId: faction.id, name: `Cellule ${g + 1}` } },
+        where: { factionId_name: { factionId: faction.id, name: groupName } },
         update: {},
-        create: { factionId: faction.id, name: `Cellule ${g + 1}` },
+        create: { factionId: faction.id, name: groupName },
       });
       groups.push({ group, faction, chief });
       await prisma.groupMember.upsert({
@@ -304,6 +325,12 @@ async function main() {
     { code: "TO-B-0006", rank: "B", category: "ENLEVEMENT", status: "CLAIM_PENDING", title: "L'archiviste distrait", summary: "Amener discrètement un archiviste à une entrevue qu'il refuse.", expiresInDays: 5, target: "[FICTIF] Archiviste Hosen", location: "[FICTIF] Bibliothèque des Trois Lunes" },
     { code: "TO-A-0007", rank: "A", category: "ELIMINATION", status: "AVAILABLE", title: "Le collecteur de dettes", summary: "Mettre fin aux agissements d'un collecteur protégé par une escorte armée.", expiresInDays: 10, target: "[FICTIF] Ryuzô le Percepteur", location: "[FICTIF] Quartier des lanternes", client: "[FICTIF] La Veuve aux Sept Anneaux" },
     { code: "TO-A-0008", rank: "A", category: "INTERROGATOIRE", status: "FAILED", title: "Questions pour un déserteur", summary: "Obtenir des réponses d'un déserteur avant sa fuite hors des frontières.", expiresInDays: null, assignIdx: 4 },
+    // Missions résolues supplémentaires : sans elles, aucune part n'est jamais
+    // distribuée et le classement reste vide de ryōs — la moitié du produit
+    // ne serait donc jamais démontrée.
+    { code: "TO-C-0012", rank: "C", category: "COLLECTE_INFORMATIONS", status: "COMPLETED", title: "Le registre du changeur", summary: "Copier trois pages du registre d'un changeur sans qu'il s'en aperçoive.", expiresInDays: null, assignIdx: 1 },
+    { code: "TO-B-0013", rank: "B", category: "PROTECTION", status: "COMPLETED", title: "La nuit des lanternes éteintes", summary: "Protéger une famille de marchands pendant une nuit d'émeute.", expiresInDays: null, assignIdx: 2 },
+    { code: "TO-A-0014", rank: "A", category: "SABOTAGE", status: "COMPLETED", title: "Les chaînes du chantier naval", summary: "Immobiliser un navire avant son appareillage.", expiresInDays: null, assignIdx: 3 },
     { code: "TO-S-0009", rank: "S", category: "MERCENARIAT", status: "AVAILABLE", title: "Sept lames pour un pont", summary: "Tenir le pont de Kanzaki pendant l'affrontement entre deux clans.", expiresInDays: 14, target: "[FICTIF] Forces du clan Yagura", location: "[FICTIF] Pont de Kanzaki", client: "[FICTIF] Le Conseil des Cendres" },
     { code: "TO-S-0010", rank: "S", category: "SPECIALE", status: "CANCELLED", title: "L'œil du typhon", summary: "Mission spéciale définie par la modération.", expiresInDays: null },
     { code: "TO-SS-0011", rank: "SS", category: "ELIMINATION", status: "AVAILABLE", title: "Le seigneur des marées noires", summary: "Cible d'exception. Dossier scellé — réservé après attribution.", expiresInDays: 21, target: "[FICTIF] Seigneur Kaimon", location: "[FICTIF] Forteresse des marées", client: "[FICTIF] Sceau d'or — commanditaire voilé" },
@@ -428,6 +455,44 @@ async function main() {
         },
       });
     }
+  }
+
+  // ── Parts distribuées sur les missions accomplies ──
+  // Sans elles, « ce que la Toile a rapporté » resterait à zéro partout : ni
+  // gains d'agent, ni de groupe, ni de faction. La répartition est le pendant
+  // des points, et elle n'était jamais démontrée.
+  const completedMissions = await prisma.mission.findMany({
+    where: { status: "COMPLETED" },
+    include: { assignments: { include: { group: { include: { members: true } } } } },
+  });
+  for (const mission of completedMissions) {
+    const alreadyShared = await prisma.missionParticipant.count({
+      where: { missionId: mission.id },
+    });
+    if (alreadyShared > 0) continue; // seed idempotent
+    const assignment = mission.assignments[0];
+    if (!assignment) continue;
+    const members = assignment.group.members.slice(0, 4);
+    if (members.length === 0) continue;
+
+    // Montant retenu par la modération dans la fourchette du rang
+    const awarded = Math.round((mission.rewardRyoMin + mission.rewardRyoMax) / 2);
+    const perHead = Math.floor(awarded / members.length);
+    const remainder = awarded - perHead * members.length;
+    await prisma.mission.update({ where: { id: mission.id }, data: { awardedRyo: awarded } });
+    await prisma.missionParticipant.createMany({
+      data: members.map((member, index) => ({
+        missionId: mission.id,
+        userId: member.userId,
+        groupId: assignment.groupId,
+        addedById: demoMod.id,
+        // Le reliquat de la division revient au premier : la somme des parts
+        // est exactement le montant versé, sans ryō évaporé.
+        ryoAwarded: perHead + (index === 0 ? remainder : 0),
+        pointsAwarded: Math.max(1, Math.round(mission.basePoints / members.length)),
+      })),
+      skipDuplicates: true,
+    });
   }
 
   // ── Fiches de groupe fictives (pays, village, spécialités) ──

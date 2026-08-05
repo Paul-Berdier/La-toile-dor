@@ -36,6 +36,11 @@ export interface ProfileActionResult {
   conflicts?: { fieldKey: string; fieldLabel: string; currentValue: string; newValue: string }[];
   /** Avertissements non bloquants (artefact unique déjà porté…) */
   warnings?: string[];
+  /**
+   * Le dossier a été enregistré par quelqu'un d'autre depuis l'ouverture du
+   * formulaire : l'écriture est refusée plutôt que d'écraser son travail.
+   */
+  staleVersion?: boolean;
 }
 
 async function guardManage() {
@@ -148,6 +153,21 @@ export async function updateProfileAction(raw: unknown): Promise<ProfileActionRe
     },
   });
   if (!profile || profile.archivedAt) return { ok: false, error: "Dossier introuvable." };
+
+  // Verrouillage optimiste : le formulaire renvoie la version qu'il a chargée.
+  // Sans ce contrôle, deux modérateurs complétant le même dossier pendant la
+  // même session RP s'écrasent l'un l'autre en silence. Le test précoce donne
+  // un message clair ; la garde atomique à l'écriture (plus bas) traite la
+  // course où l'autre enregistrement tombe pendant ce traitement.
+  if (input.version !== undefined && input.version !== profile.version) {
+    return {
+      ok: false,
+      staleVersion: true,
+      error:
+        "Ce dossier a été enregistré par quelqu'un d'autre depuis que vous l'avez ouvert. " +
+        "Rechargez pour repartir de la version à jour — votre saisie n'a pas été appliquée.",
+    };
+  }
 
   const intelByKey = new Map(profile.fieldIntel.map((row) => [row.fieldKey, row]));
   const now = new Date();
@@ -443,8 +463,20 @@ export async function updateProfileAction(raw: unknown): Promise<ProfileActionRe
     }
   }
 
+  try {
   await prisma.$transaction(async (tx) => {
-    await tx.characterProfile.update({ where: { id: profile.id }, data });
+    // Garde atomique du verrouillage optimiste : l'écriture n'a lieu que si la
+    // version n'a pas bougé entre la lecture plus haut et cet instant. Le test
+    // précoce ne suffit pas — un autre enregistrement peut tomber entre les
+    // deux, et c'est précisément la course que ce verrou doit couvrir.
+    const applied = await tx.characterProfile.updateMany({
+      where: {
+        id: profile.id,
+        ...(input.version !== undefined ? { version: input.version } : {}),
+      },
+      data,
+    });
+    if (applied.count !== 1) throw new Error("STALE_VERSION");
     for (const plan of traitPlans) {
       await tx.characterProfileTrait.deleteMany({
         where: { profileId: profile.id, option: { type: plan.refType } },
@@ -487,6 +519,20 @@ export async function updateProfileAction(raw: unknown): Promise<ProfileActionRe
       await tx.characterProfileRevision.createMany({ data: revisions });
     }
   });
+  } catch (error) {
+    if (error instanceof Error && error.message === "STALE_VERSION") {
+      // La transaction est annulée : rien n'a été écrit, le travail de
+      // l'autre modérateur est intact.
+      return {
+        ok: false,
+        staleVersion: true,
+        error:
+          "Ce dossier vient d'être enregistré par quelqu'un d'autre. " +
+          "Rechargez pour repartir de la version à jour — votre saisie n'a pas été appliquée.",
+      };
+    }
+    throw error;
+  }
 
   const meta = await requestMeta();
   await audit({

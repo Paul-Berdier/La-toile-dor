@@ -21,13 +21,26 @@ export default async function ProfilsPage({
   const sp = await searchParams;
   const missionId = first(sp.mission);
 
-  const { rows, viewer } = await listProfiles(current, {
+  const { rows, viewer, total, page, pageCount } = await listProfiles(current, {
     q: first(sp.q)?.slice(0, 80),
     factionId: first(sp.faction),
     clanOptionId: first(sp.clan),
     lifeStatus: first(sp.etat),
     access: first(sp.acces) as "granted" | "pending" | "refused" | undefined,
+    page: Number(first(sp.page)) || 1,
   });
+
+  /** Conserve les filtres courants en changeant de page. */
+  const pageHref = (target: number) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(sp)) {
+      const single = first(value);
+      if (single && key !== "page") params.set(key, single);
+    }
+    if (target > 1) params.set("page", String(target));
+    const query = params.toString();
+    return query ? `/profils?${query}` : "/profils";
+  };
 
   // Options de filtre : modération uniquement (aucune fuite par les filtres)
   const [factions, clans, attachMission] = await Promise.all([
@@ -105,6 +118,14 @@ export default async function ProfilsPage({
         </p>
       )}
 
+      {/* Compteur : ce que la liste montre, sur ce qu'elle contient */}
+      {total > 0 && (
+        <p className="mt-4 font-mono-toile text-[0.65rem] uppercase tracking-widest text-ink-faint">
+          {total} dossier{total > 1 ? "s" : ""}
+          {pageCount > 1 && ` · page ${page} sur ${pageCount}`}
+        </p>
+      )}
+
       <ul className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {rows.map((row) => (
           <li key={row.id}>
@@ -176,6 +197,31 @@ export default async function ProfilsPage({
           </li>
         ))}
       </ul>
+
+      {pageCount > 1 && (
+        <nav
+          aria-label="Pagination des dossiers"
+          className="mt-6 flex items-center justify-between gap-3 border-t border-border-default pt-4"
+        >
+          {page > 1 ? (
+            <Link href={pageHref(page - 1)} className={buttonClasses("outline", "sm")} rel="prev">
+              ← Précédents
+            </Link>
+          ) : (
+            <span />
+          )}
+          <span className="font-mono-toile text-[0.65rem] uppercase tracking-widest text-ink-faint">
+            {page} / {pageCount}
+          </span>
+          {page < pageCount ? (
+            <Link href={pageHref(page + 1)} className={buttonClasses("outline", "sm")} rel="next">
+              Suivants →
+            </Link>
+          ) : (
+            <span />
+          )}
+        </nav>
+      )}
     </main>
   );
 }

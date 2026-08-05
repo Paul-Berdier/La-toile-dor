@@ -45,16 +45,24 @@ test("le modérateur attribue la mission à DEUX groupes et la démarre", async 
   const dialog = page.getByRole("dialog", { name: /Attribuer la mission/ });
   await expect(dialog.getByText(/Constituer l/)).toBeVisible();
 
-  // Ajout manuel de deux groupes depuis le catalogue
+  // Deux groupes d'une MÊME faction : ils partagent leur chef, et c'est
+  // précisément le cas que ce test couvre. On les désigne par leur identifiant
+  // plutôt que par leur rang dans la liste — l'ordre du catalogue n'est pas un
+  // contrat, et s'y fier rendait le test dépendant du nom des groupes.
+  const faction = await prisma.faction.findFirstOrThrow({
+    where: { isActive: true, groups: { some: { isActive: true } } },
+    include: { groups: { where: { isActive: true }, orderBy: { name: "asc" }, take: 2 } },
+  });
+  expect(faction.groups).toHaveLength(2);
   const select = dialog.getByLabel("Ajouter un autre groupe");
-  await select.selectOption({ index: 1 });
-  await dialog.getByRole("button", { name: "Ajouter", exact: true }).click();
-  await select.selectOption({ index: 1 });
-  await dialog.getByRole("button", { name: "Ajouter", exact: true }).click();
+  for (const group of faction.groups) {
+    await select.selectOption(group.id);
+    await dialog.getByRole("button", { name: "Ajouter", exact: true }).click();
+  }
 
-  // Les deux cellules comptent 3 membres chacune, MAIS leur chef appartient
+  // Les deux groupes comptent 3 membres chacun, MAIS leur chef appartient
   // aux deux : un agent ne peut représenter qu'un seul groupe. On engage donc
-  // les 3 agents de la première cellule et les 2 autres de la seconde → 5.
+  // les 3 agents du premier groupe et les 2 autres du second → 5.
   const agentCheckboxes = dialog.locator("fieldset input[type=checkbox]");
   expect(await agentCheckboxes.count()).toBe(6);
   const boxes = await agentCheckboxes.all();

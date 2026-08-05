@@ -102,6 +102,32 @@ L'onglet « Source & aperçu » montre le rendu simultané pour un modérateur, 
 groupe ayant acheté le dossier et un groupe sans accès — utile pour vérifier
 d'un coup d'œil que rien ne fuite.
 
+## Écriture concurrente (verrouillage optimiste)
+
+`CharacterProfile.version` est incrémenté à chaque enregistrement **et relu**.
+Le formulaire renvoie la version chargée à l'ouverture ; si elle a bougé,
+l'écriture est refusée et rien n'est appliqué.
+
+Sans cela, deux modérateurs complétant le même dossier pendant une même session
+RP s'écrasaient en silence — le dernier à enregistrer gagnait, et le premier
+n'apprenait jamais que son travail avait disparu.
+
+Deux gardes, pas une seule :
+
+1. un test **précoce**, juste après la lecture du dossier, qui donne un message
+   clair ;
+2. une garde **atomique** à l'écriture (`updateMany` conditionné sur la
+   version, `count !== 1` → transaction annulée), pour la course où l'autre
+   enregistrement tombe pendant le traitement.
+
+Côté écran, l'avertissement ne fait perdre aucune saisie : le texte reste à
+l'écran, et « Recharger le dossier » déclenche un rechargement **complet**
+(l'état du formulaire est initialisé une seule fois — `router.refresh()`
+renouvellerait les props sans réinitialiser les champs).
+
+Couvert par l'e2e « deux rédacteurs simultanés : le second n'écrase pas le
+premier ».
+
 ## Conflits
 
 Quand une nouvelle valeur contredit une information déjà **connue**, le serveur

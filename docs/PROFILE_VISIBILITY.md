@@ -74,6 +74,16 @@ Permissions : `profile.manage`, `profile.intel.view`,
 `profile.purchase.review`, `profile.request.create`,
 `profile.reference.manage`, `profile.merge`. Toutes vérifiées **côté serveur**.
 
+## Pagination
+
+La liste est paginée par **24 dossiers** (`PROFILE_PAGE_SIZE`) et affiche le
+total. Auparavant elle était tronquée à 100 **sans le dire** : au-delà, un
+dossier existant devenait introuvable et l'on aurait conclu à une panne de la
+recherche plutôt qu'à une limite d'affichage.
+
+Le total est compté avec les mêmes filtres que la liste : il ne révèle jamais
+l'existence d'un dossier hors de portée du lecteur.
+
 ## Le nom de famille dans la liste
 
 La liste affiche « Akira **Kaguya** » pour un lecteur autorisé, « Akira » seul

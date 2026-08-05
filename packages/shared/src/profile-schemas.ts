@@ -43,6 +43,10 @@ export const conflictStrategySchema = z.enum([
 export const profileUpdateSchema = z
   .object({
     profileId: z.string().cuid(),
+    // Verrouillage optimiste : version du dossier au moment de son ouverture.
+    // Facultative pour ne pas casser un appel existant, mais le formulaire la
+    // transmet toujours — sans elle, deux rédacteurs simultanés s'écrasent.
+    version: z.number().int().nonnegative().optional(),
     // Provenance commune du lot de renseignements
     sourceMissionId: z.string().cuid().nullable().optional(),
     confidence: confidenceSchema.optional(),

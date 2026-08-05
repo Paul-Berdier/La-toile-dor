@@ -26,6 +26,7 @@ test-results/
 audit-profils*/
 audit-screens*/
 audit-invitation*/
+audit-classement*/
 
 # IDE
 .idea/

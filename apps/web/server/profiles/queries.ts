@@ -9,8 +9,17 @@ import { dossierInclude, serializeDossier, type SerializedDossier } from "./seri
 
 // ── Liste des dossiers ──
 
+/**
+ * Dossiers par page. La liste était auparavant tronquée à 100 sans le dire :
+ * passé ce seuil, un dossier existant devenait introuvable et l'on aurait cru
+ * à une panne de la recherche.
+ */
+export const PROFILE_PAGE_SIZE = 24;
+
 export interface ProfileListFilters {
   q?: string;
+  /** Page demandée, à partir de 1 */
+  page?: number;
   /** Filtres réservés à la modération (ignorés sinon — anti-fuite) */
   factionId?: string;
   clanOptionId?: string;
@@ -43,7 +52,14 @@ export interface ProfileListRow {
 export async function listProfiles(
   current: CurrentUser,
   filters: ProfileListFilters,
-): Promise<{ rows: ProfileListRow[]; viewer: ProfileViewer }> {
+): Promise<{
+  rows: ProfileListRow[];
+  viewer: ProfileViewer;
+  /** Nombre total de dossiers correspondant aux filtres */
+  total: number;
+  page: number;
+  pageCount: number;
+}> {
   const viewer = await getProfileViewer(current);
 
   const where: Prisma.CharacterProfileWhereInput = {
@@ -89,10 +105,17 @@ export async function listProfiles(
     }
   }
 
+  // Le total est compté avec les MÊMES filtres : il indique ce qui existe
+  // réellement, sans jamais révéler un dossier hors de portée du lecteur.
+  const total = await prisma.characterProfile.count({ where });
+  const pageCount = Math.max(1, Math.ceil(total / PROFILE_PAGE_SIZE));
+  const page = Math.min(Math.max(1, Math.trunc(filters.page ?? 1)), pageCount);
+
   const profiles = await prisma.characterProfile.findMany({
     where,
     orderBy: { updatedAt: "desc" },
-    take: 100,
+    skip: (page - 1) * PROFILE_PAGE_SIZE,
+    take: PROFILE_PAGE_SIZE,
     select: {
       id: true,
       code: true,
@@ -145,7 +168,7 @@ export async function listProfiles(
     };
   });
 
-  return { rows, viewer };
+  return { rows, viewer, total, page, pageCount };
 }
 
 // ── Détail d'un dossier ──

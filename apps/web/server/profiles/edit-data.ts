@@ -82,6 +82,8 @@ export async function loadEditData(profileId: string): Promise<EditFormData | nu
   inferKnown("weaknesses", profile.weaknesses != null);
   return {
     profileId: profile.id,
+    // Sert au verrouillage optimiste lors de l'enregistrement
+    version: profile.version,
     firstName: profile.characterFirstName,
     lastName: profile.characterLastName ?? "",
     sexCode: profile.sexCode ?? "",

@@ -22,6 +22,8 @@ export type KnowledgeChoice = "UNKNOWN" | "KNOWN" | "NONE_CONFIRMED" | "CONFLICT
 
 export interface EditFormData {
   profileId: string;
+  /** Version du dossier à son ouverture — verrouillage optimiste */
+  version: number;
   firstName: string;
   lastName: string;
   sexCode: string;
@@ -202,6 +204,8 @@ export function ProfileEditForm({
   const [warnings, setWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  /** Le dossier a été enregistré ailleurs pendant la saisie */
+  const [stale, setStale] = useState(false);
   const [suggestion, setSuggestion] = useState<{ type: string; label: string } | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -246,6 +250,7 @@ export function ProfileEditForm({
       const known = (key: ProfileFieldKey) => stateOf(key) === "KNOWN";
       const res = await updateProfileAction({
         profileId: data.profileId,
+        version: data.version,
         sourceMissionId: sourceMissionId ?? null,
         confidence,
         justification: justification || undefined,
@@ -281,6 +286,10 @@ export function ProfileEditForm({
         if (res.conflicts) {
           setConflicts(res.conflicts);
           setError(null);
+        } else if (res.staleVersion) {
+          // Rien n'a été écrit : le dossier a bougé sous nos pieds.
+          setStale(true);
+          setError(null);
         } else {
           setError(res.error ?? "L'enregistrement a échoué.");
         }
@@ -290,6 +299,9 @@ export function ProfileEditForm({
       setWarnings(res.warnings ?? []);
       setError(null);
       setSaved(true);
+      // La version vient d'être incrémentée côté serveur : sans cette mise à
+      // jour, un second enregistrement dans la foulée serait refusé à tort.
+      setData((d) => ({ ...d, version: d.version + 1 }));
       router.refresh();
     });
   };
@@ -571,6 +583,32 @@ export function ProfileEditForm({
               <Button size="sm" variant="outline" onClick={() => save("KEEP")} disabled={isPending}>Conserver l&rsquo;ancienne</Button>
               <Button size="sm" variant="seal" onClick={() => save("MARK_CONFLICTING")} disabled={isPending}>Marquer contradictoire</Button>
               <Button size="sm" variant="ghost" onClick={() => setConflicts([])} disabled={isPending}>Annuler</Button>
+            </div>
+          </div>
+        )}
+
+        {/* Écriture concurrente : ne JAMAIS écraser en silence le travail
+            d'un autre rédacteur. Rien n'a été enregistré à ce stade. */}
+        {stale && (
+          <div role="alert" className="mt-4 border border-warning bg-warning/10 p-4">
+            <p className="text-sm text-warning">
+              Ce dossier a été enregistré par quelqu&rsquo;un d&rsquo;autre pendant votre saisie.
+            </p>
+            <p className="mt-1 text-xs text-ink-muted">
+              Rien n&rsquo;a été écrit : le travail de l&rsquo;autre rédacteur est intact, et le
+              vôtre est toujours à l&rsquo;écran. Recharger reprendra la version à jour —
+              notez ce que vous voulez conserver avant.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {/* Rechargement COMPLET : `router.refresh()` renouvelle les
+                  props serveur, mais l'état du formulaire est initialisé une
+                  seule fois et resterait sur les anciennes valeurs. */}
+              <Button size="sm" variant="gold" onClick={() => window.location.reload()}>
+                Recharger le dossier
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setStale(false)}>
+                Garder ma saisie à l&rsquo;écran
+              </Button>
             </div>
           </div>
         )}
