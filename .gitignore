@@ -34,6 +34,9 @@ audit-identite*/
 .vscode/
 *.iml
 
+# Claude Code — réglages locaux (launch.json reste partagé)
+.claude/settings.local.json*
+
 # OS
 .DS_Store
 Thumbs.db
