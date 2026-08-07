@@ -47,7 +47,7 @@ précieux** — sinon il écarterait au hasard le seul qui comptait.
 | Techniques de clan | 1 600 | savoir qu'un non-membre les porte vaut cher |
 | **Histoire (`details`)** | **1 600** | on la retourne contre lui sans combattre |
 | Forces, artefacts | 1 500 | |
-| Subjutsu | 1 400 | |
+| Subjutsu, techniques propres | 1 400 chacun | |
 | Styles, natures | 1 000–1 200 | |
 | Clan, faction, grade | 700–900 | sert à trouver, pas à vaincre |
 | Portrait | 900 | reconnaître quelqu'un a un prix |

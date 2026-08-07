@@ -215,6 +215,7 @@ export default async function DossierPage({
               <DossierRow label={PROFILE_FIELD_LABELS.chakraNatures} field={f.chakraNatures} tone={tone} />
               <DossierRow label={PROFILE_FIELD_LABELS.kekkeiGenkai} field={f.kekkeiGenkai} tone={tone} />
               <DossierRow label={PROFILE_FIELD_LABELS.clanTechniques} field={f.clanTechniques} tone={tone} />
+              <DossierRow label={PROFILE_FIELD_LABELS.signatureTechniques} field={f.signatureTechniques} tone={tone} />
               <DossierRow label={PROFILE_FIELD_LABELS.rank} field={f.rank} tone={tone} />
               <DossierRow label={PROFILE_FIELD_LABELS.combatStyles} field={f.combatStyles} tone={tone} />
               <DossierRow label={PROFILE_FIELD_LABELS.kenjutsuStyles} field={f.kenjutsuStyles} tone={tone} />

@@ -9,8 +9,6 @@ import { ReferencePicker } from "./reference-picker";
 
 export interface RefOption {
   id: string;
-  /** Code stable du référentiel — absent des entrées créées à la volée */
-  code?: string;
   label: string;
   category: string | null;
   colorHex: string | null;
@@ -44,6 +42,7 @@ export interface EditFormData {
   chakraNatureIds: string[];
   kekkeiGenkaiIds: string[];
   clanTechniqueIds: string[];
+  signatureTechniqueIds: string[];
   combatStyleIds: string[];
   kenjutsuStyleIds: string[];
   artifactIds: string[];
@@ -281,6 +280,7 @@ export function ProfileEditForm({
         chakraNatureIds: known("chakraNatures") ? data.chakraNatureIds : [],
         kekkeiGenkaiIds: known("kekkeiGenkai") ? data.kekkeiGenkaiIds : [],
         clanTechniqueIds: known("clanTechniques") ? data.clanTechniqueIds : [],
+        signatureTechniqueIds: known("signatureTechniques") ? data.signatureTechniqueIds : [],
         combatStyleIds: known("combatStyles") ? data.combatStyleIds : [],
         kenjutsuStyleIds: showKenjutsu ? data.kenjutsuStyleIds : [],
         artifactIds: known("artifacts") ? data.artifactIds : [],
@@ -505,15 +505,24 @@ export function ProfileEditForm({
                 referenceType="LEGENDARY_ARTIFACT" canCreate={canManageReferences}
                 onCreated={(o) => addOption("artifacts", o)} />
             </KnowledgeField>
+            {/* Subjutsu répertoriés : catalogue seul — une technique hors
+                catalogue est une technique propre, saisie plus bas. */}
+            <KnowledgeField fieldKey="signatureTechniques" state={stateOf("signatureTechniques")} onStateChange={(s) => setState("signatureTechniques", s)}>
+              <ReferencePicker legend="Subjutsu" hideLegend options={refs.signatureTechniques}
+                selected={data.signatureTechniqueIds} onChange={(ids) => setValue("signatureTechniques", "signatureTechniqueIds", ids)}
+                onSuggest={(label) => setSuggestion({ type: "SIGNATURE_TECHNIQUE", label })}
+                referenceType="SIGNATURE_TECHNIQUE" canCreate={canManageReferences}
+                onCreated={(o) => addOption("signatureTechniques", o)} />
+            </KnowledgeField>
             {/* Les techniques propres se saisissent plus bas, mais leur ÉTAT
                 se déclare ici : sans cela, impossible d'affirmer « la Toile a
                 vérifié, il n'en a aucune » — l'absence se confondait avec le
                 simple fait de ne pas savoir. */}
             <KnowledgeField fieldKey="techniques" state={stateOf("techniques")} onStateChange={(s) => setState("techniques", s)}>
               <p className="text-[0.65rem] text-ink-faint">
-                Les Subjutsu (Rasengan, Chidori, Hiraishin…) s&rsquo;ajoutent un par un
-                depuis la page du dossier, plus bas. Les techniques liées à un clan se
-                choisissent dans le champ ci-dessus.
+                Les techniques propres au personnage (jutsu originaux, avec rang et
+                description) s&rsquo;ajoutent une par une depuis la page du dossier,
+                plus bas.
               </p>
             </KnowledgeField>
           </div>

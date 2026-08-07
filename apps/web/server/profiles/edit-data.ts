@@ -10,7 +10,6 @@ async function loadRef(type: string): Promise<RefOption[]> {
   });
   return rows.map((r) => ({
     id: r.id,
-    code: r.code,
     label: r.label,
     category: r.category,
     colorHex: r.colorHex,
@@ -80,6 +79,7 @@ export async function loadEditData(profileId: string): Promise<EditFormData | nu
   inferKnown("chakraNatures", traitIds(REFERENCE_TYPES.CHAKRA_NATURE).length > 0);
   inferKnown("kekkeiGenkai", traitIds(REFERENCE_TYPES.KEKKEI_GENKAI).length > 0);
   inferKnown("clanTechniques", traitIds(REFERENCE_TYPES.CLAN_TECHNIQUE).length > 0);
+  inferKnown("signatureTechniques", traitIds(REFERENCE_TYPES.SIGNATURE_TECHNIQUE).length > 0);
   inferKnown("techniques", profile.techniques.length > 0);
   inferKnown("combatStyles", traitIds(REFERENCE_TYPES.COMBAT_STYLE).length > 0);
   inferKnown("kenjutsuStyles", traitIds(REFERENCE_TYPES.KENJUTSU_STYLE).length > 0);
@@ -109,6 +109,7 @@ export async function loadEditData(profileId: string): Promise<EditFormData | nu
     chakraNatureIds: traitIds(REFERENCE_TYPES.CHAKRA_NATURE),
     kekkeiGenkaiIds: traitIds(REFERENCE_TYPES.KEKKEI_GENKAI),
     clanTechniqueIds: traitIds(REFERENCE_TYPES.CLAN_TECHNIQUE),
+    signatureTechniqueIds: traitIds(REFERENCE_TYPES.SIGNATURE_TECHNIQUE),
     combatStyleIds: traitIds(REFERENCE_TYPES.COMBAT_STYLE),
     kenjutsuStyleIds: traitIds(REFERENCE_TYPES.KENJUTSU_STYLE),
     artifactIds: traitIds(REFERENCE_TYPES.LEGENDARY_ARTIFACT),

@@ -43,14 +43,14 @@ lit d'un coup d'œil.
 
 ### Subjutsu répertoriés (`SIGNATURE_TECHNIQUE`)
 
-Les techniques propres d'un personnage restent du **texte libre** (un jutsu
-original doit pouvoir se consigner), mais les techniques notoires du serveur —
-Multi clonage, Rasengan, Chidori, Hiraishin, Marque maudite, paliers
-« Rang X » élémentaires, voies de l'Ermite (Senju, Hôki, Sabaku) — forment un
-catalogue proposé à la saisie : mêmes libellés partout, pas de variantes.
-Sur ces entrées, `category` porte le **code du type de jutsu** (`NINJUTSU`,
-`JUINJUTSU`, `SENJUTSU`…) : choisir une entrée du catalogue préremplit le type
-de la technique.
+Les techniques notoires du serveur — Multi clonage, Rasengan, Chidori,
+Hiraishin, Marque maudite, paliers « Rang X » élémentaires, voies de l'Ermite
+(Senju, Hôki, Sabaku) — forment un référentiel contrôlé : le champ **Subjutsu**
+de l'étape Capacités, un trait comme les Kekkei Genkai. Mêmes libellés partout,
+pas de variantes. Les techniques **propres** au personnage (jutsu originaux,
+avec rang et description) restent du texte libre, saisies séparément sur la
+page du dossier. Sur les entrées du catalogue, `category` porte le **code du
+type de jutsu** (`NINJUTSU`, `JUINJUTSU`, `SENJUTSU`…).
 
 ## Provenance des données (`sourceScope`)
 
