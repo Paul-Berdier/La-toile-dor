@@ -295,3 +295,10 @@ export const missionFiltersSchema = z.object({
 });
 
 export type MissionFilters = z.infer<typeof missionFiltersSchema>;
+
+// ── Rapports de mission : images de preuve jointes ──
+
+/** Nombre maximal d'images par rapport (« au moins 3 » exigé côté produit). */
+export const REPORT_IMAGES_MAX = 5;
+/** Taille maximale d'une image de rapport, en octets. */
+export const REPORT_IMAGE_MAX_BYTES = 2 * 1024 * 1024;

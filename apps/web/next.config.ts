@@ -26,7 +26,8 @@ const securityHeaders = [
       // jamais présent en production.
       `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
       "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: https://cdn.discordapp.com",
+      // blob: requis pour les aperçus locaux d'images avant envoi (rapports)
+      "img-src 'self' blob: data: https://cdn.discordapp.com",
       "font-src 'self'",
       "connect-src 'self'",
       "frame-ancestors 'none'",
@@ -40,6 +41,10 @@ const nextConfig: NextConfig = {
   transpilePackages: ["@toile/database", "@toile/shared", "@toile/auth", "@toile/ui"],
   output: "standalone",
   poweredByHeader: false,
+  experimental: {
+    // Rapports de mission : jusqu'à 5 images de 2 Mo par envoi (défaut : 1 Mo)
+    serverActions: { bodySizeLimit: "12mb" },
+  },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

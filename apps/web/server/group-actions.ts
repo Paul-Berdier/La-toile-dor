@@ -6,6 +6,7 @@ import { audit } from "@toile/auth";
 import { PERMISSIONS, groupUpsertSchema } from "@toile/shared";
 import { requireUser, requestMeta } from "@/lib/session";
 import { enqueueNotifications } from "@/server/notifications";
+import { sniffImageMime, isFileLike } from "@/server/image-validation";
 
 interface Result {
   ok: boolean;
@@ -159,14 +160,6 @@ export async function setGroupFactionAction(input: {
 // ── Image du groupe (stockée en base : FS Railway éphémère) ──
 
 const IMAGE_MAX_BYTES = 500 * 1024;
-const IMAGE_SIGNATURES: { mime: string; check: (b: Buffer) => boolean }[] = [
-  { mime: "image/png", check: (b) => b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) },
-  { mime: "image/jpeg", check: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
-  {
-    mime: "image/webp",
-    check: (b) => b.subarray(0, 4).toString("ascii") === "RIFF" && b.subarray(8, 12).toString("ascii") === "WEBP",
-  },
-];
 
 export async function uploadGroupImageAction(formData: FormData): Promise<Result> {
   const current = await requireUser();
@@ -179,7 +172,7 @@ export async function uploadGroupImageAction(formData: FormData): Promise<Result
     return { ok: false, error: "Seuls les chefs de ce groupe et la modération peuvent le modifier." };
   }
 
-  if (!(file instanceof File) || file.size === 0) {
+  if (!isFileLike(file) || file.size === 0) {
     return { ok: false, error: "Aucun fichier reçu." };
   }
   if (file.size > IMAGE_MAX_BYTES) {
@@ -188,14 +181,14 @@ export async function uploadGroupImageAction(formData: FormData): Promise<Result
 
   // Validation par signature binaire — le type déclaré ne suffit pas
   const bytes = Buffer.from(await file.arrayBuffer());
-  const signature = IMAGE_SIGNATURES.find((s) => s.check(bytes));
-  if (!signature) {
+  const mime = sniffImageMime(bytes);
+  if (!mime) {
     return { ok: false, error: "Format refusé : PNG, JPG/JPEG ou WEBP uniquement." };
   }
 
   await prisma.group.update({
     where: { id: group.id },
-    data: { imageData: bytes, imageMime: signature.mime },
+    data: { imageData: bytes, imageMime: mime },
   });
 
   const meta = await requestMeta();
@@ -204,7 +197,7 @@ export async function uploadGroupImageAction(formData: FormData): Promise<Result
     action: "group.image_changed",
     resourceType: "group",
     resourceId: group.id,
-    newValues: { mime: signature.mime, sizeBytes: bytes.length },
+    newValues: { mime, sizeBytes: bytes.length },
     ...meta,
   });
 

@@ -417,6 +417,28 @@ export default async function MissionDetailPage({
                     <p className="text-sm whitespace-pre-line text-ink-muted">
                       {streamer ? maskValue("RPT", report.id) : report.content}
                     </p>
+                    {!streamer && report.images.length > 0 && (
+                      <ul className="mt-2 flex flex-wrap gap-2">
+                        {report.images.map((image, index) => (
+                          <li key={image.id}>
+                            <a
+                              href={`/api/rapports/images/${image.id}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="block border border-border-default hover:border-gold"
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={`/api/rapports/images/${image.id}`}
+                                alt={`Preuve ${index + 1} du rapport`}
+                                loading="lazy"
+                                className="h-24 w-24 object-cover"
+                              />
+                            </a>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </li>
                 ))}
               </ul>

@@ -12,6 +12,8 @@ import {
   computeMissionScore,
   applyEligibilityMode,
   shareInteger,
+  REPORT_IMAGES_MAX,
+  REPORT_IMAGE_MAX_BYTES,
   type Rank,
 } from "@toile/shared";
 import { requireUser, requestMeta } from "@/lib/session";
@@ -26,6 +28,7 @@ import {
   type TargetIntelResult,
 } from "@/server/missions/target-intel";
 import { checkTargetIntel } from "@/server/missions/target-requirements";
+import { sniffImageMime, isFileLike } from "@/server/image-validation";
 
 export interface ActionResult {
   ok: boolean;
@@ -958,18 +961,40 @@ export async function decideClaimAction(input: {
 // Rapport de mission (groupe attribué)
 // ─────────────────────────────────────────────────────────────
 
-export async function submitReportAction(input: {
-  missionId: string;
-  content: string;
-  isFinal: boolean;
-}): Promise<ActionResult> {
+export async function submitReportAction(formData: FormData): Promise<ActionResult> {
   const current = await requireUser();
-  const content = input.content?.trim();
+  const missionId = String(formData.get("missionId") ?? "");
+  const content = String(formData.get("content") ?? "").trim();
+  const isFinal = formData.get("isFinal") === "true";
   if (!content || content.length < 10 || content.length > 20_000) {
     return { ok: false, error: "Le rapport doit contenir entre 10 et 20 000 caractères." };
   }
 
-  const mission = await prisma.mission.findUnique({ where: { id: input.missionId } });
+  const files = formData
+    .getAll("images")
+    .filter((f) => isFileLike(f) && f.size > 0) as File[];
+  if (files.length > REPORT_IMAGES_MAX) {
+    return { ok: false, error: `${REPORT_IMAGES_MAX} images maximum par rapport.` };
+  }
+
+  // Validation par signature binaire — le type déclaré ne suffit pas
+  const images: { imageData: Buffer<ArrayBuffer>; imageMime: string; sizeBytes: number }[] = [];
+  for (const file of files) {
+    if (file.size > REPORT_IMAGE_MAX_BYTES) {
+      return { ok: false, error: `Image « ${file.name} » trop lourde : 2 Mo maximum.` };
+    }
+    const bytes = Buffer.from(await file.arrayBuffer());
+    const mime = sniffImageMime(bytes);
+    if (!mime) {
+      return {
+        ok: false,
+        error: `Image « ${file.name} » refusée : PNG, JPG/JPEG ou WEBP uniquement.`,
+      };
+    }
+    images.push({ imageData: bytes, imageMime: mime, sizeBytes: bytes.length });
+  }
+
+  const mission = await prisma.mission.findUnique({ where: { id: missionId } });
   if (!mission) return { ok: false, error: "Mission introuvable." };
 
   const ctx = await getAccessContext(current);
@@ -983,7 +1008,8 @@ export async function submitReportAction(input: {
       missionId: mission.id,
       authorId: current.session.userId,
       content,
-      isFinal: input.isFinal,
+      isFinal,
+      images: { create: images },
     },
   });
 
@@ -993,11 +1019,11 @@ export async function submitReportAction(input: {
     action: "mission.report_submitted",
     resourceType: "mission",
     resourceId: mission.id,
-    newValues: { isFinal: input.isFinal },
+    newValues: { isFinal, imagesCount: images.length },
     ...meta,
   });
 
-  if (input.isFinal) {
+  if (isFinal) {
     const moderators = await userIdsWithPermission(PERMISSIONS.CLAIM_REVIEW);
     await enqueueNotifications({
       userIds: moderators,

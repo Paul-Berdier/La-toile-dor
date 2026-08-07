@@ -668,8 +668,24 @@ model MissionReport {
   isFinal     Boolean   @default(false)
 
   mission Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  images  MissionReportImage[]
 
   @@index([missionId])
+}
+
+model MissionReportImage {
+  id        String   @id @default(cuid())
+  reportId  String
+  // Image stockée en base (Railway a un système de fichiers éphémère) —
+  // servie via une route authentifiée aux mêmes règles d'accès que le rapport.
+  imageData Bytes
+  imageMime String
+  sizeBytes Int
+  createdAt DateTime @default(now())
+
+  report MissionReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([reportId])
 }
 
 // ─────────────────────────────────────────────────────────────

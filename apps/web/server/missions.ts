@@ -438,7 +438,11 @@ export async function getMissionDetail(current: CurrentUser, missionId: string) 
           group: { select: { name: true } },
         },
       },
-      reports: { orderBy: { submittedAt: "desc" } },
+      reports: {
+        orderBy: { submittedAt: "desc" },
+        // Ids seulement — les octets sont servis par /api/rapports/images/[id]
+        include: { images: { select: { id: true }, orderBy: { createdAt: "asc" } } },
+      },
       attachments: true,
       minRecommendedLevel: { select: { label: true } },
       // Cibles et leur sort. Le décompte des renseignements acquis sert à
