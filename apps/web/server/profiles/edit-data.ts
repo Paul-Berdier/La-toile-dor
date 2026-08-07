@@ -10,6 +10,7 @@ async function loadRef(type: string): Promise<RefOption[]> {
   });
   return rows.map((r) => ({
     id: r.id,
+    code: r.code,
     label: r.label,
     category: r.category,
     colorHex: r.colorHex,
@@ -23,7 +24,7 @@ async function loadRef(type: string): Promise<RefOption[]> {
 export async function loadProfileRefs() {
   const [
     hairColors, skinTones, clans, chakraNatures, kekkeiGenkai, clanTechniques,
-    combatStyles, kenjutsuStyles, artifacts, jutsuTypes, factions, ranks,
+    combatStyles, kenjutsuStyles, artifacts, jutsuTypes, signatureTechniques, factions, ranks,
   ] = await Promise.all([
     loadRef(REFERENCE_TYPES.HAIR_COLOR),
     loadRef(REFERENCE_TYPES.SKIN_TONE),
@@ -35,10 +36,11 @@ export async function loadProfileRefs() {
     loadRef(REFERENCE_TYPES.KENJUTSU_STYLE),
     loadRef(REFERENCE_TYPES.LEGENDARY_ARTIFACT),
     loadRef(REFERENCE_TYPES.JUTSU_TYPE),
+    loadRef(REFERENCE_TYPES.SIGNATURE_TECHNIQUE),
     prisma.faction.findMany({ where: { isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
     prisma.playerLevel.findMany({ select: { id: true, label: true }, orderBy: { order: "asc" } }),
   ]);
-  return { hairColors, skinTones, clans, chakraNatures, kekkeiGenkai, clanTechniques, combatStyles, kenjutsuStyles, artifacts, jutsuTypes, factions, ranks };
+  return { hairColors, skinTones, clans, chakraNatures, kekkeiGenkai, clanTechniques, combatStyles, kenjutsuStyles, artifacts, jutsuTypes, signatureTechniques, factions, ranks };
 }
 
 export async function loadEditData(profileId: string): Promise<EditFormData | null> {

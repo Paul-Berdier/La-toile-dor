@@ -15,8 +15,8 @@ Sans référentiel, la base se remplit de variantes : `Uchiha`, `uchiha`,
 migration. Les enums sont réservés aux états réellement stables.
 
 Types : `HAIR_COLOR`, `SKIN_TONE`, `CLAN_FAMILY`, `CHAKRA_NATURE`,
-`KEKKEI_GENKAI`, `CLAN_TECHNIQUE`, `JUTSU_TYPE`, `COMBAT_STYLE`,
-`KENJUTSU_STYLE`, `LEGENDARY_ARTIFACT`.
+`KEKKEI_GENKAI`, `CLAN_TECHNIQUE`, `JUTSU_TYPE`, `SIGNATURE_TECHNIQUE`,
+`COMBAT_STYLE`, `KENJUTSU_STYLE`, `LEGENDARY_ARTIFACT`.
 
 ## Nature, lignée, technique : trois choses distinctes
 
@@ -40,6 +40,17 @@ se vole**. Un Sharingan implanté, un Susanoo observé chez qui n'est pas Uchiha
 c'est précisément le genre de renseignement que la Toile monnaye. Les deux
 notions ont donc leur propre champ dans le dossier, et un porteur hors clan se
 lit d'un coup d'œil.
+
+### Subjutsu répertoriés (`SIGNATURE_TECHNIQUE`)
+
+Les techniques propres d'un personnage restent du **texte libre** (un jutsu
+original doit pouvoir se consigner), mais les techniques notoires du serveur —
+Multi clonage, Rasengan, Chidori, Hiraishin, Marque maudite, paliers
+« Rang X » élémentaires, voies de l'Ermite (Senju, Hôki, Sabaku) — forment un
+catalogue proposé à la saisie : mêmes libellés partout, pas de variantes.
+Sur ces entrées, `category` porte le **code du type de jutsu** (`NINJUTSU`,
+`JUINJUTSU`, `SENJUTSU`…) : choisir une entrée du catalogue préremplit le type
+de la technique.
 
 ## Provenance des données (`sourceScope`)
 

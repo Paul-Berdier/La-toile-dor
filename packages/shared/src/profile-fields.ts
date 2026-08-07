@@ -141,6 +141,10 @@ export const REFERENCE_TYPES = {
   // un Sharingan se vole. Distinctes des Kekkei Genkai, qui sont hérités.
   CLAN_TECHNIQUE: "CLAN_TECHNIQUE",
   JUTSU_TYPE: "JUTSU_TYPE",
+  // Subjutsu répertoriés (Rasengan, Multi clonage, Ermites…) : catalogue
+  // proposé à la saisie des techniques propres, qui reste libre — une
+  // technique inconnue du catalogue se consigne quand même.
+  SIGNATURE_TECHNIQUE: "SIGNATURE_TECHNIQUE",
   COMBAT_STYLE: "COMBAT_STYLE",
   KENJUTSU_STYLE: "KENJUTSU_STYLE",
   LEGENDARY_ARTIFACT: "LEGENDARY_ARTIFACT",
@@ -156,6 +160,7 @@ export const REFERENCE_TYPE_LABELS: Record<ReferenceType, string> = {
   KEKKEI_GENKAI: "Kekkei Genkai",
   CLAN_TECHNIQUE: "Techniques de clan",
   JUTSU_TYPE: "Types de jutsu",
+  SIGNATURE_TECHNIQUE: "Subjutsu répertoriés",
   COMBAT_STYLE: "Styles de combat",
   KENJUTSU_STYLE: "Sous-styles de Kenjutsu",
   LEGENDARY_ARTIFACT: "Artefacts légendaires",

@@ -9,6 +9,8 @@ import { ReferencePicker } from "./reference-picker";
 
 export interface RefOption {
   id: string;
+  /** Code stable du référentiel — absent des entrées créées à la volée */
+  code?: string;
   label: string;
   category: string | null;
   colorHex: string | null;
@@ -66,6 +68,8 @@ interface Refs {
   factions: { id: string; name: string }[];
   ranks: { id: string; label: string }[];
   jutsuTypes: RefOption[];
+  /** Catalogue des subjutsu répertoriés, proposé par le TechniqueManager */
+  signatureTechniques: RefOption[];
 }
 
 const SEX_OPTIONS = [

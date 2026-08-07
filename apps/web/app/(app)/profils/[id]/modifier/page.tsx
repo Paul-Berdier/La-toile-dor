@@ -112,6 +112,11 @@ export default async function ModifierDossierPage({
           <TechniqueManager
             profileId={id}
             jutsuTypes={refs.jutsuTypes.map((j) => ({ id: j.id, label: j.label }))}
+            knownTechniques={refs.signatureTechniques.map((t) => ({
+              label: t.label,
+              // `category` du catalogue = code du type de jutsu à préremplir
+              jutsuTypeId: refs.jutsuTypes.find((j) => j.code === t.category)?.id ?? null,
+            }))}
             techniques={profile.techniques.map((t) => ({
               id: t.id,
               name: t.name,
