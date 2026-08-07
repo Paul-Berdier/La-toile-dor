@@ -65,17 +65,17 @@ export function ReferencePicker({
 
   const byId = useMemo(() => new Map(options.map((o) => [o.id, o])), [options]);
 
-  // Recherche : libellé OU alias, insensible aux accents et à la casse
+  // Recherche : libellé OU alias, insensible aux accents et à la casse.
+  // Aucune troncature : un plafond masquait les entrées au-delà de la 8e
+  // (Kekkei Genkai élémentaires, suffixe « ton » commun) — la liste défile.
   const matches = useMemo(() => {
     const q = normalizeRefLabel(query);
     const pool = options.filter((o) => !selected.includes(o.id));
-    if (!q) return pool.slice(0, 8);
-    return pool
-      .filter((o) => {
-        const haystack = [o.label, ...(o.aliases ?? [])].map(normalizeRefLabel);
-        return haystack.some((h) => h.includes(q));
-      })
-      .slice(0, 8);
+    if (!q) return pool;
+    return pool.filter((o) => {
+      const haystack = [o.label, ...(o.aliases ?? [])].map(normalizeRefLabel);
+      return haystack.some((h) => h.includes(q));
+    });
   }, [options, selected, query]);
 
   // Une saisie qui correspond exactement à une entrée existante ne doit pas

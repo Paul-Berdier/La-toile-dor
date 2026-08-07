@@ -1,7 +1,8 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useId, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { normalizeRefLabel } from "@toile/shared";
 import {
   addTechniqueAction,
   deleteTechniqueAction,
@@ -19,19 +20,33 @@ const label = "mb-1 block text-xs uppercase tracking-wider text-ink-faint";
 export function TechniqueManager({
   profileId,
   jutsuTypes,
+  knownTechniques = [],
   techniques,
 }: {
   profileId: string;
   jutsuTypes: { id: string; label: string }[];
+  /** Subjutsu répertoriés (Rasengan, Multi clonage…), proposés à la saisie */
+  knownTechniques?: { label: string; jutsuTypeId: string | null }[];
   techniques: { id: string; name: string; typeLabel: string | null; rank: string | null }[];
 }) {
   const router = useRouter();
+  const catalogId = useId();
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
   const [typeId, setTypeId] = useState("");
   const [rank, setRank] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+
+  // Choisir une entrée du catalogue préremplit le type — sans jamais écraser
+  // un type déjà renseigné : la saisie reste libre.
+  const onNameChange = (value: string) => {
+    setName(value);
+    const match = knownTechniques.find(
+      (k) => normalizeRefLabel(k.label) === normalizeRefLabel(value),
+    );
+    if (match?.jutsuTypeId && !typeId) setTypeId(match.jutsuTypeId);
+  };
 
   const add = () => {
     if (isPending || !name.trim()) return;
@@ -64,7 +79,12 @@ export function TechniqueManager({
         ))}
       </ul>
       <div className="grid gap-2 sm:grid-cols-2">
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nom de la technique *" aria-label="Nom de la technique" className={input} maxLength={120} />
+        <input value={name} onChange={(e) => onNameChange(e.target.value)} placeholder="Nom de la technique *" aria-label="Nom de la technique" className={input} maxLength={120} list={knownTechniques.length > 0 ? catalogId : undefined} />
+        {knownTechniques.length > 0 && (
+          <datalist id={catalogId}>
+            {knownTechniques.map((k) => <option key={k.label} value={k.label} />)}
+          </datalist>
+        )}
         <select value={typeId} onChange={(e) => setTypeId(e.target.value)} aria-label="Type de jutsu" className={input}>
           <option value="">Type — inconnu</option>
           {jutsuTypes.map((jt) => <option key={jt.id} value={jt.id}>{jt.label}</option>)}

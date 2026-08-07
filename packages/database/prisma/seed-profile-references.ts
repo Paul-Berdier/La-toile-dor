@@ -189,6 +189,28 @@ const JUTSU_TYPES: RefDef[] = [
   { code: "KUCHIYOSE", label: "Kuchiyose", kanji: "口寄せ", aliases: ["Invocation"], sourceScope: "MANGA_CANON" },
 ].map((d, i) => ({ ...d, sortOrder: (i + 1) * 10 }));
 
+// ── Subjutsu répertoriés ──
+// Catalogue proposé à la saisie des techniques propres (qui reste libre).
+// `category` porte le code du TYPE DE JUTSU correspondant : l'interface s'en
+// sert pour préremplir le type quand une entrée du catalogue est choisie.
+const SIGNATURE_TECHNIQUES: RefDef[] = [
+  { code: "MULTI_CLONAGE", label: "Multi clonage", kanji: "多重影分身の術", romaji: "Tajū Kage Bunshin no Jutsu", aliases: ["Multiclonage", "Tajû Kage Bunshin"], category: "NINJUTSU", sourceScope: "MANGA_CANON", sourceUrl: `${WIKI}/Multi_Clonage`, descriptionShort: "Clonage de l'ombre démultiplié — interdit tant il dévore le chakra." },
+  { code: "RASENGAN", label: "Rasengan", kanji: "螺旋丸", romaji: "Rasengan", aliases: ["Orbe tourbillonnant"], category: "NINJUTSU", sourceScope: "MANGA_CANON", sourceUrl: `${WIKI}/Rasengan`, descriptionShort: "Sphère de chakra en rotation, legs du Quatrième Hokage." },
+  { code: "CHIDORI", label: "Chidori", kanji: "千鳥", romaji: "Chidori", aliases: ["Mille oiseaux"], category: "NINJUTSU", sourceScope: "MANGA_CANON", sourceUrl: `${WIKI}/Chidori`, descriptionShort: "Perçée de foudre au chant de mille oiseaux." },
+  { code: "HIRAISHIN", label: "Hiraishin", kanji: "飛雷神の術", romaji: "Hiraishin no Jutsu", aliases: ["Dieu du tonnerre volant"], category: "NINJUTSU", sourceScope: "MANGA_CANON", sourceUrl: `${WIKI}/Hiraishin_no_Jutsu`, descriptionShort: "Téléportation instantanée vers une marque scellée." },
+  { code: "MARQUE_MAUDITE", label: "Marque maudite", kanji: "呪印", aliases: ["Sceau maudit", "Juin"], category: "JUINJUTSU", sourceScope: "MANGA_CANON", descriptionShort: "Sceau greffé conférant une puissance empruntée — et une emprise." },
+  // Paliers « Rang X » des règles du serveur : maîtrise ultime d'un élément.
+  { code: "RANG_X_DOTON", label: "Rang X — Doton", aliases: ["Rang X Terre"], category: "NINJUTSU", descriptionShort: "Palier ultime de la maîtrise du Doton (règles du serveur)." },
+  { code: "RANG_X_FUTON", label: "Rang X — Fûton", aliases: ["Rang X Vent"], category: "NINJUTSU", descriptionShort: "Palier ultime de la maîtrise du Fûton (règles du serveur)." },
+  { code: "RANG_X_KATON", label: "Rang X — Katon", aliases: ["Rang X Feu"], category: "NINJUTSU", descriptionShort: "Palier ultime de la maîtrise du Katon (règles du serveur)." },
+  { code: "RANG_X_SUITON", label: "Rang X — Suiton", aliases: ["Rang X Eau"], category: "NINJUTSU", descriptionShort: "Palier ultime de la maîtrise du Suiton (règles du serveur)." },
+  { code: "RANG_X_RAITON", label: "Rang X — Raiton", aliases: ["Rang X Foudre"], category: "NINJUTSU", descriptionShort: "Palier ultime de la maîtrise du Raiton (règles du serveur)." },
+  // Voies de l'ermite ouvertes par lignée.
+  { code: "ERMITE_SENJU", label: "Ermite — Senju", aliases: ["Mode Sage Senju"], category: "SENJUTSU", descriptionShort: "Voie de l'ermite ouverte à la lignée Senju (règles du serveur)." },
+  { code: "ERMITE_HOKI", label: "Ermite — Hôki", aliases: ["Mode Sage Hôki", "Ermite Hoki"], category: "SENJUTSU", descriptionShort: "Voie de l'ermite ouverte à la famille Hôki (règles du serveur)." },
+  { code: "ERMITE_SABAKU", label: "Ermite — Sabaku", aliases: ["Mode Sage Sabaku"], category: "SENJUTSU", descriptionShort: "Voie de l'ermite ouverte à la lignée Sabaku (règles du serveur)." },
+].map((d, i) => ({ ...d, sortOrder: (i + 1) * 10, sourceScope: d.sourceScope ?? ("SERVER_CUSTOM" as const) }));
+
 // ── Styles de combat ──
 const COMBAT_STYLES: RefDef[] = [
   { code: "TAIJUTSU", label: "Taijutsu", kanji: "体術", sourceScope: "MANGA_CANON" },
@@ -236,6 +258,7 @@ const ALL_REFERENCES: [string, RefDef[]][] = [
   ["KEKKEI_GENKAI", KEKKEI_GENKAI],
   ["CLAN_TECHNIQUE", CLAN_TECHNIQUES],
   ["JUTSU_TYPE", JUTSU_TYPES],
+  ["SIGNATURE_TECHNIQUE", SIGNATURE_TECHNIQUES],
   ["COMBAT_STYLE", COMBAT_STYLES],
   ["KENJUTSU_STYLE", KENJUTSU_STYLES],
   ["LEGENDARY_ARTIFACT", ARTIFACTS],
