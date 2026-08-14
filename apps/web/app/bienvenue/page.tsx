@@ -22,11 +22,16 @@ export default async function BienvenuePage() {
 
   const state = await getOnboardingState(current.session.userId);
   const step: "identity" | "group" = state.identityDone ? "group" : "identity";
-  // Le grade est déclaré par le joueur lui-même à cette étape
-  const levels = await prisma.playerLevel.findMany({
-    orderBy: { order: "asc" },
-    select: { id: true, label: true },
-  });
+  const [levels, userLevel] = await Promise.all([
+    prisma.playerLevel.findMany({
+      orderBy: { order: "asc" },
+      select: { id: true, label: true },
+    }),
+    prisma.user.findUniqueOrThrow({
+      where: { id: current.session.userId },
+      select: { playerLevel: { select: { id: true, label: true } } },
+    }),
+  ]);
   // Faction prévue par l'invitation pour le futur groupe (facultative)
   const plannedFaction = state.invitation?.factionId
     ? await prisma.faction.findUnique({
@@ -60,7 +65,7 @@ export default async function BienvenuePage() {
           </div>
 
           {step === "identity" ? (
-            <IdentityForm levels={levels} />
+            <IdentityForm levels={levels} assignedLevel={userLevel.playerLevel} />
           ) : (
             <>
               <p className="mb-4 text-xs leading-relaxed text-ink-muted">

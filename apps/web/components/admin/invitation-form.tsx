@@ -33,10 +33,8 @@ const ROLE_LABELS: Record<string, string> = {
 /**
  * Formulaire « Tendre un nouveau fil ».
  *
- * L'inviteur décide d'une seule chose : la POSITION de l'invité (son rôle et,
- * le cas échéant, le groupe qu'il rejoint). Le grade du personnage n'est plus
- * demandé ici — il appartient au joueur, qui le déclare à sa première
- * connexion en même temps que son Titre.
+ * L'inviteur fixe la position de l'invité et son grade RP. Le grade est une
+ * donnée contrôlée car il participe aux règles d'éligibilité des missions.
  *
  * - `allowedRoles` : rôles que l'inviteur peut accorder (revérifié serveur) ;
  * - `groups` : groupes sélectionnables par la modération ;
@@ -48,15 +46,18 @@ export function InvitationForm({
   groups,
   leaderGroups,
   factions = [],
+  levels,
 }: {
   allowedRoles: string[];
   groups: GroupOption[];
   leaderGroups: GroupOption[] | null;
   /** Factions actives — rattachement facultatif du groupe qu'un chef fondera. */
   factions?: { id: string; name: string }[];
+  levels: { id: string; label: string }[];
 }) {
   const router = useRouter();
   const [roleSlug, setRoleSlug] = useState(allowedRoles[allowedRoles.length - 1] ?? "group_member");
+  const [playerLevelId, setPlayerLevelId] = useState(levels[0]?.id ?? "");
   const [groupId, setGroupId] = useState(leaderGroups?.[0]?.id ?? "");
   // Parcours du chef invité : rejoindre un groupe existant ou fonder le sien
   const [leaderMode, setLeaderMode] = useState<"EXISTING_GROUP" | "CREATE_NEW_GROUP">("EXISTING_GROUP");
@@ -80,6 +81,7 @@ export function InvitationForm({
     startTransition(async () => {
       const res = await createInvitationAction({
         roleSlug,
+        playerLevelId,
         groupId: groupId && !creatingNewGroup ? groupId : undefined,
         factionId: creatingNewGroup && factionId ? factionId : undefined,
         groupOnboardingMode: isLeaderInvite && !leaderGroups ? leaderMode : "NONE",
@@ -107,8 +109,7 @@ export function InvitationForm({
         Tendre un nouveau fil
       </h2>
       <p className="mb-3 text-xs text-ink-faint">
-        Choisissez son rôle et, s&rsquo;il y a lieu, le groupe qu&rsquo;il rejoint.
-        L&rsquo;invité déclarera lui-même son Titre et son grade à sa première connexion.
+        Choisissez son rôle, son grade et, s&rsquo;il y a lieu, le groupe qu&rsquo;il rejoint.
       </p>
 
       {inviteUrl ? (
@@ -145,6 +146,26 @@ export function InvitationForm({
                 <option key={slug} value={slug}>{ROLE_LABELS[slug] ?? slug}</option>
               ))}
             </select>
+          </div>
+
+          <div className="sm:col-span-2">
+            <label htmlFor="inv-level" className={label}>Grade du personnage *</label>
+            <select
+              id="inv-level"
+              value={playerLevelId}
+              onChange={(event) => setPlayerLevelId(event.target.value)}
+              required
+              className={input}
+            >
+              <option value="">— choisir un grade —</option>
+              {levels.map((level) => (
+                <option key={level.id} value={level.id}>{level.label}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-[0.65rem] text-ink-faint">
+              Ce grade sera affiché à l&rsquo;invité et ne pourra être modifié que par la modération.
+              {leaderGroups && " Les invitations de chef utilisent le grade initial ; la modération peut ensuite le faire évoluer."}
+            </p>
           </div>
 
           {/* Chef invité par la modération : rejoindre ou fonder */}
@@ -290,7 +311,7 @@ export function InvitationForm({
             <Button
               variant="gold"
               onClick={submit}
-              disabled={isPending || (roleNeedsGroup && !creatingNewGroup && !groupId)}
+              disabled={isPending || !playerLevelId || (roleNeedsGroup && !creatingNewGroup && !groupId)}
             >
               {isPending ? "Tissage…" : "Générer l'invitation"}
             </Button>

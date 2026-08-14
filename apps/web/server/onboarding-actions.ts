@@ -51,9 +51,38 @@ export async function completeIdentityAction(raw: unknown): Promise<Result> {
     };
   }
 
-  // Le grade est déclaré par le joueur : il doit exister dans le référentiel
+  const before = await prisma.user.findUniqueOrThrow({
+    where: { id: current.session.userId },
+    select: {
+      displayName: true,
+      firstName: true,
+      lastName: true,
+      playerLevelId: true,
+      privacyAcknowledgedAt: true,
+      profileCompleted: true,
+    },
+  });
+
+  if (before.profileCompleted) {
+    return {
+      ok: false,
+      error: "Votre onboarding est déjà terminé. Utilisez la page Compte pour modifier votre profil.",
+    };
+  }
+
+  // Une invitation fixe déjà le grade. Un client altéré ne peut pas le
+  // remplacer ; seuls les anciens comptes sans grade disposent d'un choix
+  // unique pendant cet onboarding.
+  if (before.playerLevelId && data.playerLevelId !== before.playerLevelId) {
+    return {
+      ok: false,
+      fieldErrors: { playerLevelId: ["Ce grade a été fixé par votre invitation."] },
+      error: "Seule la modération peut modifier ce grade.",
+    };
+  }
+  const effectiveLevelId = before.playerLevelId ?? data.playerLevelId;
   const level = await prisma.playerLevel.findUnique({
-    where: { id: data.playerLevelId },
+    where: { id: effectiveLevelId },
     select: { id: true },
   });
   if (!level) {
@@ -64,24 +93,57 @@ export async function completeIdentityAction(raw: unknown): Promise<Result> {
     };
   }
 
-  const before = await prisma.user.findUniqueOrThrow({
-    where: { id: current.session.userId },
-    select: { displayName: true, firstName: true, lastName: true },
-  });
-
   try {
-    await prisma.user.update({
-      where: { id: current.session.userId },
-      data: {
+    await prisma.$transaction(async (tx) => {
+      const liveUser = await tx.user.findUnique({
+        where: { id: current.session.userId },
+        select: {
+          playerLevelId: true,
+          privacyAcknowledgedAt: true,
+          profileCompleted: true,
+        },
+      });
+      if (!liveUser || liveUser.profileCompleted) throw new Error("ONBOARDING_COMPLETED");
+
+      if (!before.playerLevelId) {
+        const assigned = await tx.user.updateMany({
+          where: { id: current.session.userId, playerLevelId: null },
+          data: { playerLevelId: level.id },
+        });
+        if (assigned.count !== 1) throw new Error("LEVEL_CHANGED");
+      }
+      await tx.user.update({
+        where: { id: current.session.userId },
+        data: {
         firstName: data.firstName.trim(),
         lastName: data.lastName?.trim() ? data.lastName.trim() : null,
         displayName,
         displayNameNorm: norm,
-        playerLevelId: level.id,
-        privacyAcknowledgedAt: new Date(),
-      },
-    });
-  } catch {
+        // La date d'acceptation initiale est une preuve : une nouvelle
+        // soumission ne doit jamais la remplacer.
+        privacyAcknowledgedAt: liveUser.privacyAcknowledgedAt ?? new Date(),
+        },
+      });
+    }, { isolationLevel: "Serializable" });
+  } catch (error) {
+    if (error instanceof Error && error.message === "ONBOARDING_COMPLETED") {
+      return {
+        ok: false,
+        error: "Votre onboarding vient déjà d'être terminé. Rechargez la page.",
+      };
+    }
+    if (error instanceof Error && error.message === "LEVEL_CHANGED") {
+      return {
+        ok: false,
+        error: "Votre grade vient d'être attribué par la modération. Rechargez la page.",
+      };
+    }
+    if ((error as { code?: string }).code === "P2034") {
+      return {
+        ok: false,
+        error: "Une autre mise à jour vient d'être enregistrée. Rechargez la page.",
+      };
+    }
     // Course sur l'unicité (deux onboarding simultanés) → message propre
     return {
       ok: false,
@@ -137,9 +199,32 @@ export async function createOnboardingGroupAction(raw: unknown): Promise<Result>
   const meta = await requestMeta();
   try {
     await prisma.$transaction(async (tx) => {
+      // Autorisation relue dans LA transaction. Deux soumissions concurrentes
+      // observent le même prédicat (aucun groupe dirigé) et l'une d'elles est
+      // annulée par l'isolation Serializable lors de l'écriture du profil.
+      const [liveInvitation, liveUser, ledGroupCount] = await Promise.all([
+        tx.invitation.findUnique({
+          where: { usedById: current.session.userId },
+          select: { groupOnboardingMode: true, factionId: true },
+        }),
+        tx.user.findUnique({
+          where: { id: current.session.userId },
+          select: { firstName: true, privacyAcknowledgedAt: true },
+        }),
+        tx.groupMember.count({
+          where: { userId: current.session.userId, isLeader: true },
+        }),
+      ]);
+      if (liveInvitation?.groupOnboardingMode !== "CREATE_NEW_GROUP" || ledGroupCount !== 0) {
+        throw new Error("ONBOARDING_CHANGED");
+      }
+      if (!liveUser?.firstName || !liveUser.privacyAcknowledgedAt) {
+        throw new Error("IDENTITY_INCOMPLETE");
+      }
+
       // La faction est un rattachement facultatif du groupe, jamais une
       // appartenance ni une autorité créée implicitement.
-      const factionId = state.invitation?.factionId ?? null;
+      const factionId = liveInvitation.factionId ?? null;
       if (factionId) {
         const faction = await tx.faction.findFirst({ where: { id: factionId, isActive: true } });
         if (!faction) throw new Error("FACTION_INACTIVE");
@@ -176,13 +261,25 @@ export async function createOnboardingGroupAction(raw: unknown): Promise<Result>
         newValues: { name, via: "onboarding" },
         ...meta,
       });
-    });
+    }, { isolationLevel: "Serializable" });
   } catch (error) {
+    if (error instanceof Error && error.message === "ONBOARDING_CHANGED") {
+      return { ok: false, error: "Ce groupe a déjà été créé ou votre invitation a changé." };
+    }
+    if (error instanceof Error && error.message === "IDENTITY_INCOMPLETE") {
+      return { ok: false, error: "Complétez d'abord votre identité." };
+    }
     if (error instanceof Error && error.message === "NAME_TAKEN") {
       return { ok: false, error: "Un groupe porte déjà ce nom dans ce rattachement." };
     }
     if (error instanceof Error && error.message === "FACTION_INACTIVE") {
       return { ok: false, error: "La faction prévue par l'invitation n'est plus disponible." };
+    }
+    if ((error as { code?: string }).code === "P2034") {
+      return {
+        ok: false,
+        error: "Une autre création vient d'être enregistrée. Rechargez la page.",
+      };
     }
     throw error;
   }

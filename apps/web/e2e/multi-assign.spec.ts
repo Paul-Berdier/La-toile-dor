@@ -70,7 +70,7 @@ test("le modérateur attribue la mission à DEUX groupes et la démarre", async 
     if (index === 3) continue; // le chef, déjà engagé via la première cellule
     await checkbox.check();
   }
-  await expect(dialog.getByText("Effectif total : 5")).toBeVisible();
+  await expect(dialog.getByText(/Effectif : 5 \/ /)).toBeVisible();
 
   // Groupe principal : le premier
   await dialog.getByRole("radio").first().check();

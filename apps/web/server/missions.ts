@@ -14,11 +14,13 @@ import {
   canViewAssignmentRoster,
   toPublicRosterAgent,
   resolveMissionViewLevel,
+  type EligibilityModeValue,
 } from "@toile/shared";
 import type { CurrentUser } from "@/lib/session";
 import { maskValue } from "@/lib/streamer";
 import { getRpTimeConfig } from "@/server/rp-config";
 import { maybeExpireMissions } from "@/server/expiration";
+import { hasCompatibleLedGroup } from "@/server/mission-compatibility";
 
 /** Équipe assignée, visible selon les mêmes règles que l'attribution. */
 export interface TeamSummary {
@@ -51,6 +53,16 @@ export interface AgentOption {
   id: string;
   displayName: string;
   levelLabel: string | null;
+  levelOrder: number | null;
+}
+
+/** Critères nécessaires à la constitution et à la validation d'une équipe. */
+export interface MissionEligibilityConfig {
+  groupSizeMin: number;
+  groupSizeMax: number;
+  minRecommendedLevel: { label: string; order: number } | null;
+  eligibilityMode: EligibilityModeValue;
+  requiresEnhancedReview: boolean;
 }
 
 /** Carte Kanban : la vue sérialisée + méta d'affichage non confidentielles. */
@@ -64,6 +76,7 @@ export interface BoardCard {
   /** Modération uniquement : alimentent la modale d'attribution */
   pendingClaims?: CardClaimInfo[];
   activeAssignments?: CardAssignmentInfo[];
+  assignmentEligibility: MissionEligibilityConfig;
 }
 
 export interface BoardData {
@@ -103,7 +116,7 @@ export async function getAccessContext(current: CurrentUser) {
         group: {
           include: {
             members: {
-              where: { user: { status: "ACTIVE" } },
+              where: { user: { status: "ACTIVE", profileCompleted: true } },
               orderBy: [{ isLeader: "desc" }, { joinedAt: "asc" }],
               select: {
                 user: {
@@ -137,7 +150,7 @@ export async function getAccessContext(current: CurrentUser) {
           id: member.user.id,
           displayName: member.user.displayName,
           levelLabel: member.user.playerLevel?.label ?? null,
-          levelOrder: member.user.playerLevel?.order ?? 0,
+          levelOrder: member.user.playerLevel?.order ?? null,
         })),
       })),
     participantMissionIds: new Set(participations.map((p) => p.missionId)),
@@ -190,6 +203,7 @@ const missionInclude = {
   assignedFaction: { select: { name: true } },
   assignedGroup: { select: { name: true, factionId: true } },
   targetLevel: { select: { label: true, slug: true } },
+  minRecommendedLevel: { select: { label: true, order: true } },
   targetFaction: { select: { name: true } },
   assignments: {
     where: { active: true },
@@ -278,12 +292,11 @@ export async function getBoard(
       claimCount: mission._count.claims,
     });
 
-    // Filtre « compatibles avec mon groupe » (taille uniquement — le niveau
-    // moyen relève de l'appréciation du chef, signalé dans le détail)
-    if (filters.compatibleWithMyGroup && ctx.ledGroups.length > 0) {
-      const fits = ctx.ledGroups.some(
-        (g) => g.memberCount >= mission.groupSizeMin && g.memberCount <= mission.groupSizeMax,
-      );
+    // Un groupe est compatible s'il peut fournir au moins un agent conforme.
+    // Une contribution sous le minimum reste valable en collaboration, et les
+    // membres non retenus ne font jamais dépasser le maximum.
+    if (filters.compatibleWithMyGroup) {
+      const fits = hasCompatibleLedGroup(ctx.ledGroups, mission);
       if (!fits) continue;
     }
 
@@ -329,6 +342,14 @@ export async function getBoard(
         "targetLevelId" in view && view.targetLevelId ? mission.targetLevel?.label ?? null : null,
       pendingNotifications: 0,
       canOpen: true,
+      assignmentEligibility: {
+        groupSizeMin: mission.groupSizeMin,
+        groupSizeMax: mission.groupSizeMax,
+        minRecommendedLevel: mission.minRecommendedLevel,
+        eligibilityMode: mission.eligibilityMode,
+        requiresEnhancedReview:
+          mission.requiresEnhancedReview || mission.eligibilityMode === "MANUAL_REVIEW",
+      },
       // Données d'attribution : STRICTEMENT réservées à la modération
       ...(ctx.isModerator
         ? {
@@ -367,14 +388,14 @@ export async function getBoard(
           include: {
             faction: { select: { name: true } },
             members: {
-              where: { user: { status: "ACTIVE" } },
+              where: { user: { status: "ACTIVE", profileCompleted: true } },
               orderBy: [{ isLeader: "desc" }, { joinedAt: "asc" }],
               select: {
                 user: {
                   select: {
                     id: true,
                     displayName: true,
-                    playerLevel: { select: { label: true } },
+                    playerLevel: { select: { label: true, order: true } },
                   },
                 },
               },
@@ -391,6 +412,7 @@ export async function getBoard(
           id: member.user.id,
           displayName: member.user.displayName,
           levelLabel: member.user.playerLevel?.label ?? null,
+          levelOrder: member.user.playerLevel?.order ?? null,
         })),
       }))
     : [];
@@ -444,7 +466,7 @@ export async function getMissionDetail(current: CurrentUser, missionId: string) 
         include: { images: { select: { id: true }, orderBy: { createdAt: "asc" } } },
       },
       attachments: true,
-      minRecommendedLevel: { select: { label: true } },
+      minRecommendedLevel: { select: { label: true, order: true } },
       // Cibles et leur sort. Le décompte des renseignements acquis sert à
       // signaler un dossier resté vide avant de clore la mission.
       targets: {
@@ -480,14 +502,14 @@ export async function getMissionDetail(current: CurrentUser, missionId: string) 
             include: {
               faction: { select: { name: true } },
               members: {
-                where: { user: { status: "ACTIVE" } },
+                where: { user: { status: "ACTIVE", profileCompleted: true } },
                 orderBy: [{ isLeader: "desc" }, { joinedAt: "asc" }],
                 select: {
                   user: {
                     select: {
                       id: true,
                       displayName: true,
-                      playerLevel: { select: { label: true } },
+                      playerLevel: { select: { label: true, order: true } },
                     },
                   },
                 },
@@ -504,6 +526,7 @@ export async function getMissionDetail(current: CurrentUser, missionId: string) 
             id: member.user.id,
             displayName: member.user.displayName,
             levelLabel: member.user.playerLevel?.label ?? null,
+            levelOrder: member.user.playerLevel?.order ?? null,
           })),
         }))
       : [];

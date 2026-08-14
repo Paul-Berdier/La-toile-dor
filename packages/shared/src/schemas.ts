@@ -39,7 +39,6 @@ export const eligibilityModeSchema = z.enum([
   "RECOMMENDATION",
   "WARNING",
   "STRICT",
-  "MANUAL_REVIEW",
 ]);
 
 const secondaryObjectiveSchema = z.object({
@@ -77,6 +76,7 @@ export const missionCreateSchema = z
     groupSizeMin: z.number().int().min(1).max(50),
     groupSizeMax: z.number().int().min(1).max(50),
     eligibilityMode: eligibilityModeSchema.default("WARNING"),
+    requiresEnhancedReview: z.boolean().default(false),
     // Délai : soit une date réelle, soit une durée RP, soit aucun
     expiresAt: z.string().datetime().nullable().optional(),
     rpDuration: z
@@ -127,6 +127,7 @@ export const claimDecisionSchema = z.object({
   claimId: z.string().cuid(),
   decision: z.enum(["ACCEPTED", "REJECTED", "INFO_REQUESTED"]),
   note: z.string().max(2000).optional(),
+  reviewConfirmed: z.boolean().default(false),
 });
 
 export const missionMoveSchema = z.object({
@@ -164,10 +165,9 @@ export const invitationCreateSchema = z.object({
   roleSlug: z.enum(["super_admin", "moderator", "group_leader", "group_member"]),
   factionId: z.string().cuid().optional(),
   groupId: z.string().cuid().optional(),
-  // Le grade n'est PLUS choisi par l'inviteur : l'invité le renseigne à sa
-  // première connexion. Le champ reste accepté pour ne pas invalider les
-  // appels existants, mais le formulaire ne l'envoie plus.
-  playerLevelId: z.string().cuid("Niveau invalide.").optional(),
+  // Le grade intervient dans l'éligibilité aux missions : il est fixé par
+  // l'inviteur et ne peut pas être élevé par le joueur lui-même ensuite.
+  playerLevelId: z.string().cuid("Sélectionnez le grade du personnage."),
   // Parcours de groupe d'un chef invité :
   // EXISTING_GROUP → rejoint groupId ; CREATE_NEW_GROUP → fondera son groupe
   groupOnboardingMode: z
@@ -221,7 +221,7 @@ export type OnboardingIdentityInput = z.infer<typeof onboardingIdentitySchema>;
  * acceptée et son horodatage ne doit pas être réécrit.
  */
 export const selfIdentityUpdateSchema = onboardingIdentitySchema
-  .omit({ privacyAcknowledged: true })
+  .omit({ privacyAcknowledged: true, playerLevelId: true })
   .extend({
     // Portée de son prénom et de son nom : c'est à l'intéressé de la fixer.
     identityVisibility: z.enum(IDENTITY_VISIBILITIES).default(DEFAULT_IDENTITY_VISIBILITY),
@@ -247,6 +247,7 @@ export const missionAssignSchema = z
     missionId: z.string().cuid(),
     start: z.boolean().default(true), // passer la mission « en cours »
     reason: z.string().max(1000).optional(),
+    reviewConfirmed: z.boolean().default(false),
     assignments: z
       .array(
         z.object({

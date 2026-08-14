@@ -16,18 +16,22 @@ const label = "mb-1 block text-xs uppercase tracking-wider text-ink-faint";
  * - le pseudonyme demandé est un TITRE de jeu de rôle, pas le pseudo Discord.
  *   Le champ démarre donc VIDE, jamais pré-rempli avec le nom Discord, qui
  *   ferait croire qu'il suffit de le valider ;
- * - le grade est choisi ICI, par le joueur, et non imposé par l'inviteur.
+ * - le grade fixé dans l'invitation est affiché sans pouvoir être élevé par le
+ *   joueur. Le choix reste disponible uniquement pour les anciens comptes qui
+ *   n'ont encore aucun grade.
  */
 export function IdentityForm({
   levels,
+  assignedLevel,
 }: {
   levels: { id: string; label: string }[];
+  assignedLevel: { id: string; label: string } | null;
 }) {
   const router = useRouter();
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [playerLevelId, setPlayerLevelId] = useState("");
+  const [playerLevelId, setPlayerLevelId] = useState(assignedLevel?.id ?? "");
   const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
   const [errors, setErrors] = useState<Record<string, string[]>>({});
   const [globalError, setGlobalError] = useState<string | null>(null);
@@ -94,26 +98,40 @@ export function IdentityForm({
       </div>
 
       <div>
-        <label htmlFor="ob-level" className={label}>
-          Grade de votre personnage *
-        </label>
-        <p className="mb-1.5 text-xs text-ink-muted">
-          C&rsquo;est à vous de le déclarer : personne ne l&rsquo;a choisi à votre place.
-        </p>
-        <select
-          id="ob-level"
-          value={playerLevelId}
-          onChange={(e) => setPlayerLevelId(e.target.value)}
-          required
-          className={input}
-        >
-          <option value="">— choisir votre grade —</option>
-          {levels.map((level) => (
-            <option key={level.id} value={level.id}>
-              {level.label}
-            </option>
-          ))}
-        </select>
+        {assignedLevel ? (
+          <>
+            <span className={label}>Grade de votre personnage</span>
+            <div className="border border-border-default bg-elevated px-3 py-2 text-sm text-ink-muted">
+              {assignedLevel.label}
+            </div>
+            <p className="mt-1 text-[0.65rem] text-ink-faint">
+              Grade fixé dans votre invitation. Seule la modération peut le modifier.
+            </p>
+          </>
+        ) : (
+          <>
+            <label htmlFor="ob-level" className={label}>
+              Grade de votre personnage *
+            </label>
+            <p className="mb-1.5 text-xs text-ink-muted">
+              Votre ancien compte n&rsquo;a aucun grade : choisissez-le une seule fois.
+            </p>
+            <select
+              id="ob-level"
+              value={playerLevelId}
+              onChange={(e) => setPlayerLevelId(e.target.value)}
+              required
+              className={input}
+            >
+              <option value="">— choisir votre grade —</option>
+              {levels.map((level) => (
+                <option key={level.id} value={level.id}>
+                  {level.label}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
         {fieldError("playerLevelId") && (
           <p role="alert" className="mt-1 text-xs text-blood-bright">
             {fieldError("playerLevelId")}

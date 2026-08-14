@@ -33,7 +33,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   items.push({ href: "/profils", label: "Dossiers", glyph: "諜" });
   items.push({ href: "/classement", label: "Classement", glyph: "位" });
   items.push({ href: "/notifications", label: "Échos", glyph: "響", badge: unreadEchoes });
-  // Accessible à tous : chacun modifie son Titre, son grade et son nom
+  // Accessible à tous : chacun modifie son Titre, son nom et sa confidentialité.
+  // Le grade affiché reste sous l'autorité de la modération.
   items.push({ href: "/compte", label: "Mes infos", glyph: "己" });
   if (
     current.permissions.has(PERMISSIONS.INVITE_CREATE) ||

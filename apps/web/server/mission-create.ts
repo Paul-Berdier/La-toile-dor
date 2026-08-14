@@ -92,6 +92,20 @@ export async function createMissionAction(raw: unknown): Promise<CreateMissionRe
       fieldErrors: { targetFactionId: ["Faction de cible invalide."] },
     };
   }
+  if (data.targetLevelSlug && !targetLevel) {
+    return {
+      ok: false,
+      error: "Le niveau estimé de la cible est inconnu.",
+      fieldErrors: { targetLevelSlug: ["Niveau de cible invalide."] },
+    };
+  }
+  if (data.minRecommendedLevelSlug && !minLevel) {
+    return {
+      ok: false,
+      error: "Le niveau minimal des agents est inconnu.",
+      fieldErrors: { minRecommendedLevelSlug: ["Niveau minimal invalide."] },
+    };
+  }
 
   // Les dossiers rattachés doivent exister et être vivants : un identifiant
   // fabriqué ou pointant vers un dossier archivé est simplement ignoré plutôt
@@ -133,6 +147,7 @@ export async function createMissionAction(raw: unknown): Promise<CreateMissionRe
       groupSizeMin: data.groupSizeMin,
       groupSizeMax: data.groupSizeMax,
       eligibilityMode: data.eligibilityMode,
+      requiresEnhancedReview: data.requiresEnhancedReview,
       expiresAt,
       publishedAt: data.publish ? new Date() : null,
       creatorId: current.session.userId,
@@ -240,6 +255,20 @@ export async function updateMissionAction(input: {
       fieldErrors: { targetFactionId: ["Faction de cible invalide."] },
     };
   }
+  if (data.targetLevelSlug && !targetLevel) {
+    return {
+      ok: false,
+      error: "Le niveau estimé de la cible est inconnu.",
+      fieldErrors: { targetLevelSlug: ["Niveau de cible invalide."] },
+    };
+  }
+  if (data.minRecommendedLevelSlug && !minLevel) {
+    return {
+      ok: false,
+      error: "Le niveau minimal des agents est inconnu.",
+      fieldErrors: { minRecommendedLevelSlug: ["Niveau minimal invalide."] },
+    };
+  }
 
   const publishDraft = existing.status === "DRAFT" && data.publish;
   const nextStatus = publishDraft ? "AVAILABLE" : existing.status;
@@ -277,6 +306,7 @@ export async function updateMissionAction(input: {
           groupSizeMin: data.groupSizeMin,
           groupSizeMax: data.groupSizeMax,
           eligibilityMode: data.eligibilityMode,
+          requiresEnhancedReview: data.requiresEnhancedReview,
           expiresAt,
           publishedAt: publishDraft ? new Date() : existing.publishedAt,
           responsibleModeratorId: current.session.userId,

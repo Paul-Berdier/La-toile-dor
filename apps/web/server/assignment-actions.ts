@@ -4,16 +4,29 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@toile/database";
 import type { MissionStatus } from "@toile/database";
 import { audit } from "@toile/auth";
-import { PERMISSIONS, missionAssignSchema } from "@toile/shared";
+import {
+  applyEligibilityMode,
+  evaluateTeamEligibility,
+  PERMISSIONS,
+  missionAssignSchema,
+} from "@toile/shared";
 import { requireUser, requestMeta } from "@/lib/session";
 import {
   enqueueNotifications,
   userIdsWithPermission,
 } from "@/server/notifications";
+import { canReusePublicRosterConsent } from "@/server/mission-lifecycle";
 
 export interface AssignResult {
   ok: boolean;
   error?: string;
+  warnings?: string[];
+}
+
+class AssignmentEligibilityError extends Error {
+  constructor(readonly issues: string[]) {
+    super("ELIGIBILITY");
+  }
 }
 
 /**
@@ -36,7 +49,8 @@ export async function assignMissionAction(raw: unknown): Promise<AssignResult> {
   if (!parsed.success) {
     return { ok: false, error: parsed.error.errors[0]?.message ?? "Requête invalide." };
   }
-  const { missionId, assignments, start, reason } = parsed.data;
+  const { missionId, assignments, start, reason, reviewConfirmed } = parsed.data;
+  const normalizedReason = reason?.trim() || undefined;
 
   // Vérification des groupes (existence, activité, effectif réel)
   const groups = await prisma.group.findMany({
@@ -44,7 +58,7 @@ export async function assignMissionAction(raw: unknown): Promise<AssignResult> {
     include: {
       faction: true,
       members: {
-        where: { user: { status: "ACTIVE" } },
+        where: { user: { status: "ACTIVE", profileCompleted: true } },
         select: { userId: true },
       },
     },
@@ -58,7 +72,9 @@ export async function assignMissionAction(raw: unknown): Promise<AssignResult> {
     if (entry.participantIds.some((userId) => !memberIds.has(userId))) {
       return {
         ok: false,
-        error: `Un agent sélectionné n'appartient plus à ${group.name} ou n'est plus actif.`,
+        error:
+          `Un agent sélectionné n'appartient plus à ${group.name}, n'est plus actif ` +
+          "ou n'a pas terminé son profil.",
       };
     }
   }
@@ -68,18 +84,44 @@ export async function assignMissionAction(raw: unknown): Promise<AssignResult> {
   const totalHeadcount = assignments.reduce((sum, a) => sum + a.participantIds.length, 0);
 
   let fromStatus: MissionStatus = "AVAILABLE";
+  let toStatus: MissionStatus = start ? "IN_PROGRESS" : "ASSIGNED";
+  let eligibilityWarnings: string[] = [];
   try {
     await prisma.$transaction(async (tx) => {
       // Relecture du statut DANS la transaction (protection concurrence)
       const mission = await tx.mission.findUnique({
         where: { id: missionId },
-        select: { id: true, status: true, code: true, rank: true, category: true, publicTitle: true },
+        select: {
+          id: true,
+          status: true,
+          code: true,
+          rank: true,
+          category: true,
+          publicTitle: true,
+          groupSizeMin: true,
+          groupSizeMax: true,
+          eligibilityMode: true,
+          requiresEnhancedReview: true,
+          minRecommendedLevel: { select: { label: true, order: true } },
+        },
       });
       if (!mission) throw new Error("NOT_FOUND");
       if (!["AVAILABLE", "CLAIM_PENDING", "ASSIGNED", "IN_PROGRESS"].includes(mission.status)) {
         throw new Error("BAD_STATUS");
       }
       fromStatus = mission.status;
+      toStatus = start ? "IN_PROGRESS" : mission.status === "IN_PROGRESS" ? "IN_PROGRESS" : "ASSIGNED";
+      const finalTeamRequired = start || mission.status === "IN_PROGRESS";
+
+      // Un contrôle renforcé est une décision explicite du modérateur, pas une
+      // simple case décorative. Toute attribution ou modification exige une
+      // confirmation ET une note, même si le démarrage est différé.
+      if (
+        (mission.requiresEnhancedReview || mission.eligibilityMode === "MANUAL_REVIEW") &&
+        (!reviewConfirmed || !normalizedReason)
+      ) {
+        throw new Error("ENHANCED_REVIEW_REQUIRED");
+      }
 
       // Les membres et l'état des groupes sont relus dans la transaction :
       // une ancienne modale ne peut pas engager un agent parti depuis.
@@ -89,8 +131,11 @@ export async function assignMissionAction(raw: unknown): Promise<AssignResult> {
           id: true,
           factionId: true,
           members: {
-            where: { user: { status: "ACTIVE" } },
-            select: { userId: true },
+            where: { user: { status: "ACTIVE", profileCompleted: true } },
+            select: {
+              userId: true,
+              user: { select: { playerLevel: { select: { order: true } } } },
+            },
           },
         },
       });
@@ -102,16 +147,67 @@ export async function assignMissionAction(raw: unknown): Promise<AssignResult> {
           throw new Error("GROUPS_CHANGED");
         }
       }
+
+      // Recalcul sur les agents relus dans la transaction. Le bilan affiché
+      // dans la modale ne constitue jamais une autorisation suffisante.
+      const participantLevels = assignments.flatMap((entry) => {
+        const liveGroup = liveGroups.find((group) => group.id === entry.groupId)!;
+        const membersById = new Map(
+          liveGroup.members.map((member) => [member.userId, member] as const),
+        );
+        return entry.participantIds.map(
+          (userId) => membersById.get(userId)?.user.playerLevel?.order ?? null,
+        );
+      });
+      const eligibilityIssues = evaluateTeamEligibility({
+        participantLevels,
+        groupSizeMin: mission.groupSizeMin,
+        groupSizeMax: mission.groupSizeMax,
+        minLevel: mission.minRecommendedLevel,
+      });
+      const eligibilityDecision = applyEligibilityMode(
+        mission.eligibilityMode,
+        eligibilityIssues,
+      );
+      const finalTeamBelowMinimum =
+        finalTeamRequired && eligibilityIssues.some((issue) => issue.code === "below_min");
+      if (
+        mission.eligibilityMode === "STRICT" &&
+        (!eligibilityDecision.allowed || finalTeamBelowMinimum)
+      ) {
+        const blockingIssues = eligibilityIssues.filter(
+          (issue) => issue.blocksStrict || (finalTeamRequired && issue.code === "below_min"),
+        );
+        throw new AssignmentEligibilityError(
+          blockingIssues.map((issue) => issue.message),
+        );
+      }
+      eligibilityWarnings = eligibilityDecision.claimWarnings;
+
       const liveLeadGroup = liveGroups.find((group) => group.id === leadEntry.groupId)!;
       const groupClaims = await tx.missionClaim.findMany({
         where: {
           missionId,
           groupId: { in: assignments.map((assignment) => assignment.groupId) },
+          status: { in: ["PENDING", "INFO_REQUESTED", "ACCEPTED"] },
         },
-        select: { groupId: true, publicRoster: true },
+        select: {
+          groupId: true,
+          publicRoster: true,
+          participants: { select: { userId: true } },
+        },
       });
       const publicRosterByGroup = new Map(
-        groupClaims.map((claim) => [claim.groupId, claim.publicRoster]),
+        groupClaims.map((claim) => {
+          const selectedIds =
+            assignments.find((assignment) => assignment.groupId === claim.groupId)
+              ?.participantIds ?? [];
+          const claimedIds = claim.participants.map((participant) => participant.userId);
+          return [
+            claim.groupId,
+            canReusePublicRosterConsent(claim.publicRoster, claimedIds, selectedIds),
+          ] as const;
+        }),
       );
 
       // Les groupes retirés de la sélection sont libérés (historique conservé)
@@ -136,16 +232,15 @@ export async function assignMissionAction(raw: unknown): Promise<AssignResult> {
           select: { id: true },
         });
         if (existing) {
-          const claimedVisibility = publicRosterByGroup.get(entry.groupId);
           await tx.missionAssignment.update({
             where: { id: existing.id },
             data: {
               assignedHeadcount: entry.participantIds.length,
               isLeadGroup: entry.groupId === leadEntry.groupId,
-              notes: reason ?? null,
-              ...(claimedVisibility === undefined
-                ? {}
-                : { publicRoster: claimedVisibility }),
+              notes: normalizedReason ?? null,
+              // Le consentement public d'une revendication ne vaut que pour
+              // son roster exact. Tout ajout manuel referme l'équipe.
+              publicRoster: publicRosterByGroup.get(entry.groupId) ?? false,
             },
           });
         } else {
@@ -158,7 +253,7 @@ export async function assignMissionAction(raw: unknown): Promise<AssignResult> {
               assignedHeadcount: entry.participantIds.length,
               isLeadGroup: entry.groupId === leadEntry.groupId,
               publicRoster: publicRosterByGroup.get(entry.groupId) ?? false,
-              notes: reason ?? null,
+              notes: normalizedReason ?? null,
             },
           });
         }
@@ -189,7 +284,6 @@ export async function assignMissionAction(raw: unknown): Promise<AssignResult> {
         });
       }
 
-      const toStatus = start ? "IN_PROGRESS" : "ASSIGNED";
       const updated = await tx.mission.updateMany({
         where: { id: missionId, status: fromStatus },
         data: {
@@ -209,12 +303,22 @@ export async function assignMissionAction(raw: unknown): Promise<AssignResult> {
             fromStatus: fromStatus as never,
             toStatus,
             changedById: current.session.userId,
-            reason: `Équipe : ${assignments.length} groupe(s), ${totalHeadcount} participant(s)${reason ? ` — ${reason}` : ""}`,
+            reason:
+              `Équipe : ${assignments.length} groupe(s), ${totalHeadcount} participant(s)` +
+              `${normalizedReason ? ` — ${normalizedReason}` : ""}` +
+              `${eligibilityWarnings.length > 0 ? ` — Écarts : ${eligibilityWarnings.join(" ")}` : ""}`,
           },
         });
       }
     }, { isolationLevel: "Serializable" });
   } catch (error) {
+    if (error instanceof AssignmentEligibilityError) {
+      return {
+        ok: false,
+        error: `Critères d'éligibilité non remplis : ${error.issues.join(" ")}`,
+        warnings: error.issues,
+      };
+    }
     if (error instanceof Error) {
       if (error.message === "NOT_FOUND") return { ok: false, error: "Mission introuvable." };
       if (error.message === "BAD_STATUS")
@@ -225,6 +329,13 @@ export async function assignMissionAction(raw: unknown): Promise<AssignResult> {
         return {
           ok: false,
           error: "Un groupe ou sa liste d'agents a changé ; rechargez l'attribution.",
+        };
+      }
+      if (error.message === "ENHANCED_REVIEW_REQUIRED") {
+        return {
+          ok: false,
+          error:
+            "Le contrôle renforcé doit être confirmé et accompagné d'une note avant l'attribution.",
         };
       }
     }
@@ -249,15 +360,17 @@ export async function assignMissionAction(raw: unknown): Promise<AssignResult> {
     resourceId: missionId,
     oldValues: { status: fromStatus },
     newValues: {
-      status: start ? "IN_PROGRESS" : "ASSIGNED",
+      status: toStatus,
       groups: assignments.map((a) => ({
         groupId: a.groupId,
         headcount: a.participantIds.length,
         isLead: a.groupId === leadEntry.groupId,
       })),
       totalHeadcount,
+      eligibilityWarnings,
+      reviewConfirmed: Boolean(reviewConfirmed),
     },
-    reason,
+    reason: normalizedReason,
     ...meta,
   });
 
@@ -283,7 +396,7 @@ export async function assignMissionAction(raw: unknown): Promise<AssignResult> {
   await enqueueNotifications({
     userIds: moderators.filter((id) => id !== current.session.userId),
     event: "MISSION_STATUS_CHANGED",
-    payload: { ...payload, fromStatus, toStatus: start ? "IN_PROGRESS" : "ASSIGNED" },
+    payload: { ...payload, fromStatus, toStatus },
     missionId,
     batchKey: `assign:${missionId}`,
   });
@@ -291,5 +404,5 @@ export async function assignMissionAction(raw: unknown): Promise<AssignResult> {
   revalidatePath("/missions");
   revalidatePath(`/missions/${missionId}`);
   revalidatePath("/revendications");
-  return { ok: true };
+  return { ok: true, ...(eligibilityWarnings.length > 0 ? { warnings: eligibilityWarnings } : {}) };
 }

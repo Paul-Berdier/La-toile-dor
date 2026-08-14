@@ -3,15 +3,21 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { assignMissionAction } from "@/server/assignment-actions";
-import type { CardAssignmentInfo, CardClaimInfo } from "@/server/missions";
+import type {
+  AgentOption,
+  CardAssignmentInfo,
+  CardClaimInfo,
+  MissionEligibilityConfig,
+} from "@/server/missions";
 import { Button } from "@/components/ui/button";
+import { evaluateTeamEligibility } from "@toile/shared";
 
 export interface GroupCatalogEntry {
   id: string;
   name: string;
   factionName: string | null;
   memberCount: number;
-  members: { id: string; displayName: string; levelLabel: string | null }[];
+  members: AgentOption[];
 }
 
 interface SelectedGroup {
@@ -33,7 +39,9 @@ export function AssignmentModal({
   claims,
   assignments,
   catalog,
+  eligibility,
   start,
+  enforceFinalCriteria = false,
   onClose,
   onDone,
 }: {
@@ -43,8 +51,11 @@ export function AssignmentModal({
   claims: CardClaimInfo[];
   assignments: CardAssignmentInfo[];
   catalog: GroupCatalogEntry[];
+  eligibility: MissionEligibilityConfig;
   /** true : confirmer démarre la mission (En cours) */
   start: boolean;
+  /** true : la mission est déjà en cours, l'équipe doit donc rester complète. */
+  enforceFinalCriteria?: boolean;
   onClose: () => void;
   onDone?: () => void;
 }) {
@@ -59,19 +70,28 @@ export function AssignmentModal({
           participantIds: a.participantIds,
           fromClaim: false,
         }))
-      : [],
+      : claims.map((claim) => ({
+          groupId: claim.groupId,
+          label: `${claim.groupName}${claim.factionName ? ` · ${claim.factionName}` : ""}`,
+          participantIds: claim.participantIds,
+          fromClaim: true,
+        })),
   );
   const [leadId, setLeadId] = useState<string | null>(
-    assignments.find((a) => a.isLead)?.groupId ?? null,
+    assignments.find((a) => a.isLead)?.groupId ?? claims[0]?.groupId ?? null,
   );
   const [addingId, setAddingId] = useState("");
   const [reason, setReason] = useState("");
+  const [reviewConfirmed, setReviewConfirmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const isSelected = (groupId: string) => selected.some((s) => s.groupId === groupId);
 
   const toggleClaim = (claim: CardClaimInfo) => {
+    const removing = isSelected(claim.groupId);
+    if (removing && leadId === claim.groupId) setLeadId(null);
+    if (!removing && leadId == null) setLeadId(claim.groupId);
     setSelected((prev) =>
       prev.some((s) => s.groupId === claim.groupId)
         ? prev.filter((s) => s.groupId !== claim.groupId)
@@ -99,6 +119,7 @@ export function AssignmentModal({
         fromClaim: false,
       },
     ]);
+    if (leadId == null) setLeadId(entry.id);
     setAddingId("");
   };
 
@@ -122,13 +143,73 @@ export function AssignmentModal({
   );
   const missingParticipants = selected.some((entry) => entry.participantIds.length === 0);
 
+  const selectedAgents = useMemo(() => {
+    const groups = new Map(catalog.map((entry) => [entry.id, entry]));
+    return selected.flatMap((entry) => {
+      const agents = new Map(
+        (groups.get(entry.groupId)?.members ?? []).map((agent) => [agent.id, agent]),
+      );
+      return entry.participantIds.map(
+        (userId): AgentOption =>
+          agents.get(userId) ?? {
+            id: userId,
+            displayName: "Agent indisponible",
+            levelLabel: null,
+            levelOrder: null,
+          },
+      );
+    });
+  }, [catalog, selected]);
+
+  const eligibilityIssues = useMemo(
+    () =>
+      evaluateTeamEligibility({
+        participantLevels: selectedAgents.map((agent) => agent.levelOrder),
+        groupSizeMin: eligibility.groupSizeMin,
+        groupSizeMax: eligibility.groupSizeMax,
+        minLevel: eligibility.minRecommendedLevel,
+      }),
+    [eligibility, selectedAgents],
+  );
+  const missingLevelCount = selectedAgents.filter(
+    (agent) => eligibility.minRecommendedLevel && agent.levelOrder == null,
+  ).length;
+  const belowLevelCount = selectedAgents.filter(
+    (agent) =>
+      eligibility.minRecommendedLevel != null &&
+      agent.levelOrder != null &&
+      agent.levelOrder < eligibility.minRecommendedLevel.order,
+  ).length;
+  const conformingLevelCount = eligibility.minRecommendedLevel
+    ? selectedAgents.length - missingLevelCount - belowLevelCount
+    : selectedAgents.length;
+  const finalTeamRequired = start || enforceFinalCriteria;
+  const strictBlockingIssues = eligibilityIssues.filter(
+    (issue) => issue.blocksStrict || (finalTeamRequired && issue.code === "below_min"),
+  );
+  const strictBlocked =
+    eligibility.eligibilityMode === "STRICT" && strictBlockingIssues.length > 0;
+  const enhancedReviewIncomplete =
+    eligibility.requiresEnhancedReview &&
+    (!reviewConfirmed || reason.trim().length === 0);
+  const totalFits =
+    total >= eligibility.groupSizeMin && total <= eligibility.groupSizeMax;
+  const criteriaAreAdvisory = eligibility.eligibilityMode === "RECOMMENDATION";
+  const confirmDisabled =
+    isPending ||
+    selected.length === 0 ||
+    missingParticipants ||
+    strictBlocked ||
+    enhancedReviewIncomplete;
+
   const confirm = () => {
-    if (isPending || selected.length === 0 || missingParticipants) return;
+    if (confirmDisabled) return;
     startTransition(async () => {
       const res = await assignMissionAction({
         missionId,
         start,
         reason: reason || undefined,
+        reviewConfirmed,
         assignments: selected.map((s) => ({
           groupId: s.groupId,
           participantIds: s.participantIds,
@@ -244,7 +325,10 @@ export function AssignmentModal({
                     </label>
                     <button
                       type="button"
-                      onClick={() => setSelected((prev) => prev.filter((s) => s.groupId !== entry.groupId))}
+                      onClick={() => {
+                        setSelected((prev) => prev.filter((s) => s.groupId !== entry.groupId));
+                        if (leadId === entry.groupId) setLeadId(null);
+                      }}
                       aria-label={`Retirer ${entry.label}`}
                       className="text-ink-faint hover:text-blood-bright"
                     >
@@ -252,20 +336,39 @@ export function AssignmentModal({
                     </button>
                   </div>
                   <div className="mt-2 max-h-40 space-y-1 overflow-y-auto border-t border-border-default pt-2">
-                    {agents.map((agent) => (
-                      <label key={agent.id} className="flex cursor-pointer items-center gap-2 text-xs text-ink-muted">
-                        <input
-                          type="checkbox"
-                          checked={entry.participantIds.includes(agent.id)}
-                          onChange={() => toggleParticipant(entry.groupId, agent.id)}
-                          className="accent-[var(--toile-gold)]"
-                        />
-                        <span className="min-w-0 flex-1 truncate">{agent.displayName}</span>
-                        <span className={agent.levelLabel ? "text-ink-faint" : "text-warning"}>
-                          {agent.levelLabel ?? "niveau manquant"}
-                        </span>
-                      </label>
-                    ))}
+                    {agents.map((agent) => {
+                      const selectedAgent = entry.participantIds.includes(agent.id);
+                      const hasMinimum =
+                        eligibility.minRecommendedLevel == null ||
+                        (agent.levelOrder != null &&
+                          agent.levelOrder >= eligibility.minRecommendedLevel.order);
+                      const shouldSignal =
+                        selectedAgent &&
+                        !hasMinimum &&
+                        eligibility.eligibilityMode !== "RECOMMENDATION";
+                      return (
+                        <label
+                          key={agent.id}
+                          className="flex cursor-pointer items-center gap-2 text-xs text-ink-muted"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedAgent}
+                            onChange={() => toggleParticipant(entry.groupId, agent.id)}
+                            className="accent-[var(--toile-gold)]"
+                          />
+                          <span className="min-w-0 flex-1 truncate">{agent.displayName}</span>
+                          <span className={shouldSignal ? "text-warning" : "text-ink-faint"}>
+                            {agent.levelLabel ?? "niveau manquant"}
+                            {selectedAgent && eligibility.minRecommendedLevel && (
+                              <span className="ml-1" aria-label={hasMinimum ? "conforme" : "écart"}>
+                                {hasMinimum ? "✓" : "⚠"}
+                              </span>
+                            )}
+                          </span>
+                        </label>
+                      );
+                    })}
                   </div>
                 </fieldset>
               );
@@ -287,15 +390,81 @@ export function AssignmentModal({
                   </li>
                 ))}
               </ul>
-              <p className="mt-2 font-mono-toile text-gold">
-                Effectif total : {total}
-              </p>
+              <div className="mt-3 space-y-1 border border-border-default bg-elevated px-3 py-2 text-xs">
+                <p
+                  className={
+                    criteriaAreAdvisory ? "text-ink-muted" : totalFits ? "text-success" : "text-warning"
+                  }
+                >
+                  Effectif : {total} / {eligibility.groupSizeMin} à {eligibility.groupSizeMax}{" "}
+                  {totalFits
+                    ? "✓"
+                    : criteriaAreAdvisory
+                      ? "— indicatif"
+                      : total < eligibility.groupSizeMin
+                        ? "— équipe à compléter"
+                        : "⚠"}
+                </p>
+                {eligibility.minRecommendedLevel ? (
+                  <p
+                    className={
+                      criteriaAreAdvisory
+                        ? "text-ink-muted"
+                        : missingLevelCount + belowLevelCount === 0
+                          ? "text-success"
+                          : "text-warning"
+                    }
+                  >
+                    Niveau minimal : {eligibility.minRecommendedLevel.label} · {conformingLevelCount}{" "}
+                    conforme{conformingLevelCount > 1 ? "s" : ""}
+                    {belowLevelCount > 0 && ` · ${belowLevelCount} insuffisant${belowLevelCount > 1 ? "s" : ""}`}
+                    {missingLevelCount > 0 && ` · ${missingLevelCount} manquant${missingLevelCount > 1 ? "s" : ""}`}
+                  </p>
+                ) : (
+                  <p className="text-ink-faint">Aucun niveau minimal demandé.</p>
+                )}
+                {eligibility.eligibilityMode === "RECOMMENDATION" && eligibilityIssues.length > 0 && (
+                  <p className="text-ink-faint">Critères indicatifs : ils ne bloquent pas l'attribution.</p>
+                )}
+                {(eligibility.eligibilityMode === "WARNING" ||
+                  eligibility.eligibilityMode === "MANUAL_REVIEW") &&
+                  eligibilityIssues.length > 0 && (
+                  <p className="text-warning">Attribution autorisée, avec écarts signalés.</p>
+                )}
+                {eligibility.eligibilityMode === "STRICT" && strictBlockingIssues.length > 0 && (
+                  <p className="text-blood-bright">
+                    {start ? "Démarrage" : enforceFinalCriteria ? "Modification" : "Attribution"} impossible :{" "}
+                    {strictBlockingIssues.map((issue) => issue.message).join(" ")}
+                  </p>
+                )}
+                {eligibility.eligibilityMode === "STRICT" && !finalTeamRequired && total < eligibility.groupSizeMin && (
+                  <p className="text-warning">
+                    Attribution partielle autorisée ; l'effectif devra être complété avant le démarrage.
+                  </p>
+                )}
+              </div>
             </>
           )}
         </div>
 
+        {eligibility.requiresEnhancedReview && (
+          <div className="mt-3 border border-warning/60 bg-warning/5 px-3 py-2 text-xs text-ink-muted">
+            <label className="flex cursor-pointer items-start gap-2">
+              <input
+                type="checkbox"
+                checked={reviewConfirmed}
+                onChange={(event) => setReviewConfirmed(event.target.checked)}
+                className="mt-0.5 accent-[var(--toile-gold)]"
+              />
+              <span>
+                J'ai effectué le contrôle renforcé de l'équipe. Une note de contrôle est obligatoire.
+              </span>
+            </label>
+          </div>
+        )}
+
         <label htmlFor="assign-reason" className="mt-3 block text-xs text-ink-faint">
-          Note (facultative, journalisée)
+          Note {eligibility.requiresEnhancedReview ? "de contrôle (obligatoire)" : "(facultative, journalisée)"}
         </label>
         <input
           id="assign-reason"
@@ -318,7 +487,7 @@ export function AssignmentModal({
           <Button
             variant="gold"
             onClick={confirm}
-            disabled={isPending || selected.length === 0 || missingParticipants}
+            disabled={confirmDisabled}
           >
             {isPending
               ? "Tissage…"

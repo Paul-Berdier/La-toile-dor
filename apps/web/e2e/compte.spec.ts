@@ -2,8 +2,9 @@ import { expect, test } from "@playwright/test";
 import { loginAs, prisma } from "./helpers";
 
 /**
- * « Mes informations » : chacun modifie son propre Titre, son grade et son
- * nom. Le test travaille sur un compte qui lui est propre pour n'interférer
+ * « Mes informations » : chacun modifie son propre Titre et son nom, tandis
+ * que le grade contrôlé reste en lecture seule. Le test utilise un compte qui
+ * lui est propre pour n'interférer
  * avec aucune autre spec.
  */
 const runId = Date.now().toString(36).toUpperCase();
@@ -34,7 +35,7 @@ test.afterAll(async () => {
   await prisma.$disconnect();
 });
 
-test("un membre modifie lui-même son Titre, son grade et son nom", async ({ context, page }) => {
+test("un membre modifie son Titre et son nom, mais pas son grade", async ({ context, page }) => {
   await loginAs(context, USER_ID);
   await page.goto("/compte");
 
@@ -42,6 +43,8 @@ test("un membre modifie lui-même son Titre, son grade et son nom", async ({ con
   // Les valeurs actuelles sont pré-remplies
   await expect(page.getByLabel("Votre Titre *")).toHaveValue(TITLE);
   await expect(page.getByLabel("Prénom du personnage *")).toHaveValue("Kaede");
+  await expect(page.locator("#ac-level")).toHaveCount(0);
+  await expect(page.getByText(/le grade intervient dans l’éligibilité/i)).toBeVisible();
 
   const newTitle = `[FICTIF] Vipère ${runId}`;
   await page.getByLabel("Votre Titre *").fill(newTitle);
@@ -53,6 +56,7 @@ test("un membre modifie lui-même son Titre, son grade et son nom", async ({ con
   const user = await prisma.user.findUniqueOrThrow({ where: { id: USER_ID } });
   expect(user.displayName).toBe(newTitle);
   expect(user.lastName).toBe("Kurosawa");
+  expect(user.playerLevelId).not.toBeNull();
 });
 
 test("un Titre déjà porté est refusé", async ({ context, page }) => {

@@ -8,25 +8,29 @@ import { referenceOptionCreateSchema } from "./profile-schemas";
 
 const CUID = "cm12345678901234567890123";
 
-describe("le grade appartient au joueur, pas à l'inviteur", () => {
+describe("le grade est une donnée contrôlée", () => {
   const invitation = { roleSlug: "group_member", expiresInHours: 72 };
 
-  it("une invitation est valide SANS niveau de personnage", () => {
-    expect(invitationCreateSchema.safeParse(invitation).success).toBe(true);
+  it("une invitation exige un niveau de personnage", () => {
+    expect(invitationCreateSchema.safeParse(invitation).success).toBe(false);
   });
 
-  it("un niveau transmis reste accepté (fils historiques)", () => {
+  it("accepte le grade fixé par l'inviteur", () => {
     const parsed = invitationCreateSchema.safeParse({ ...invitation, playerLevelId: CUID });
     expect(parsed.success).toBe(true);
   });
 
   it("ignore une ancienne demande d'approbation manuelle", () => {
-    const parsed = invitationCreateSchema.safeParse({ ...invitation, requireApproval: true });
+    const parsed = invitationCreateSchema.safeParse({
+      ...invitation,
+      playerLevelId: CUID,
+      requireApproval: true,
+    });
     expect(parsed.success).toBe(true);
     expect(parsed.success && "requireApproval" in parsed.data).toBe(false);
   });
 
-  it("l'onboarding EXIGE que le joueur déclare son grade", () => {
+  it("l'onboarding exige un identifiant de grade, contrôlé ensuite côté serveur", () => {
     const identity = {
       firstName: "Akira",
       displayName: "L'assassin de l'ombre",
@@ -47,6 +51,8 @@ describe("le grade appartient au joueur, pas à l'inviteur", () => {
     expect(parsed.success).toBe(true);
     // privacyAcknowledged est absent du schéma : l'accord initial garde sa date
     expect(parsed.success && "privacyAcknowledged" in parsed.data).toBe(false);
+    // Un client altéré ne peut pas faire entrer un nouveau grade dans l'action.
+    expect(parsed.success && "playerLevelId" in parsed.data).toBe(false);
   });
 });
 

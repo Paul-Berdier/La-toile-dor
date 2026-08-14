@@ -70,22 +70,27 @@ export default async function MissionDetailPage({
     sessionShortId: current.session.shortId,
   };
 
+  const assignedGroupIds = new Set(
+    mission.assignments
+      .filter((assignment) => assignment.active)
+      .map((assignment) => assignment.groupId),
+  );
+  if (mission.assignedGroupId) assignedGroupIds.add(mission.assignedGroupId);
+  const claimableLedGroups = ctx.ledGroups.filter((group) => !assignedGroupIds.has(group.id));
   const canClaim =
     current.permissions.has(PERMISSIONS.MISSION_CLAIM) &&
-    ["AVAILABLE", "CLAIM_PENDING"].includes(mission.status) &&
-    ctx.ledGroups.length > 0;
+    ["AVAILABLE", "CLAIM_PENDING", "ASSIGNED"].includes(mission.status) &&
+    claimableLedGroups.length > 0;
   const canEdit = current.permissions.has(PERMISSIONS.MISSION_UPDATE);
   const canDelete = current.permissions.has(PERMISSIONS.MISSION_CANCEL);
 
-  const minLevelLabel = mission.minRecommendedLevel?.label ?? null;
-  const eligibilityNotice =
-    mission.eligibilityMode === "RECOMMENDATION"
-      ? null
-      : mission.eligibilityMode === "WARNING"
-        ? "La revendication restera possible ; les écarts d'effectif ou de niveau seront signalés au tisseur."
-        : mission.eligibilityMode === "STRICT"
-          ? "La revendication sera refusée si l'effectif ou le niveau demandé n'est pas respecté."
-          : "La revendication restera possible mais sera toujours marquée pour un contrôle manuel.";
+  const minLevel = mission.minRecommendedLevelId
+    ? await prisma.playerLevel.findUnique({
+        where: { id: mission.minRecommendedLevelId },
+        select: { label: true, order: true },
+      })
+    : null;
+  const minLevelLabel = minLevel?.label ?? mission.minRecommendedLevel?.label ?? null;
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-6 lg:px-6">
@@ -129,7 +134,7 @@ export default async function MissionDetailPage({
           {detail.mission.targetLevel && "targetLevelId" in view && view.targetLevelId && (
             <MetaItem label="Niveau de la cible" value={detail.mission.targetLevel.label} />
           )}
-          {minLevelLabel && <MetaItem label="Niveau minimal conseillé" value={minLevelLabel} />}
+          {minLevelLabel && <MetaItem label="Niveau minimal des agents" value={minLevelLabel} />}
           <MetaItem label="Délai" value={view.timeRemaining.realLabel} />
           {mission.awardedRyo !== null && (
             <MetaItem label="Ryō distribués" value={`${mission.awardedRyo.toLocaleString("fr-FR")} ryō`} gold />
@@ -389,7 +394,12 @@ export default async function MissionDetailPage({
                     )}
                     {["PENDING", "INFO_REQUESTED"].includes(claim.status) && (
                       <div className="mt-3">
-                        <ClaimDecide claimId={claim.id} />
+                        <ClaimDecide
+                          claimId={claim.id}
+                          requiresEnhancedReview={
+                            mission.requiresEnhancedReview || mission.eligibilityMode === "MANUAL_REVIEW"
+                          }
+                        />
                       </div>
                     )}
                   </li>
@@ -484,29 +494,45 @@ export default async function MissionDetailPage({
                       .map((participant) => participant.userId),
                   }))}
                   catalog={detail.groupsCatalog}
+                  eligibility={{
+                    groupSizeMin: mission.groupSizeMin,
+                    groupSizeMax: mission.groupSizeMax,
+                    minRecommendedLevel: mission.minRecommendedLevel,
+                    eligibilityMode: mission.eligibilityMode,
+                    requiresEnhancedReview:
+                      mission.requiresEnhancedReview || mission.eligibilityMode === "MANUAL_REVIEW",
+                  }}
                   canStart={mission.status !== "IN_PROGRESS"}
                 />
               </section>
             )}
 
-          {canClaim && level === "public" && (
+          {canClaim && (
             <section className="border border-border-gold bg-raised p-4">
               <h2 className="mb-3 font-display text-sm tracking-widest text-gold uppercase">
                 Saisir ce fil
               </h2>
               <ClaimPanel
                 missionId={mission.id}
-                groups={ctx.ledGroups.map((g) => ({
+                groups={claimableLedGroups.map((g) => ({
                   id: g.id,
                   name: g.name,
                   memberCount: g.memberCount,
-                  members: g.members.map(({ id, displayName, levelLabel }) => ({
+                  members: g.members.map(({ id, displayName, levelLabel, levelOrder }) => ({
                     id,
                     displayName,
                     levelLabel,
+                    levelOrder: levelOrder || null,
                   })),
                 }))}
-                eligibilityNotice={eligibilityNotice}
+                eligibilityMode={mission.eligibilityMode}
+                groupSizeMin={view.groupSizeMin}
+                groupSizeMax={view.groupSizeMax}
+                minLevelOrder={minLevel?.order ?? null}
+                minLevelLabel={minLevelLabel}
+                requiresEnhancedReview={
+                  mission.requiresEnhancedReview || mission.eligibilityMode === "MANUAL_REVIEW"
+                }
               />
             </section>
           )}

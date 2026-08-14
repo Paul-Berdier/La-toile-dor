@@ -40,6 +40,11 @@ export default async function InvitationsPage() {
     ...new Set([...slugs].flatMap((slug) => INVITE_TIERS[slug] ?? [])),
   ];
   const isModOrAbove = slugs.has("super_admin") || slugs.has("moderator");
+  const allLevels = await prisma.playerLevel.findMany({
+    orderBy: { order: "asc" },
+    select: { id: true, label: true, order: true },
+  });
+  const levels = isModOrAbove ? allLevels : allLevels.slice(0, 1);
 
   // Chefs « purs » : seuls leurs groupes sont proposés
   let leaderGroups: GroupOption[] | null = null;
@@ -158,6 +163,7 @@ export default async function InvitationsPage() {
           groups={groups}
           leaderGroups={leaderGroups}
           factions={factions.map((faction) => ({ id: faction.id, name: faction.name }))}
+          levels={levels}
         />
 
         <div className="overflow-x-auto border border-border-default bg-raised">
@@ -202,11 +208,9 @@ export default async function InvitationsPage() {
                     </td>
                     <td className="px-4 py-2.5 text-xs text-ink-muted">
                       {invitation.role?.name ?? "—"}
-                      {/* Le grade est déclaré par l'invité : il n'apparaît que
-                          sur les anciens fils, où l'inviteur le fixait. */}
                       {invitation.playerLevel && (
                         <p className="text-[0.65rem] text-ink-faint">
-                          Grade imposé : {invitation.playerLevel.label}
+                          Grade : {invitation.playerLevel.label}
                         </p>
                       )}
                       {invitation.group && (

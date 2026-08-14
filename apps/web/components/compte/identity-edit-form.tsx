@@ -16,27 +16,24 @@ const input =
 const label = "mb-1 block text-xs uppercase tracking-wider text-ink-faint";
 
 /**
- * Édition par le membre de sa propre identité. Mêmes champs que la première
- * connexion : chacun reste maître de son Titre, de son grade et de son nom.
+ * Édition par le membre de sa propre identité. Le grade reste affiché mais
+ * n'est modifiable que par la modération, car il conditionne les missions.
  */
 export function IdentityEditForm({
   initial,
-  levels,
 }: {
   initial: {
     firstName: string;
     lastName: string;
     displayName: string;
-    playerLevelId: string;
+    playerLevelLabel: string;
     identityVisibility: IdentityVisibility;
   };
-  levels: { id: string; label: string }[];
 }) {
   const router = useRouter();
   const [firstName, setFirstName] = useState(initial.firstName);
   const [lastName, setLastName] = useState(initial.lastName);
   const [displayName, setDisplayName] = useState(initial.displayName);
-  const [playerLevelId, setPlayerLevelId] = useState(initial.playerLevelId);
   const [identityVisibility, setIdentityVisibility] = useState<IdentityVisibility>(
     initial.identityVisibility,
   );
@@ -49,7 +46,6 @@ export function IdentityEditForm({
     firstName !== initial.firstName ||
     lastName !== initial.lastName ||
     displayName !== initial.displayName ||
-    playerLevelId !== initial.playerLevelId ||
     identityVisibility !== initial.identityVisibility;
 
   const submit = () => {
@@ -59,7 +55,6 @@ export function IdentityEditForm({
         firstName,
         lastName,
         displayName,
-        playerLevelId,
         identityVisibility,
       });
       if (!res.ok) {
@@ -112,28 +107,13 @@ export function IdentityEditForm({
       </div>
 
       <div>
-        <label htmlFor="ac-level" className={label}>
-          Grade de votre personnage *
-        </label>
-        <select
-          id="ac-level"
-          value={playerLevelId}
-          onChange={(e) => { setPlayerLevelId(e.target.value); setSaved(false); }}
-          required
-          className={input}
-        >
-          <option value="">— choisir votre grade —</option>
-          {levels.map((level) => (
-            <option key={level.id} value={level.id}>
-              {level.label}
-            </option>
-          ))}
-        </select>
-        {fieldError("playerLevelId") && (
-          <p role="alert" className="mt-1 text-xs text-blood-bright">
-            {fieldError("playerLevelId")}
-          </p>
-        )}
+        <span className={label}>Grade de votre personnage</span>
+        <div className="border border-border-default bg-elevated px-3 py-2 text-sm text-ink-muted">
+          {initial.playerLevelLabel}
+        </div>
+        <p className="mt-1 text-[0.65rem] text-ink-faint">
+          Le grade intervient dans l&rsquo;éligibilité aux missions. Demandez sa modification à la modération.
+        </p>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">

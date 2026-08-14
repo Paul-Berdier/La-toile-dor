@@ -1,5 +1,6 @@
 import "server-only";
 import { prisma } from "@toile/database";
+import { isMissionEligibleForExpiration } from "@/server/expiration-policy";
 
 /**
  * Expiration automatique des missions — version « sans bot » : exécutée
@@ -13,33 +14,91 @@ export async function maybeExpireMissions(): Promise<void> {
   const now = Date.now();
   if (now - lastSweepAt < SWEEP_INTERVAL_MS) return;
   lastSweepAt = now;
+  const sweepAt = new Date(now);
 
   try {
     const expired = await prisma.mission.findMany({
       where: {
-        expiresAt: { lte: new Date(now) },
+        expiresAt: { lte: sweepAt },
         timerSuspendedAt: null,
         status: { in: ["AVAILABLE", "CLAIM_PENDING", "ASSIGNED", "IN_PROGRESS"] },
       },
-      include: { assignments: { where: { active: true }, select: { groupId: true, factionId: true } } },
+      select: { id: true },
     });
 
-    for (const mission of expired) {
-      await prisma.$transaction([
-        prisma.mission.update({
-          where: { id: mission.id },
-          data: { status: "EXPIRED", resolvedAt: new Date(now) },
-        }),
-        prisma.missionStatusHistory.create({
-          data: {
-            missionId: mission.id,
-            fromStatus: mission.status,
-            toStatus: "EXPIRED",
-            changedById: "system",
-            reason: "Expiration automatique du délai réel",
+    for (const candidate of expired) {
+      let mission:
+        | {
+            id: string;
+            code: string;
+            rank: string;
+            publicTitle: string;
+            assignments: { groupId: string }[];
+          }
+        | null = null;
+
+      try {
+        mission = await prisma.$transaction(
+          async (tx) => {
+            const liveMission = await tx.mission.findUnique({
+              where: { id: candidate.id },
+              select: {
+                id: true,
+                code: true,
+                rank: true,
+                publicTitle: true,
+                status: true,
+                expiresAt: true,
+                timerSuspendedAt: true,
+                assignments: {
+                  where: { active: true },
+                  select: { groupId: true },
+                },
+              },
+            });
+            if (!liveMission || !isMissionEligibleForExpiration(liveMission, sweepAt)) {
+              return null;
+            }
+
+            const updated = await tx.mission.updateMany({
+              where: {
+                id: liveMission.id,
+                status: liveMission.status,
+                expiresAt: { lte: sweepAt },
+                timerSuspendedAt: null,
+              },
+              data: { status: "EXPIRED", resolvedAt: sweepAt },
+            });
+            if (updated.count !== 1) return null;
+
+            await tx.missionStatusHistory.create({
+              data: {
+                missionId: liveMission.id,
+                fromStatus: liveMission.status,
+                toStatus: "EXPIRED",
+                changedById: "system",
+                reason: "Expiration automatique du délai réel",
+              },
+            });
+
+            return {
+              id: liveMission.id,
+              code: liveMission.code,
+              rank: liveMission.rank,
+              publicTitle: liveMission.publicTitle,
+              assignments: liveMission.assignments,
+            };
           },
-        }),
-      ]);
+          { isolationLevel: "Serializable" },
+        );
+      } catch (error) {
+        // Deux instances peuvent balayer au même instant. Une transaction
+        // perdante ne notifie personne ; le gagnant possède seul le commit.
+        if ((error as { code?: string }).code === "P2034") continue;
+        throw error;
+      }
+
+      if (!mission) continue;
 
       // Prévenir les membres des groupes assignés. Une faction ne confère
       // aucun droit et ne reçoit donc aucune notification d'autorité.

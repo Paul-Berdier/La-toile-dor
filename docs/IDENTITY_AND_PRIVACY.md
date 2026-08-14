@@ -9,7 +9,8 @@ confidentialité applicable au prénom et au nom de famille.
 
 - le **Titre** public (`displayName`), visible dans l'application ;
 - l'identité réelle (`firstName`, `lastName`), confidentielle ;
-- le **grade** (`playerLevelId`), public, déclaré par le joueur lui-même.
+- le **grade** (`playerLevelId`), public et contrôlé, car il intervient dans
+  l'éligibilité aux missions.
 
 `firstName` est obligatoire après l'onboarding. `lastName` est facultatif :
 l'interface emploie exactement le libellé « Nom de famille — facultatif, votre
@@ -35,15 +36,21 @@ Tout compte dont `profileCompleted` vaut `false` est redirigé vers
 `/bienvenue` après la connexion. Le formulaire demande, dans cet ordre :
 
 1. le **Titre** public unique ;
-2. le **grade** du personnage ;
+2. le **grade** du personnage, affiché en lecture seule ;
 3. le prénom ;
 4. le nom de famille facultatif ;
 5. la confirmation explicite de l'encart de confidentialité.
 
-Le grade est déclaré **par le joueur**, jamais par celui qui l'invite : une
-invitation ne porte plus de niveau (`Invitation.playerLevelId` reste nullable
-et n'est renseigné que sur les fils historiques). Les positions qui relèvent de
-la hiérarchie — rôle et groupe — restent, elles, décidées par l'inviteur.
+Toute nouvelle invitation porte obligatoirement le grade choisi par l'inviteur
+autorisé. Le serveur vérifie qu'il existe dans `PlayerLevel`, l'applique au
+compte pendant le parcours d'invitation, puis `/bienvenue` le présente sans
+commande de modification. Une requête client altérée ne peut pas le remplacer.
+
+Une exception assure la reprise des anciens comptes : si `playerLevelId` est
+encore nul, `/bienvenue` affiche le référentiel et permet au joueur de déclarer
+son grade **une seule fois**. L'écriture est conditionnelle dans une transaction
+afin qu'une attribution concurrente par la modération ne puisse pas être
+écrasée. Dès qu'un grade existe, cette exception disparaît.
 
 La date de confirmation est conservée dans `privacyAcknowledgedAt`. Les
 prénoms et noms ne sont jamais copiés dans le journal d'audit : l'événement
@@ -65,11 +72,20 @@ automatiquement et aucune autorité n'en découle.
 
 ## Modifier ses informations — `/compte`
 
-Chacun reste maître de sa fiche : `/compte` rejoue les mêmes champs que la
-première connexion (Titre, grade, prénom, nom) avec les mêmes règles —
-unicité du Titre insensible à la casse, grade existant. `updateOwnIdentityAction`
+Chacun reste maître de son Titre, de son prénom, de son nom et de la portée de
+son identité réelle. `/compte` affiche aussi le grade actuel, mais uniquement
+en lecture seule. `updateOwnIdentityAction` n'accepte aucun `playerLevelId` et
 n'écrit **jamais** sur un autre compte : l'identifiant vient de la session, pas
 de l'entrée, et aucune permission n'est requise puisqu'il s'agit de soi.
+
+Après l'onboarding, seule la gestion des utilisateurs protégée par
+`user.manage` peut modifier le grade. `setUserLevelAction` valide la référence
+`PlayerLevel`, conserve l'ancien et le nouvel identifiant dans l'audit
+`user.level_updated`, puis rafraîchit l'administration. Le joueur doit donc
+s'adresser à la modération pour toute correction ou évolution de grade.
+Un chef qui invite un agent utilise obligatoirement le grade initial le plus
+bas ; la modération peut ensuite attribuer un grade supérieur. Le formulaire
+filtre la liste et l'action serveur revérifie cette borne.
 
 La case de confidentialité n'est pas rejouée et `privacyAcknowledgedAt` n'est
 pas réécrit : l'accord initial reste horodaté à sa date d'origine.
@@ -79,11 +95,12 @@ ci-dessous). Chaque option affiche sa conséquence en clair plutôt qu'un
 libellé technique : quelqu'un doit pouvoir décider sans connaître le modèle de
 données.
 
-Rôle et groupes figurent sur la page en **lecture seule** : ils relèvent de la
-hiérarchie d'invitation. L'audit `profile.identity_updated` ne consigne que le
-Titre, le grade et la portée choisie — jamais le prénom ni le nom. La portée y
-figure parce que c'est une décision de confidentialité, et que savoir quand
-elle a changé peut compter.
+Grade, rôle et groupes figurent sur la page en **lecture seule** : ils relèvent
+de la hiérarchie et de la modération. L'audit `profile.identity_updated` ne
+consigne que le Titre et la portée choisie — jamais le grade, le prénom ni le
+nom. Les changements de grade suivent leur événement séparé
+`user.level_updated`. La portée figure dans l'audit d'identité parce que c'est
+une décision de confidentialité, et que savoir quand elle a changé peut compter.
 
 ## Matrice de visibilité
 

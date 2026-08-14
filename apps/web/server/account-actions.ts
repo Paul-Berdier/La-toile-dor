@@ -13,12 +13,13 @@ interface Result {
 }
 
 /**
- * Mise à jour par un membre de SA propre identité : Titre, grade, prénom, nom.
+ * Mise à jour par un membre de SA propre identité : Titre, prénom et nom.
  *
  * Chacun est maître de sa fiche — aucune permission particulière n'est requise,
  * mais l'action ne touche jamais qu'à l'utilisateur de la session : l'`userId`
  * ne vient pas de l'entrée. Les règles de la première connexion s'appliquent
- * telles quelles (unicité du Titre insensible à la casse, grade existant).
+ * telles quelles (unicité du Titre insensible à la casse). Le grade est exclu
+ * de ce schéma : il conditionne l'éligibilité et relève de la modération.
  */
 export async function updateOwnIdentityAction(raw: unknown): Promise<Result> {
   const current = await requireUser();
@@ -47,21 +48,9 @@ export async function updateOwnIdentityAction(raw: unknown): Promise<Result> {
     };
   }
 
-  const level = await prisma.playerLevel.findUnique({
-    where: { id: data.playerLevelId },
-    select: { id: true },
-  });
-  if (!level) {
-    return {
-      ok: false,
-      fieldErrors: { playerLevelId: ["Ce grade n'existe pas."] },
-      error: "Ce grade n'existe pas.",
-    };
-  }
-
   const before = await prisma.user.findUniqueOrThrow({
     where: { id: current.session.userId },
-    select: { displayName: true, playerLevelId: true, identityVisibility: true },
+    select: { displayName: true, identityVisibility: true },
   });
 
   try {
@@ -72,7 +61,6 @@ export async function updateOwnIdentityAction(raw: unknown): Promise<Result> {
         lastName: data.lastName?.trim() ? data.lastName.trim() : null,
         displayName,
         displayNameNorm: norm,
-        playerLevelId: level.id,
         identityVisibility: data.identityVisibility,
       },
     });
@@ -96,12 +84,10 @@ export async function updateOwnIdentityAction(raw: unknown): Promise<Result> {
     // savoir quand elle a changé peut compter.
     oldValues: {
       displayName: before.displayName,
-      playerLevelId: before.playerLevelId,
       identityVisibility: before.identityVisibility,
     },
     newValues: {
       displayName,
-      playerLevelId: level.id,
       identityVisibility: data.identityVisibility,
     },
     ...meta,

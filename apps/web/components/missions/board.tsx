@@ -196,6 +196,7 @@ export function MissionBoard({ board }: { board: BoardData }) {
           claims={assignCard.pendingClaims ?? []}
           assignments={assignCard.activeAssignments ?? []}
           catalog={board.groupsCatalog}
+          eligibility={assignCard.assignmentEligibility}
           start
           onClose={() => setAssignCard(null)}
         />

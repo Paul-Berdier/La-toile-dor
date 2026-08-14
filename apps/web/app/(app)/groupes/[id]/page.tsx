@@ -25,7 +25,15 @@ export default async function GroupePage({ params }: { params: Promise<{ id: str
       faction: { select: { name: true } },
       members: {
         include: {
-          user: { select: { id: true, displayName: true, status: true, playerLevel: { select: { label: true } } } },
+          user: {
+            select: {
+              id: true,
+              displayName: true,
+              status: true,
+              profileCompleted: true,
+              playerLevel: { select: { label: true } },
+            },
+          },
         },
         orderBy: [{ isLeader: "desc" }, { joinedAt: "asc" }],
       },
@@ -36,6 +44,17 @@ export default async function GroupePage({ params }: { params: Promise<{ id: str
   const myMembership = group.members.find((m) => m.userId === current.session.userId);
   const canManage =
     current.permissions.has(PERMISSIONS.GROUP_EDIT_ANY) || myMembership?.isLeader === true;
+  // La fiche complète et son roster sont internes au groupe. Pour les autres
+  // utilisateurs, la visibilité éventuelle d'une équipe reste exclusivement
+  // celle, plus fine, décidée mission par mission via `publicRoster`.
+  if (!myMembership && !current.permissions.has(PERMISSIONS.GROUP_EDIT_ANY)) notFound();
+
+  // Un compte qui n'a pas terminé l'onboarding reste visible des responsables
+  // qui doivent pouvoir l'administrer, mais son nom Discord provisoire n'est
+  // jamais exposé aux autres membres.
+  const visibleMembers = canManage
+    ? group.members
+    : group.members.filter((member) => member.user.profileCompleted);
   const canChangeFaction = current.permissions.has(PERMISSIONS.GROUP_EDIT_ANY);
   const factionOptions = canChangeFaction
     ? await prisma.faction.findMany({
@@ -49,7 +68,7 @@ export default async function GroupePage({ params }: { params: Promise<{ id: str
   // n'atteignent JAMAIS le HTML d'un visiteur non autorisé.
   const identities = await serializeUsersForViewer(
     current,
-    group.members.map((m) => m.userId),
+    visibleMembers.map((m) => m.userId),
   );
 
   const mask = (value: string, prefix: string, seed: string) =>
@@ -139,10 +158,10 @@ export default async function GroupePage({ params }: { params: Promise<{ id: str
 
       <section className="mt-5 border border-border-default bg-raised p-5">
         <h2 className="mb-3 font-display text-sm tracking-widest text-gold uppercase">
-          Membres ({group.members.length})
+          Membres ({visibleMembers.length})
         </h2>
         <ul className="space-y-3">
-          {group.members.map((member) => {
+          {visibleMembers.map((member) => {
             const identity = identities.get(member.userId);
             const realLine =
               identity && isRealUserView(identity) && identity.realName

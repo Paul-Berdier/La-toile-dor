@@ -5,6 +5,7 @@ import { prisma } from "@toile/database";
 import {
   audit,
   createInvitation,
+  INVITATION_ROLE_TIERS,
   revokeInvitation,
   revokeAllUserSessions,
 } from "@toile/auth";
@@ -181,13 +182,6 @@ export async function setUserGroupMembershipAction(input: {
   return { ok: true };
 }
 
-/** Matrice des rôles qu'un rôle donné est autorisé à inviter. */
-const INVITE_TIERS: Record<string, string[]> = {
-  super_admin: ["super_admin", "moderator", "group_leader", "group_member"],
-  moderator: ["group_leader", "group_member"],
-  group_leader: ["group_member"],
-};
-
 export async function createInvitationAction(raw: unknown): Promise<Result> {
   const current = await requireUser();
   const canManage = current.permissions.has(PERMISSIONS.INVITE_MANAGE);
@@ -206,7 +200,7 @@ export async function createInvitationAction(raw: unknown): Promise<Result> {
   });
   const slugs = new Set(actorRoles.map((r) => r.role.slug));
   const allowedTargets = new Set<string>(
-    [...slugs].flatMap((slug) => INVITE_TIERS[slug] ?? []),
+    [...slugs].flatMap((slug) => INVITATION_ROLE_TIERS[slug] ?? []),
   );
   if (!allowedTargets.has(data.roleSlug)) {
     return { ok: false, error: "La Toile ne vous autorise pas à tendre ce fil-là." };
@@ -232,6 +226,12 @@ export async function createInvitationAction(raw: unknown): Promise<Result> {
   }
 
   const isModOrAbove = slugs.has("super_admin") || slugs.has("moderator");
+  if (
+    groupOnboardingMode === "CREATE_NEW_GROUP" &&
+    !current.permissions.has(PERMISSIONS.GROUP_CREATE)
+  ) {
+    return { ok: false, error: "Vous ne pouvez pas autoriser la fondation d'un groupe." };
+  }
   if (!isModOrAbove) {
     // Chef de groupe : le fil ne peut mener que vers un de SES groupes,
     // et jamais vers une création de groupe.
@@ -272,16 +272,27 @@ export async function createInvitationAction(raw: unknown): Promise<Result> {
 
   const role = await prisma.role.findUnique({ where: { slug: data.roleSlug } });
   if (!role) return { ok: false, error: "Rôle inconnu." };
-  // Le grade appartient au joueur : il le déclare à sa première connexion.
-  // Un niveau transmis reste honoré (compatibilité), mais n'est plus exigé.
-  const playerLevel = data.playerLevelId
-    ? await prisma.playerLevel.findUnique({
-        where: { id: data.playerLevelId },
-        select: { id: true, label: true },
-      })
-    : null;
-  if (data.playerLevelId && !playerLevel) {
+  // Le grade est une donnée contrôlée : il conditionne l'éligibilité aux
+  // missions et doit donc être fixé par l'inviteur.
+  const playerLevel = await prisma.playerLevel.findUnique({
+    where: { id: data.playerLevelId },
+    select: { id: true, label: true },
+  });
+  if (!playerLevel) {
     return { ok: false, error: "Niveau de personnage inconnu." };
+  }
+  if (!isModOrAbove) {
+    const initialLevel = await prisma.playerLevel.findFirst({
+      orderBy: { order: "asc" },
+      select: { id: true },
+    });
+    if (!initialLevel || playerLevel.id !== initialLevel.id) {
+      return {
+        ok: false,
+        error:
+          "Un chef peut inviter au grade initial uniquement ; la modération attribuera tout grade supérieur.",
+      };
+    }
   }
 
   const { token } = await createInvitation({
@@ -289,7 +300,7 @@ export async function createInvitationAction(raw: unknown): Promise<Result> {
     roleId: role.id,
     factionId,
     groupId,
-    playerLevelId: playerLevel?.id,
+    playerLevelId: playerLevel.id,
     groupOnboardingMode,
     expiresInHours: data.expiresInHours,
     restrictedDiscordId: data.restrictedDiscordId,
@@ -304,7 +315,7 @@ export async function createInvitationAction(raw: unknown): Promise<Result> {
       roleSlug: data.roleSlug,
       factionId: factionId ?? null,
       groupId: groupId ?? null,
-      playerLevelId: playerLevel?.id ?? null,
+      playerLevelId: playerLevel.id,
       expiresInHours: data.expiresInHours,
     },
     ...meta,

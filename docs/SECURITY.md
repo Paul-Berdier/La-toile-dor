@@ -33,8 +33,12 @@ confidentialité du RP.
   base ne permet pas de forger un lien.
 - Usage unique : création du compte, consommation conditionnelle, rôle et
   rattachement au groupe sont dans une même transaction résistante aux courses.
-  Expiration obligatoire, révocation et restriction
-  possible à un ID Discord précis.
+  L'expiration fait partie du prédicat d'écriture, pas seulement d'un contrôle
+  préalable. Révocation et restriction à un ID Discord précis sont possibles.
+- La consommation relit dans cette transaction le créateur, ses rôles et ses
+  permissions, sa direction du groupe, l'activité du groupe/de la faction et
+  le grade autorisé. Un fil encore affiché « actif » est révoqué s'il a perdu
+  son autorité entre sa création et son utilisation.
 - Après validation du jeton, de l'appartenance au serveur et de l'éventuelle
   restriction d'ID Discord, le compte est actif immédiatement : aucune seconde
   approbation manuelle. Les comptes suspendus ou révoqués restent refusés.
@@ -54,23 +58,74 @@ confidentialité du RP.
   explicite. Une revendication seule n'accorde aucun accès.
 - Les agents choisis sont revalidés côté serveur lors de la revendication,
   lors de son acceptation et lors d'une attribution manuelle : compte actif,
-  appartenance actuelle au groupe et groupe actif. Un même agent ne peut
+  profil d'onboarding terminé, appartenance actuelle au groupe et groupe actif.
+  Un même agent ne peut
   représenter deux groupes sur la même mission.
+- L'éligibilité n'accepte jamais un effectif ou un grade calculé par le client.
+  `evaluateTeamEligibility` reçoit les agents et leurs `PlayerLevel` relus en
+  base dans la transaction. Le grade minimal est vérifié pour chaque agent ;
+  un grade absent est un écart explicite et bloque le mode strict comme un
+  grade insuffisant.
+- Les bornes d'effectif portent sur l'équipe finale multi-groupes. Une
+  revendication sous le minimum reste recevable pour permettre une
+  collaboration ; en mode strict, le passage à `IN_PROGRESS` recalcule l'union
+  de tous les participants et refuse un total encore insuffisant. Le maximum
+  et les grades sont également recalculés à ce moment.
+- Les trois politiques automatiques sont distinctes : `RECOMMENDATION`
+  n'enregistre aucun avertissement, `WARNING` conserve les écarts sans bloquer,
+  `STRICT` refuse les écarts bloquants. L'ancien `MANUAL_REVIEW` est migré vers
+  `WARNING` avec `requiresEnhancedReview=true`.
+- Le contrôle renforcé ne repose pas sur une case d'interface : accepter une
+  revendication concernée exige côté serveur une confirmation et une note.
+  Toute attribution manuelle les exige également, même sans démarrage ; la note
+  et la confirmation sont auditées. Une modification de l'équipe déjà en cours
+  réapplique le minimum et exige de nouveau le contrôle renforcé lorsqu'il est
+  configuré.
 - Retirer les attributions supprime dans la même transaction les participants
   et donc leur accès confidentiel. Les décisions concurrentes sur une
   revendication utilisent des écritures gardées et des transactions
   `Serializable`.
+- Le dépôt, l'acceptation et l'attribution relisent dans leur transaction
+  `Serializable` le statut, les critères, les groupes, les appartenances et les
+  grades. Une revendication ne peut donc pas être acceptée avec un ancien bilan
+  après une modification de mission ou de grade.
 - Une mission accomplie et créditée devient immuable : elle ne peut pas être
   rouverte, et la présence d'un score antérieur bloque tout second versement
   de points ou de ryō.
+- L'expiration automatique relit statut, échéance, suspension du minuteur et
+  attributions dans une transaction `Serializable`. Son écriture est
+  conditionnelle : elle ne peut ni écraser une résolution concurrente ni
+  produire deux historiques/notifications depuis deux instances web.
+- La matrice de transitions interdit de passer directement une mission
+  `AVAILABLE` ou `ASSIGNED` à `COMPLETED`/`FAILED`; ces résolutions exigent
+  l'état `IN_PROGRESS`, obtenu uniquement après validation de l'équipe finale.
 - Le roster d'un groupe attribué est privé par défaut. Seuls la modération,
   les membres de ce groupe ou les joueurs bénéficiant du consentement public
   explicite de son chef le voient. Cette vue publique est construite depuis
   une sélection Prisma limitée à `displayName` : prénom, nom, niveau,
   récompenses et données confidentielles n'y entrent jamais.
+- Le consentement `publicRoster` d'une revendication ne s'applique qu'à la
+  liste exacte d'agents proposée. Une attribution manuelle différente remet le
+  roster en privé, même si une ancienne revendication était publique.
+- La fiche complète `/groupes/[id]` et son roster exigent l'appartenance au
+  groupe ou `group.edit.any`. Un identifiant de groupe aperçu ailleurs ne
+  contourne donc pas le choix `publicRoster` de la mission. Les comptes dont
+  l'onboarding n'est pas terminé restent en outre absents du roster présenté
+  aux membres ordinaires.
 - Gestion des groupes : un chef agit uniquement sur un groupe où son
   `GroupMember.isLeader` vaut `true`; `group.edit.any` étend cette portée à la
   modération.
+- Le grade courant est exclu de la modification libre du compte. Seule une
+  action protégée par `user.manage` peut le remplacer après validation de la
+  référence `PlayerLevel`; l'événement `user.level_updated` conserve les
+  identifiants avant/après et le libellé, jamais une valeur arbitraire fournie
+  par une revendication.
+- Un chef de groupe qui tend une invitation ne peut attribuer que le grade
+  initial le plus bas ; la liste est filtrée dans l'interface et la borne est
+  revérifiée côté serveur. La modération conserve la possibilité d'attribuer
+  tout grade valide. La migration rabaisse également au grade initial les
+  invitations de chef encore actives et non consommées créées avant cette
+  règle.
 - Une faction est une classification facultative du groupe, jamais un périmètre
   d'autorisation : deux groupes de `Suna` ne partagent ni dossiers, ni identités,
   ni notifications. Aucun rôle de chef de faction n'est utilisé.

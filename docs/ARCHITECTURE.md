@@ -66,12 +66,22 @@ docs/           conception, sécurité, identité, groupes, attributions, déplo
    peut être nul ; une faction sert au rattachement narratif et à l'agrégation,
    jamais au contrôle d'accès. `FactionMember` n'est conservé que comme héritage
    de migration et n'est plus lu par l'application.
+10. **Éligibilité centralisée et collaborative** —
+    `evaluateTeamEligibility` calcule des écarts structurés à partir des agents
+    nommément choisis. Le grade minimal s'applique individuellement ; les bornes
+    d'effectif décrivent l'équipe finale, tous groupes réunis. Le mode
+    `RECOMMENDATION`, `WARNING` ou `STRICT` détermine ensuite l'effet des écarts.
+    Dépôt, acceptation et attribution recalculent depuis les données relues dans
+    leur transaction : le résultat affiché par le client n'est jamais une
+    autorisation. Le contrôle renforcé est un drapeau séparé, assorti d'une
+    confirmation et d'une note de modération.
 
 ## Cycle de vie d'une mission
 
 ```
-DRAFT → AVAILABLE ⇄ CLAIM_PENDING → ASSIGNED → IN_PROGRESS
-                     ↓ (refus)         → COMPLETED | FAILED
+DRAFT → AVAILABLE ⇄ CLAIM_PENDING → ASSIGNED ⇢ IN_PROGRESS
+                     ↓ (refus)          ↺ nouvelles collaborations
+                                        → COMPLETED | FAILED
 AVAILABLE/…/IN_PROGRESS → CANCELLED | EXPIRED       → ARCHIVED
 ```
 
@@ -84,6 +94,13 @@ déclenche les notifications ; les transitions critiques exigent confirmation
 + justification. À l'accomplissement, points et ryō sont partagés entre les
 agents engagés ; les points de groupe sont répartis proportionnellement à leurs
 effectifs, sans duplication de la valeur totale de la mission.
+
+Une revendication reste possible en `ASSIGNED` afin d'ajouter un groupe avant
+le démarrage. Une contribution inférieure au minimum n'est pas bloquée au
+dépôt : elle peut être complétée. En mode strict, le minimum est imposé lors du
+passage à `IN_PROGRESS` sur l'effectif final multi-groupes ; le maximum et le
+grade individuel restent contrôlés dès chaque revendication puis à nouveau à
+l'acceptation et à l'attribution.
 
 Les détenteurs de `mission.update` peuvent reprendre tous les champs d'un
 contrat depuis `/missions/[id]/modifier`. L'écriture relit le statut dans la
@@ -102,6 +119,12 @@ Invitation (rôle + niveau + groupe) → OAuth Discord → /bienvenue (identité
 
 Les comptes historiques ont `profileCompleted = false` après la migration et
 suivent volontairement ce parcours à leur prochaine connexion.
+
+Le grade (`User.playerLevelId`) est une donnée métier autoritative parce qu'il
+conditionne l'éligibilité. Une fois le compte activé, le membre peut modifier
+son Titre et son identité, mais pas son grade. Une correction passe par la
+gestion modérée protégée par `user.manage`, vérifie le référentiel
+`PlayerLevel` et produit l'audit `user.level_updated`.
 
 ## Notifications et automatisations — mode « sans bot » (configuration retenue)
 

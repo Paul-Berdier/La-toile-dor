@@ -25,9 +25,9 @@ const STEPS = [
   "Informations publiques",
   "Informations confidentielles",
   "Niveau de la cible",
+  "Équipe requise",
   "Récompenses",
   "Délais",
-  "Contrôle de l'équipe proposée",
   "Notifications",
   "Vérification & publication",
 ] as const;
@@ -38,10 +38,10 @@ const STEP_FIELDS: (keyof MissionCreateInput)[][] = [
   ["category", "rank"],
   ["publicSummary"],
   ["confidentialDescription", "primaryObjective", "targetIdentity", "targetFactionId", "location", "clientName", "constraints", "prohibitions", "evidence"],
-  ["targetLevelSlug", "minRecommendedLevelSlug", "groupSizeMin", "groupSizeMax"],
+  ["targetLevelSlug"],
+  ["minRecommendedLevelSlug", "groupSizeMin", "groupSizeMax", "eligibilityMode", "requiresEnhancedReview"],
   ["rewardRyoMin", "rewardRyoMax", "basePoints"],
   ["expiresAt", "rpDuration"],
-  ["eligibilityMode"],
   ["notifyLeaders", "visibility"],
   [],
 ];
@@ -49,6 +49,14 @@ const STEP_FIELDS: (keyof MissionCreateInput)[][] = [
 interface MissionWizardProps {
   levels: { slug: string; label: string }[];
   factions: { id: string; name: string; isActive: boolean }[];
+  rankConfigs: {
+    rank: Rank;
+    rewardRyoMin: number;
+    rewardRyoMax: number;
+    defaultPoints: number;
+    recommendedGroupSize: number;
+    minLevelSlug: string | null;
+  }[];
   mode?: "create" | "edit";
   missionId?: string;
   currentStatus?: string;
@@ -58,6 +66,7 @@ interface MissionWizardProps {
 export function CreateWizard({
   levels,
   factions,
+  rankConfigs,
   mode = "create",
   missionId,
   currentStatus,
@@ -66,6 +75,13 @@ export function CreateWizard({
   const [step, setStep] = useState(0);
   const [serverError, setServerError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+
+  const configuredRanks = Object.fromEntries(
+    RANK_ORDER.map((rank) => [
+      rank,
+      rankConfigs.find((config) => config.rank === rank) ?? RANK_DEFAULTS[rank],
+    ]),
+  ) as Record<Rank, (typeof rankConfigs)[number] | (typeof RANK_DEFAULTS)[Rank]>;
 
   const form = useForm<MissionCreateInput>({
     resolver: zodResolver(missionCreateSchema),
@@ -76,12 +92,13 @@ export function CreateWizard({
       rank: "D",
       targetFactionId: "",
       secondaryObjectives: [],
-      rewardRyoMin: RANK_DEFAULTS.D.rewardRyoMin,
-      rewardRyoMax: RANK_DEFAULTS.D.rewardRyoMax,
-      basePoints: RANK_DEFAULTS.D.defaultPoints,
+      rewardRyoMin: configuredRanks.D.rewardRyoMin,
+      rewardRyoMax: configuredRanks.D.rewardRyoMax,
+      basePoints: configuredRanks.D.defaultPoints,
       groupSizeMin: 1,
-      groupSizeMax: RANK_DEFAULTS.D.recommendedGroupSize,
+      groupSizeMax: configuredRanks.D.recommendedGroupSize,
       eligibilityMode: "WARNING",
+      requiresEnhancedReview: false,
       visibility: { showCategory: true, showTargetLevel: true, showSummary: true },
       publish: false,
       notifyLeaders: true,
@@ -116,13 +133,13 @@ export function CreateWizard({
   };
 
   const applyRankDefaults = (rank: Rank) => {
-    const defaults = RANK_DEFAULTS[rank];
+    const defaults = configuredRanks[rank];
     setValue("rank", rank);
     setValue("rewardRyoMin", defaults.rewardRyoMin);
     setValue("rewardRyoMax", defaults.rewardRyoMax);
     setValue("basePoints", defaults.defaultPoints);
     setValue("groupSizeMax", defaults.recommendedGroupSize);
-    if (defaults.minLevelSlug) setValue("minRecommendedLevelSlug", defaults.minLevelSlug);
+    setValue("minRecommendedLevelSlug", defaults.minLevelSlug ?? "");
   };
 
   const nextStep = async () => {
@@ -220,7 +237,7 @@ export function CreateWizard({
                   >
                     <RankSeal rank={rank} size={36} />
                     <span className="font-mono-toile text-[0.6rem] text-ink-faint">
-                      {RANK_DEFAULTS[rank].defaultPoints} pts
+                      {configuredRanks[rank].defaultPoints} pts
                     </span>
                   </button>
                 ))}
@@ -364,7 +381,7 @@ export function CreateWizard({
         )}
 
         {step === 4 && (
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div>
             <div>
               <label htmlFor="targetLevelSlug" className={label}>Niveau estimé de la cible</label>
               <select id="targetLevelSlug" {...register("targetLevelSlug")} className={input}>
@@ -377,35 +394,84 @@ export function CreateWizard({
                 Information sur la cible uniquement : ce niveau ne sert pas à accepter ou refuser une revendication.
               </p>
             </div>
-            <div>
-              <label htmlFor="minRecommendedLevelSlug" className={label}>Niveau minimal recommandé</label>
-              <select id="minRecommendedLevelSlug" {...register("minRecommendedLevelSlug")} className={input}>
-                <option value="">—</option>
-                {levels.map((level) => (
-                  <option key={level.slug} value={level.slug}>{level.label}</option>
-                ))}
-              </select>
-              <p className="mt-1 text-xs text-ink-faint">
-                Comparé séparément au niveau de chaque agent sélectionné par le chef.
-              </p>
-            </div>
-            <div>
-              <label htmlFor="groupSizeMin" className={label}>Effectif minimal</label>
-              <input id="groupSizeMin" type="number" min={1} max={50}
-                {...register("groupSizeMin", { valueAsNumber: true })} className={input} />
-              <p className="mt-1 text-xs text-ink-faint">Nombre minimal d&rsquo;agents sélectionnés.</p>
-            </div>
-            <div>
-              <label htmlFor="groupSizeMax" className={label}>Effectif maximal</label>
-              <input id="groupSizeMax" type="number" min={1} max={50}
-                {...register("groupSizeMax", { valueAsNumber: true })} className={input} />
-              {err("groupSizeMax") && <p className="mt-1 text-xs text-blood-bright">{err("groupSizeMax")}</p>}
-              <p className="mt-1 text-xs text-ink-faint">Nombre maximal d&rsquo;agents sélectionnés.</p>
-            </div>
           </div>
         )}
 
         {step === 5 && (
+          <div className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="minRecommendedLevelSlug" className={label}>Niveau minimal des agents</label>
+                <select id="minRecommendedLevelSlug" {...register("minRecommendedLevelSlug")} className={input}>
+                  <option value="">—</option>
+                  {levels.map((level) => (
+                    <option key={level.slug} value={level.slug}>{level.label}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-ink-faint">
+                  Vérifié séparément pour chaque agent engagé. Un niveau manquant est considéré non conforme.
+                </p>
+              </div>
+              <div>
+                <label htmlFor="groupSizeMin" className={label}>Effectif total minimal</label>
+                <input id="groupSizeMin" type="number" min={1} max={50}
+                  {...register("groupSizeMin", { valueAsNumber: true })} className={input} />
+                <p className="mt-1 text-xs text-ink-faint">
+                  Calculé sur l&rsquo;équipe finale, tous les groupes collaborateurs réunis.
+                </p>
+              </div>
+              <div>
+                <label htmlFor="groupSizeMax" className={label}>Effectif total maximal</label>
+                <input id="groupSizeMax" type="number" min={1} max={50}
+                  {...register("groupSizeMax", { valueAsNumber: true })} className={input} />
+                {err("groupSizeMax") && <p className="mt-1 text-xs text-blood-bright">{err("groupSizeMax")}</p>}
+                <p className="mt-1 text-xs text-ink-faint">
+                  Une petite équipe peut candidater : le minimum sera imposé avant le démarrage.
+                </p>
+              </div>
+            </div>
+
+            <fieldset className="space-y-3 border-t border-border-default pt-4">
+              <legend className={label}>Réaction automatique en cas d&rsquo;écart</legend>
+              {([
+                ["RECOMMENDATION", "Indicatif uniquement : les écarts restent visibles, sans alerte ni blocage."],
+                ["WARNING", "Le dépôt reste possible et les écarts sont signalés au chef et au modérateur."],
+                ["STRICT", "Un niveau insuffisant, un niveau manquant ou un dépassement du maximum bloque le dépôt. Le minimum total est contrôlé au démarrage, après réunion des groupes."],
+              ] as const).map(([value, text]) => (
+                <label
+                  key={value}
+                  className={`flex cursor-pointer items-start gap-3 border p-3 text-sm transition-colors ${
+                    values.eligibilityMode === value
+                      ? "border-border-gold bg-gold/5 text-ink"
+                      : "border-border-default text-ink-muted hover:border-border-gold"
+                  }`}
+                >
+                  <input type="radio" value={value} {...register("eligibilityMode")} className="mt-1 accent-[var(--toile-gold)]" />
+                  <span>
+                    <strong className="block font-medium text-ink">{ELIGIBILITY_MODE_LABELS[value]}</strong>
+                    <span className="mt-0.5 block text-xs leading-relaxed">{text}</span>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
+
+            <label className="flex cursor-pointer items-start gap-3 border border-border-default bg-elevated p-3">
+              <input
+                type="checkbox"
+                {...register("requiresEnhancedReview")}
+                className="mt-1 accent-[var(--toile-gold)]"
+              />
+              <span>
+                <strong className="block text-sm font-medium text-ink">Exiger un contrôle renforcé</strong>
+                <span className="mt-0.5 block text-xs leading-relaxed text-ink-faint">
+                  Ajoute un signalement indépendant des critères. Le modérateur devra confirmer le contrôle et laisser une note avant toute attribution.
+                </span>
+              </span>
+            </label>
+          </div>
+        )}
+
+        {step === 6 && (
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label htmlFor="rewardRyoMin" className={label}>Récompense minimale (ryōs)</label>
@@ -425,12 +491,12 @@ export function CreateWizard({
             </div>
             <p className="self-end text-xs text-ink-faint">
               Fourchette indicative du rang {values.rank} :{" "}
-              {formatRyoRange(RANK_DEFAULTS[values.rank as Rank].rewardRyoMin, RANK_DEFAULTS[values.rank as Rank].rewardRyoMax)}
+              {formatRyoRange(configuredRanks[values.rank as Rank].rewardRyoMin, configuredRanks[values.rank as Rank].rewardRyoMax)}
             </p>
           </div>
         )}
 
-        {step === 6 && (
+        {step === 7 && (
           <div className="space-y-4">
             <div>
               <label htmlFor="expiresAt" className={label}>Date d&rsquo;expiration réelle (UTC)</label>
@@ -474,54 +540,6 @@ export function CreateWizard({
               </p>
             </fieldset>
           </div>
-        )}
-
-        {step === 7 && (
-          <fieldset className="space-y-4">
-            <legend className={label}>Que faire si l&rsquo;équipe proposée ne respecte pas les critères&nbsp;?</legend>
-            <div className="space-y-2 border border-border-default bg-elevated p-3 text-xs leading-relaxed text-ink-muted">
-              <p className="font-medium text-ink">Critères configurés pour cette mission</p>
-              <p>
-                <strong className="font-medium text-ink">Effectif :</strong>{" "}
-                entre {values.groupSizeMin} et {values.groupSizeMax} agents sélectionnés.
-              </p>
-              <p>
-                <strong className="font-medium text-ink">Niveau :</strong>{" "}
-                {values.minRecommendedLevelSlug
-                  ? `chaque agent sélectionné devrait être au moins ${levels.find((level) => level.slug === values.minRecommendedLevelSlug)?.label ?? values.minRecommendedLevelSlug}.`
-                  : "aucun niveau minimal n'est demandé."}
-              </p>
-              <p className="text-ink-faint">
-                Le contrôle porte uniquement sur les agents nommément choisis par le chef, pas sur tout son groupe.
-              </p>
-            </div>
-            <p className="text-xs leading-relaxed text-ink-muted">
-              Ce réglage décide seulement si le chef peut <strong className="font-medium text-ink">déposer</strong>{" "}
-              sa revendication et si un écart est signalé. Une revendication déposée n&rsquo;est pas encore
-              attribuée&nbsp;: un modérateur doit toujours prendre la décision finale.
-            </p>
-            {([
-              ["RECOMMENDATION", "Le chef peut déposer sa revendication même en cas d'écart. Aucun avertissement n'est ajouté au dossier."],
-              ["WARNING", "Le chef peut déposer sa revendication. Les écarts exacts lui sont affichés et sont ajoutés au dossier du modérateur."],
-              ["STRICT", "Le dépôt est refusé si l'effectif sort de la fourchette ou si au moins un agent est sous le niveau recommandé. Le chef doit corriger son équipe."],
-              ["MANUAL_REVIEW", "Le chef peut toujours déposer sa revendication. Le dossier porte un signalement « contrôle requis », même lorsque tous les critères sont respectés."],
-            ] as const).map(([value, text]) => (
-              <label
-                key={value}
-                className={`flex cursor-pointer items-start gap-3 border p-3 text-sm transition-colors ${
-                  values.eligibilityMode === value
-                    ? "border-border-gold bg-gold/5 text-ink"
-                    : "border-border-default text-ink-muted hover:border-border-gold"
-                }`}
-              >
-                <input type="radio" value={value} {...register("eligibilityMode")} className="mt-1 accent-[var(--toile-gold)]" />
-                <span>
-                  <strong className="block font-medium text-ink">{ELIGIBILITY_MODE_LABELS[value]}</strong>
-                  <span className="mt-0.5 block text-xs leading-relaxed">{text}</span>
-                </span>
-              </label>
-            ))}
-          </fieldset>
         )}
 
         {step === 8 && (
@@ -574,7 +592,8 @@ export function CreateWizard({
                 <PreviewRow label="Résumé" value={values.visibility?.showSummary ? values.publicSummary || "—" : "— voilé —"} />
                 <PreviewRow label="Niveau cible" value={values.visibility?.showTargetLevel ? levels.find((l) => l.slug === values.targetLevelSlug)?.label ?? "—" : "— voilé —"} />
                 <PreviewRow label="Récompense" value={formatRyoRange(values.rewardRyoMin || 0, values.rewardRyoMax || 0)} />
-                <PreviewRow label="Effectif" value={`${values.groupSizeMin} à ${values.groupSizeMax}`} />
+                <PreviewRow label="Niveau minimal des agents" value={levels.find((l) => l.slug === values.minRecommendedLevelSlug)?.label ?? "Aucun"} />
+                <PreviewRow label="Effectif total" value={`${values.groupSizeMin} à ${values.groupSizeMax} agent(s), tous groupes réunis`} />
                 <p className="mt-2 text-xs text-blood-bright">
                   Cibles, faction des cibles, lieu, commanditaire et briefing : jamais transmis à ce niveau.
                 </p>
@@ -605,7 +624,11 @@ export function CreateWizard({
                 <PreviewRow label="Commanditaire" value={values.clientName || "—"} />
                 <PreviewRow label="Titre interne" value={values.internalTitle || "—"} />
                 <PreviewRow label="Notes" value={values.moderatorNotes || "—"} />
-                <PreviewRow label="Éligibilité" value={values.eligibilityMode} />
+                <PreviewRow label="Éligibilité" value={ELIGIBILITY_MODE_LABELS[values.eligibilityMode]} />
+                <PreviewRow
+                  label="Contrôle renforcé"
+                  value={values.requiresEnhancedReview ? "Oui — confirmation et note obligatoires" : "Non"}
+                />
                 <p className="text-xs text-ink-faint">+ l&rsquo;intégralité des niveaux précédents.</p>
               </Tabs.Content>
             </Tabs.Root>

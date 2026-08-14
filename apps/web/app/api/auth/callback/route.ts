@@ -3,6 +3,7 @@ import { prisma } from "@toile/database";
 import {
   audit,
   checkInvitation,
+  checkInvitationForConsumption,
   createSession,
   exchangeCode,
   fetchDiscordUser,
@@ -100,8 +101,11 @@ export async function GET(req: NextRequest) {
       !hasRequiredRole &&
       (existing.user.status === "ACTIVE" || existing.user.status === "PENDING")
     ) {
-      await prisma.user.update({
-        where: { id: existing.userId },
+      await prisma.user.updateMany({
+        where: {
+          id: existing.userId,
+          status: { in: ["ACTIVE", "PENDING"] },
+        },
         data: {
           status: "SUSPENDED",
           revokedReason: "Rôle Discord critique perdu (contrôle à la connexion)",
@@ -135,15 +139,34 @@ export async function GET(req: NextRequest) {
     if (status === "PENDING") {
       // Compatibilité avec un compte créé par un ancien lien qui exigeait
       // encore une approbation : la consommation du fil suffit désormais.
+      // Le rôle et le groupe ont déjà été accordés à cette consommation ; une
+      // révocation ultérieure du créateur ne retire pas rétroactivement les
+      // comptes qu'il a invités. Seul le statut courant de CE compte est ici
+      // modifié, avec une clause conditionnelle contre les suspensions.
       const consumedInvitation = await prisma.invitation.findUnique({
         where: { usedById: existing.userId },
         select: { id: true },
       });
       if (!consumedInvitation) return redirectTo(req, "/attente");
-      await prisma.user.update({
-        where: { id: existing.userId },
+      const activated = await prisma.user.updateMany({
+        where: { id: existing.userId, status: "PENDING" },
         data: { status: "ACTIVE", approvedAt: existing.user.approvedAt ?? new Date() },
       });
+      // Une suspension/révocation concurrente ne doit jamais être écrasée par
+      // le chemin de compatibilité des anciens comptes PENDING.
+      if (activated.count !== 1) {
+        const liveUser = await prisma.user.findUnique({
+          where: { id: existing.userId },
+          select: { status: true },
+        });
+        await audit({
+          actorId: existing.userId,
+          action: "auth.login_refused",
+          reason: `statut:${liveUser?.status ?? "missing"}`,
+          ...meta,
+        });
+        return redirectTo(req, "/connexion?erreur=acces");
+      }
       await audit({
         actorId: existing.userId,
         action: "access.auto_activated",
@@ -204,29 +227,35 @@ export async function GET(req: NextRequest) {
     const rpTitle = req.cookies.get("toile_rp_title")?.value?.slice(0, 60).trim() || null;
     const village = req.cookies.get("toile_village")?.value?.slice(0, 60).trim() || null;
 
-    const invitedRole = invitation.roleId
-      ? await prisma.role.findUnique({ where: { id: invitation.roleId } })
-      : null;
-    const isLeaderRole = invitedRole?.slug === "group_leader";
-
-    let user: { id: string };
+    let provisioning:
+      | { ok: true; user: { id: string } }
+      | { ok: false; reason: string };
     try {
       // Création du compte, consommation du fil et affectations sont une seule
-      // transaction : aucune course ne peut laisser un compte orphelin.
-      user = await prisma.$transaction(async (tx) => {
-        if (invitation.groupId) {
+      // transaction : aucune course ne peut laisser un compte orphelin. Les
+      // droits du créateur et toutes les données appliquées sont relus ici.
+      provisioning = await prisma.$transaction(async (tx) => {
+        const liveCheck = await checkInvitationForConsumption(
+          tx,
+          invitation.id,
+          discordUser.id,
+        );
+        if (!liveCheck.valid) return { ok: false as const, reason: liveCheck.reason };
+        const liveInvitation = liveCheck.invitation;
+
+        if (liveInvitation.groupId) {
           const group = await tx.group.findFirst({
-            where: { id: invitation.groupId, isActive: true },
+            where: { id: liveInvitation.groupId, isActive: true },
             select: { id: true },
           });
-          if (!group) throw new Error("INVITATION_GROUP_INACTIVE");
+          if (!group) return { ok: false as const, reason: "group_inactive" };
         }
         const created = await tx.user.create({
           data: {
             displayName: rpTitle ?? discordUser.global_name ?? discordUser.username,
             rpTitle,
             village,
-            playerLevelId: invitation.playerLevelId,
+            playerLevelId: liveInvitation.playerLevelId,
             status: "ACTIVE",
             approvedAt: new Date(),
             discordAccount: {
@@ -241,25 +270,49 @@ export async function GET(req: NextRequest) {
             },
           },
         });
+        const consumedAt = new Date();
         const consumed = await tx.invitation.updateMany({
-          where: { id: invitation.id, status: "ACTIVE", usedById: null },
-          data: { status: "USED", usedById: created.id, usedAt: new Date() },
+          where: {
+            id: liveInvitation.id,
+            status: "ACTIVE",
+            usedById: null,
+            expiresAt: { gt: consumedAt },
+          },
+          data: { status: "USED", usedById: created.id, usedAt: consumedAt },
         });
         if (consumed.count !== 1) throw new Error("INVITATION_RACE");
-        if (invitation.roleId) {
-          await tx.userRole.create({ data: { userId: created.id, roleId: invitation.roleId } });
-        }
-        if (invitation.groupId) {
-          await tx.groupMember.create({
-            data: { groupId: invitation.groupId, userId: created.id, isLeader: isLeaderRole },
+        if (liveInvitation.roleId) {
+          await tx.userRole.create({
+            data: { userId: created.id, roleId: liveInvitation.roleId },
           });
         }
-        return created;
-      });
+        if (liveInvitation.groupId) {
+          await tx.groupMember.create({
+            data: {
+              groupId: liveInvitation.groupId,
+              userId: created.id,
+              isLeader: liveInvitation.targetRoleSlug === "group_leader",
+            },
+          });
+        }
+        return { ok: true as const, user: created };
+      }, { isolationLevel: "Serializable" });
     } catch {
       await audit({ action: "invite.check_failed", reason: "provisioning_race", ...meta });
       return redirectTo(req, "/connexion?erreur=acces");
     }
+
+    if (!provisioning.ok) {
+      await audit({
+        action: "invite.check_failed",
+        reason: provisioning.reason,
+        resourceType: "invitation",
+        resourceId: invitation.id,
+        ...meta,
+      });
+      return redirectTo(req, "/connexion?erreur=acces");
+    }
+    const user = provisioning.user;
 
     await audit({
       actorId: user.id,
@@ -277,7 +330,31 @@ export async function GET(req: NextRequest) {
     ipTrunc: meta.ipHash,
     userAgent: meta.userAgent,
   });
-  await prisma.user.update({ where: { id: userId }, data: { lastLoginAt: new Date() } });
+  // La session existe déjà au moment de cette relecture : si une suspension
+  // gagne avant, on la retire ici ; si elle gagne après, sa révocation globale
+  // voit nécessairement cette session. validateSession contrôle aussi ACTIVE.
+  const liveUser = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { status: true, profileCompleted: true },
+  });
+  if (liveUser?.status !== "ACTIVE") {
+    await prisma.session.updateMany({
+      where: { id: session.id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    await audit({
+      actorId: userId,
+      action: "auth.login_refused",
+      reason: `statut:${liveUser?.status ?? "missing"}`,
+      ...meta,
+    });
+    return redirectTo(req, "/connexion?erreur=acces");
+  }
+  profileCompleted = liveUser.profileCompleted;
+  await prisma.user.updateMany({
+    where: { id: userId, status: "ACTIVE" },
+    data: { lastLoginAt: new Date() },
+  });
   await audit({ actorId: userId, action: "auth.login", ...meta });
 
   // Les profils incomplets (nouveaux comptes et anciens comptes d'avant la

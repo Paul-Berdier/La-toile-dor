@@ -431,6 +431,9 @@ model Mission {
   internalTitle   String?
   moderatorNotes  String?
   eligibilityMode EligibilityMode @default(WARNING)
+  // Signalement indépendant de la politique automatique : impose au
+  // modérateur un acquittement explicite avant le démarrage.
+  requiresEnhancedReview Boolean @default(false)
 
   // ── Délais (temps réel UTC ; conversion RP via le service central)
   createdAt          DateTime  @default(now())

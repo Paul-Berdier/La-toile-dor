@@ -3,7 +3,12 @@
 ## Fiche d'un groupe
 
 La page `/groupes` affiche tous les groupes actifs à la modération et seulement
-les groupes d'appartenance aux autres membres. `/groupes/[id]` présente :
+les groupes d'appartenance aux autres membres. La fiche `/groupes/[id]` suit la
+même autorisation : connaître ou deviner son identifiant ne donne aucun accès
+à un tiers. La visibilité publique éventuelle d'une équipe reste limitée à la
+mission où le chef l'a expressément autorisée.
+
+La fiche présente :
 
 - le nom du groupe et sa faction éventuelle ;
 - le pays et le village principaux de résidence ;
@@ -82,6 +87,10 @@ ajoutés seulement après passage dans le sérialiseur central d'identité : mê
 groupe, propre identité ou permission `identity.view.real`. Voir
 `IDENTITY_AND_PRIVACY.md`.
 
+Avant la fin de `/bienvenue`, le nom Discord provisoire d'un invité n'est pas
+affiché aux membres ordinaires. Seuls le chef du groupe et la modération le
+voient afin de pouvoir administrer l'arrivée.
+
 Un utilisateur peut appartenir à plusieurs groupes : `GroupMember` est
 identifié par le couple `(groupId, userId)`. Depuis `/admin/utilisateurs`, un
 super-administrateur peut ajouter ou retirer un compte actif de plusieurs
@@ -96,6 +105,8 @@ Le niveau RP (`PlayerLevel`) est choisi dès la création de l'invitation et
 appliqué au compte dans la transaction OAuth. La gestion des utilisateurs
 permet de corriger le niveau des comptes historiques ; la migration attribue
 provisoirement le niveau le plus bas aux anciennes fiches qui n'en avaient pas.
+Un chef peut inviter un agent au grade initial le plus bas ; seule la modération
+peut attribuer un grade supérieur ou corriger ensuite le grade.
 
 ## Promotion d'un agent
 

@@ -15,7 +15,7 @@ export default async function ModifierMissionPage({
   await requireUserWith(PERMISSIONS.MISSION_UPDATE);
   const { id } = await params;
 
-  const [mission, levels, factions] = await Promise.all([
+  const [mission, levels, factions, rankConfigs] = await Promise.all([
     prisma.mission.findUnique({
       where: { id },
       include: {
@@ -31,6 +31,17 @@ export default async function ModifierMissionPage({
     prisma.faction.findMany({
       orderBy: { name: "asc" },
       select: { id: true, name: true, isActive: true },
+    }),
+    prisma.rankConfig.findMany({
+      orderBy: { dangerLevel: "asc" },
+      select: {
+        rank: true,
+        rewardRyoMin: true,
+        rewardRyoMax: true,
+        defaultPoints: true,
+        recommendedGroupSize: true,
+        minLevel: { select: { slug: true } },
+      },
     }),
   ]);
 
@@ -62,7 +73,10 @@ export default async function ModifierMissionPage({
     minRecommendedLevelSlug: mission.minRecommendedLevel?.slug,
     groupSizeMin: mission.groupSizeMin,
     groupSizeMax: mission.groupSizeMax,
-    eligibilityMode: mission.eligibilityMode,
+    eligibilityMode:
+      mission.eligibilityMode === "MANUAL_REVIEW" ? "WARNING" : mission.eligibilityMode,
+    requiresEnhancedReview:
+      mission.requiresEnhancedReview || mission.eligibilityMode === "MANUAL_REVIEW",
     expiresAt: mission.expiresAt?.toISOString() ?? null,
     rpDuration: null,
     visibility: mission.visibility ?? {
@@ -92,6 +106,10 @@ export default async function ModifierMissionPage({
       <CreateWizard
         levels={levels}
         factions={factions}
+        rankConfigs={rankConfigs.map(({ minLevel, ...config }) => ({
+          ...config,
+          minLevelSlug: minLevel?.slug ?? null,
+        }))}
         mode="edit"
         missionId={mission.id}
         currentStatus={mission.status}

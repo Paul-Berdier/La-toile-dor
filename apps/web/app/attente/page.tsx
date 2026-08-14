@@ -16,8 +16,9 @@ export default function AttentePage() {
               La Toile vous observe
             </p>
             <p className="text-sm leading-relaxed text-ink-muted">
-              Votre fil est noué, mais l&rsquo;admission exige encore un regard. Un tisseur
-              examinera votre profil ; vous serez prévenu par Discord lorsque le sceau tombera.
+              Ce compte ancien n&rsquo;est relié à aucun fil d&rsquo;invitation consommé.
+              Demandez un nouveau lien à un tisseur&nbsp;: une invitation valide active
+              désormais le compte immédiatement, sans approbation supplémentaire.
             </p>
             <Link href="/connexion" className={`${buttonClasses("ghost", "md")}`}>
               Revenir plus tard

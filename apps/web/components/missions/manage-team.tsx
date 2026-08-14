@@ -2,7 +2,11 @@
 
 import { useState } from "react";
 import { AssignmentModal, type GroupCatalogEntry } from "./assignment-modal";
-import type { CardAssignmentInfo, CardClaimInfo } from "@/server/missions";
+import type {
+  CardAssignmentInfo,
+  CardClaimInfo,
+  MissionEligibilityConfig,
+} from "@/server/missions";
 import { Button } from "@/components/ui/button";
 
 /** Bouton modération : ouvre la modale d'attribution depuis le détail d'une mission. */
@@ -13,6 +17,7 @@ export function ManageTeamButton({
   claims,
   assignments,
   catalog,
+  eligibility,
   canStart,
 }: {
   missionId: string;
@@ -21,6 +26,7 @@ export function ManageTeamButton({
   claims: CardClaimInfo[];
   assignments: CardAssignmentInfo[];
   catalog: GroupCatalogEntry[];
+  eligibility: MissionEligibilityConfig;
   /** true si la mission n'est pas encore « en cours » */
   canStart: boolean;
 }) {
@@ -47,7 +53,9 @@ export function ManageTeamButton({
           claims={claims}
           assignments={assignments}
           catalog={catalog}
+          eligibility={eligibility}
           start={start}
+          enforceFinalCriteria={!canStart}
           onClose={() => setOpen(false)}
         />
       )}

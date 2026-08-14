@@ -5,15 +5,13 @@ import { IdentityEditForm } from "@/components/compte/identity-edit-form";
 export const dynamic = "force-dynamic";
 
 /**
- * « Mes informations » : chacun modifie lui-même son Titre, son grade et son
- * nom. Le rôle et les groupes restent en lecture seule — ils relèvent de la
- * hiérarchie d'invitation, pas de l'intéressé.
+ * « Mes informations » : chacun modifie lui-même son Titre et son nom. Le
+ * grade, le rôle et les groupes restent en lecture seule.
  */
 export default async function ComptePage() {
   const current = await requireUser();
 
-  const [user, levels] = await Promise.all([
-    prisma.user.findUniqueOrThrow({
+  const user = await prisma.user.findUniqueOrThrow({
       where: { id: current.session.userId },
       select: {
         firstName: true,
@@ -28,9 +26,7 @@ export default async function ComptePage() {
           select: { isLeader: true, group: { select: { id: true, name: true } } },
         },
       },
-    }),
-    prisma.playerLevel.findMany({ orderBy: { order: "asc" }, select: { id: true, label: true } }),
-  ]);
+    });
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-6 lg:px-6">
@@ -47,10 +43,9 @@ export default async function ComptePage() {
             firstName: user.firstName ?? "",
             lastName: user.lastName ?? "",
             displayName: user.displayName,
-            playerLevelId: user.playerLevelId ?? "",
+            playerLevelLabel: user.playerLevel?.label ?? "Non déclaré",
             identityVisibility: user.identityVisibility,
           }}
-          levels={levels}
         />
       </section>
 

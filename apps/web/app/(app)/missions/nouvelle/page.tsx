@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export default async function NouvelleMissionPage() {
   await requireUserWith(PERMISSIONS.MISSION_CREATE);
-  const [levels, factions] = await Promise.all([
+  const [levels, factions, rankConfigs] = await Promise.all([
     prisma.playerLevel.findMany({
       orderBy: { order: "asc" },
       select: { slug: true, label: true },
@@ -16,6 +16,17 @@ export default async function NouvelleMissionPage() {
       where: { isActive: true },
       orderBy: { name: "asc" },
       select: { id: true, name: true, isActive: true },
+    }),
+    prisma.rankConfig.findMany({
+      orderBy: { dangerLevel: "asc" },
+      select: {
+        rank: true,
+        rewardRyoMin: true,
+        rewardRyoMax: true,
+        defaultPoints: true,
+        recommendedGroupSize: true,
+        minLevel: { select: { slug: true } },
+      },
     }),
   ]);
 
@@ -27,7 +38,14 @@ export default async function NouvelleMissionPage() {
       <p className="mt-1 mb-6 text-xs text-ink-faint">
         Dix étapes, un fil. Vérifiez chaque aperçu avant de publier.
       </p>
-      <CreateWizard levels={levels} factions={factions} />
+      <CreateWizard
+        levels={levels}
+        factions={factions}
+        rankConfigs={rankConfigs.map(({ minLevel, ...config }) => ({
+          ...config,
+          minLevelSlug: minLevel?.slug ?? null,
+        }))}
+      />
     </main>
   );
 }

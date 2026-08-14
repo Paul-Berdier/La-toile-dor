@@ -12,17 +12,76 @@ engagés. L'effectif est toujours déduit de cette sélection :
 
 - au moins un agent actif est obligatoire ;
 - chaque identifiant est revérifié côté serveur comme membre actuel du groupe ;
-- le niveau minimal est calculé uniquement sur les agents sélectionnés ;
+- le niveau minimal est vérifié séparément pour chaque agent sélectionné ;
+- un niveau absent est un écart distinct d'un niveau insuffisant ;
 - reste modifiable, avec le message, tant que la revendication est `PENDING`
   ou `INFO_REQUESTED` ;
 - est conservée dans `MissionClaimParticipant`, puis copiée dans
-  `MissionParticipant` lors de l'acceptation.
+  `MissionParticipant` lors de l'acceptation ;
 - reste invisible aux autres joueurs par défaut. Le chef peut décocher la case
   d'invisibilité ; ce consentement est alors copié dans
   `MissionAssignment.publicRoster` lors de l'attribution.
 
 Une revendication n'accorde aucun accès confidentiel. Seule une attribution
 active le fait.
+
+Une mission reste revendicable lorsqu'elle est `ASSIGNED` : un autre groupe
+peut proposer sa contribution tant que la mission n'a pas commencé. Un groupe
+déjà attribué ne peut pas déposer une seconde revendication, mais un même chef
+peut candidater avec un autre groupe qu'il dirige.
+
+## Critères d'éligibilité
+
+Les critères d'une mission décrivent l'**équipe finale**, et non la taille
+totale de chaque groupe d'origine :
+
+- `groupSizeMin` et `groupSizeMax` encadrent le nombre total d'agents qui
+  participeront, tous les groupes collaborateurs réunis ;
+- `minRecommendedLevelId` est comparé au grade de **chaque** agent engagé ;
+- seuls les agents nommément sélectionnés entrent dans le calcul ; les autres
+  membres de leurs groupes sont ignorés ;
+- un agent sans grade produit l'écart `missing_level`, distinct de
+  `below_level`.
+
+Le chef voit le bilan évoluer pendant sa sélection : contribution proposée,
+fourchette finale, grade minimal et état individuel de chaque agent. Cette
+prévisualisation n'est jamais l'autorité finale ; le serveur recalcule tout à
+partir des données vivantes.
+
+### Les trois modes
+
+| Mode | Dépôt d'une revendication | Signalement |
+|---|---|---|
+| **Recommandation** | Toujours possible. | Les écarts restent visibles dans l'interface, mais ne sont ni retournés au chef ni enregistrés sur la revendication. |
+| **Avertissement** | Toujours possible. | Les écarts sont montrés au chef et enregistrés pour la modération. |
+| **Blocage strict** | Refusé si un agent est sous le grade minimal, si son grade manque ou si la contribution dépasse le maximum. | Les motifs exacts sont renvoyés. |
+
+Le minimum d'effectif est volontairement non bloquant au dépôt, y compris en
+mode strict : une petite contribution doit pouvoir être complétée par un autre
+groupe. Lors du passage à `IN_PROGRESS`, le calcul est refait sur l'équipe
+finale multi-groupes. En mode strict, le démarrage est alors refusé si le total
+reste sous le minimum, dépasse le maximum ou contient un agent sans le grade
+requis. Dans les deux autres modes, la politique choisie reste non bloquante.
+
+L'ancien mode `MANUAL_REVIEW` n'est plus proposé à la création. La migration
+`20260814150000_enhanced_eligibility_review` convertit ces missions en
+`WARNING` et active le contrôle renforcé décrit ci-dessous ; la valeur enum est
+conservée seulement pour la lecture d'éventuelles données historiques.
+
+### Contrôle renforcé
+
+`Mission.requiresEnhancedReview` est indépendant des trois modes automatiques.
+Lorsqu'il est activé, il ne transforme pas un avertissement en blocage de
+critères. Il impose une action humaine traçable :
+
+- pour accepter directement une revendication, le modérateur confirme le
+  contrôle et fournit une note ;
+- toute attribution manuelle, même préparée sans démarrer, exige immédiatement
+  la même confirmation et une note ;
+- une modification ultérieure de l'équipe déjà en cours réimpose le minimum
+  strict et, le cas échéant, un nouveau contrôle renforcé traçable ;
+- la note est conservée avec la décision ; confirmation et justification
+  figurent aussi dans l'audit d'attribution.
 
 ## Attribution par la modération
 
@@ -39,16 +98,43 @@ déplaçant sa carte vers « En cours ». La modale :
 - n'actualise la carte qu'après le succès serveur.
 
 Le serveur exige `mission.assign` et `mission.move`, vérifie l'existence et
-l'activité de chaque groupe et l'appartenance active de chaque agent. L'action
-peut attribuer sans démarrer (`ASSIGNED`) ou attribuer et
+l'activité de chaque groupe, l'appartenance active de chaque agent et son grade
+actuel. L'action peut attribuer sans démarrer (`ASSIGNED`) ou attribuer et
 démarrer (`IN_PROGRESS`). Une mission ne peut pas passer « En cours » sans au
-moins une attribution.
+moins une attribution. Le bilan d'éligibilité porte alors sur l'union des
+agents sélectionnés dans toutes les attributions.
+
+Une matrice de transitions est aussi imposée côté serveur : `COMPLETED` et
+`FAILED` ne sont accessibles que depuis `IN_PROGRESS`. Un appel direct ne peut
+donc ni sauter la validation de l'équipe finale, ni déclencher les points et
+ryōs depuis une mission seulement disponible ou attribuée.
 
 ## Transaction et concurrence
 
-`assignMissionAction` relit le statut dans la transaction. La mise à jour finale
-inclut le statut lu dans sa clause `WHERE` ; si un autre modérateur a modifié la
-mission entre-temps, l'opération échoue avec une demande de rechargement.
+Le dépôt, l'acceptation d'une revendication et l'attribution manuelle ne font
+jamais confiance au bilan précédemment affiché. Dans leur transaction, les
+actions relisent :
+
+- le statut et les critères actuels de la mission ;
+- le mode d'éligibilité et le contrôle renforcé ;
+- l'activité des groupes et l'appartenance de chaque agent ;
+- le grade actuel de chaque agent sélectionné.
+
+Elles rappellent ensuite la fonction pure centrale `evaluateTeamEligibility`
+avant toute écriture. Ainsi, une revendication restée ouverte ne peut pas être
+acceptée sur la base d'un ancien grade ou de critères modifiés. En mode strict,
+elle est refusée si les données vivantes comportent désormais un écart
+bloquant.
+
+La clôture relit elle aussi, dans une transaction `Serializable`, le statut,
+les attributions, les participants et la fourchette de ryōs. Points et ryōs
+sont donc calculés sur l'équipe effectivement verrouillée par la clôture, pas
+sur un instantané chargé avant une réattribution concurrente.
+
+`claimMissionAction`, `decideClaimAction` et `assignMissionAction` emploient des
+transactions `Serializable`. Pour l'attribution, la mise à jour finale inclut
+également le statut relu dans sa clause `WHERE` ; si une action concurrente a
+modifié la mission, l'opération échoue avec une demande de rechargement.
 
 La base ajoute trois protections :
 
@@ -58,6 +144,20 @@ La base ajoute trois protections :
 
 Une réattribution désactive les groupes retirés sans supprimer leur historique.
 Les revendications en attente des groupes retenus passent à `ACCEPTED`.
+
+## Autorité sur les grades
+
+Le grade qui intervient dans l'éligibilité est toujours
+`User.playerLevelId` tel qu'il existe en base au moment de la transaction. Un
+chef ne transmet jamais lui-même un ordre de grade dans sa revendication et ne
+peut pas modifier le grade d'un agent pour rendre son équipe conforme.
+
+Après l'activation du compte, le formulaire personnel exclut le grade. Seule
+la gestion des utilisateurs protégée par `user.manage` peut le modifier ; le
+nouveau grade doit exister dans `PlayerLevel` et le changement est audité sous
+`user.level_updated`. Une correction par la modération peut donc modifier le
+bilan d'une revendication encore en attente, ce qui explique la revalidation à
+l'acceptation.
 
 ## Retour vers « À prendre »
 

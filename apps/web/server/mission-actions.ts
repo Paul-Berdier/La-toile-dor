@@ -11,6 +11,7 @@ import {
   missionMoveSchema,
   computeMissionScore,
   applyEligibilityMode,
+  evaluateTeamEligibility,
   shareInteger,
   REPORT_IMAGES_MAX,
   REPORT_IMAGE_MAX_BYTES,
@@ -22,6 +23,7 @@ import {
   groupMemberIds,
   userIdsWithPermission,
 } from "@/server/notifications";
+import { canMoveMissionManually } from "@/server/mission-lifecycle";
 import { getAccessContext } from "@/server/missions";
 import {
   applyMissionOutcomeToProfiles,
@@ -34,10 +36,18 @@ export interface ActionResult {
   ok: boolean;
   error?: string;
   warnings?: string[];
+  /** Une acceptation renforcée exige une confirmation explicite et une note. */
+  needsReviewConfirmation?: boolean;
   /** Le passage « en cours » exige d'abord l'attribution (modale côté client) */
   needsAssignment?: boolean;
   /** Retour « À prendre » d'une mission attribuée : choix conserver/retirer requis */
   needsReleaseChoice?: boolean;
+}
+
+class EligibilityRejectedError extends Error {
+  constructor(readonly warnings: string[]) {
+    super("ELIGIBILITY_REJECTED");
+  }
 }
 
 /** Payload de notification : UNIQUEMENT des champs publics. */
@@ -97,13 +107,24 @@ export async function moveMissionAction(input: {
     };
   }
 
-  // Passage « en cours » : IMPOSSIBLE sans équipe — la modale d'attribution
-  // (assignMissionAction) est le seul chemin.
-  if (toStatus === "IN_PROGRESS" && mission.assignments.length === 0) {
+  // Passage « en cours » : la validation de l'équipe finale, du minimum total
+  // et du contrôle renforcé appartient exclusivement à assignMissionAction.
+  // Cette barrière serveur interdit aussi un appel direct contournant la modale.
+  if (toStatus === "IN_PROGRESS") {
     return {
       ok: false,
       needsAssignment: true,
-      error: "Attribuez d'abord la mission à un ou plusieurs groupes.",
+      error:
+        mission.assignments.length === 0
+          ? "Attribuez d'abord la mission à un ou plusieurs groupes."
+          : "Confirmez l'équipe finale avant de démarrer la mission.",
+    };
+  }
+
+  if (!canMoveMissionManually(mission.status, toStatus)) {
+    return {
+      ok: false,
+      error: `Transition impossible : ${mission.status} ne peut pas passer directement à ${toStatus}.`,
     };
   }
 
@@ -166,20 +187,64 @@ export async function moveMissionAction(input: {
 
   const meta = await requestMeta();
   const fromStatus = mission.status;
+  let committedMission = mission;
+  let committedCompletionRyo = completionRyo;
 
   try {
     await prisma.$transaction(async (tx) => {
-    // Protection contre les mises à jour concurrentes : le statut doit être
-    // inchangé au moment de l'écriture.
+    // Relecture autoritative de l'équipe, des récompenses et du statut. Une
+    // attribution ou une modification concurrente ne peut pas produire des
+    // crédits calculés sur un ancien roster.
+    const liveMission = await tx.mission.findUnique({
+      where: { id: missionId },
+      include: {
+        assignments: {
+          where: { active: true },
+          select: { id: true, groupId: true, factionId: true },
+        },
+        participants: { select: { userId: true, groupId: true } },
+      },
+    });
+    if (!liveMission || liveMission.status !== fromStatus) {
+      throw new Error("CONCURRENT_MOVE");
+    }
+    committedMission = liveMission;
+    if (toStatus === "COMPLETED") {
+      committedCompletionRyo = awardedRyo ?? liveMission.rewardRyoMin;
+      if (
+        committedCompletionRyo < liveMission.rewardRyoMin ||
+        committedCompletionRyo > liveMission.rewardRyoMax
+      ) {
+        throw new Error("REWARD_CHANGED");
+      }
+      if (liveMission.participants.length === 0) {
+        throw new Error("NO_PARTICIPANTS");
+      }
+      const liveAssignedGroupIds = new Set(
+        liveMission.assignments.map((assignment) => assignment.groupId),
+      );
+      if (
+        liveMission.participants.some(
+          (participant) =>
+            !participant.groupId || !liveAssignedGroupIds.has(participant.groupId),
+        )
+      ) {
+        throw new Error("PARTICIPANT_WITHOUT_ASSIGNMENT");
+      }
+    }
+
     const updated = await tx.mission.updateMany({
       where: { id: missionId, status: fromStatus },
       data: {
         status: toStatus,
         resolvedAt: AUTO_RESOLVED.includes(toStatus) ? new Date() : null,
-        failureReason: toStatus === "FAILED" ? reason ?? mission.failureReason : mission.failureReason,
+        failureReason:
+          toStatus === "FAILED" ? reason ?? liveMission.failureReason : liveMission.failureReason,
         cancellationReason:
-          toStatus === "CANCELLED" ? reason ?? mission.cancellationReason : mission.cancellationReason,
-        ...(completionRyo !== null ? { awardedRyo: completionRyo } : {}),
+          toStatus === "CANCELLED"
+            ? reason ?? liveMission.cancellationReason
+            : liveMission.cancellationReason,
+        ...(committedCompletionRyo !== null ? { awardedRyo: committedCompletionRyo } : {}),
         ...(releasing && releaseAssignments
           ? { assignedFactionId: null, assignedGroupId: null, assignedAt: null }
           : {}),
@@ -214,7 +279,7 @@ export async function moveMissionAction(input: {
         },
       });
 
-      if (toStatus === "COMPLETED" && completionRyo !== null) {
+      if (toStatus === "COMPLETED" && committedCompletionRyo !== null) {
         const alreadyScored = await tx.missionScore.findFirst({
           where: { missionId, reason: "MISSION_COMPLETED" },
           select: { id: true },
@@ -226,18 +291,18 @@ export async function moveMissionAction(input: {
           select: { id: true },
         });
         const { total, breakdown } = computeMissionScore(
-          mission.rank as Rank,
+          liveMission.rank as Rank,
           "COMPLETED",
           {},
-          mission.basePoints,
+          liveMission.basePoints,
         );
-        const participantWeights = mission.participants.map((participant) => ({
+        const participantWeights = liveMission.participants.map((participant) => ({
           key: participant.userId,
           weight: 1,
         }));
         const playerPointShares = shareInteger(total, participantWeights);
-        const playerRyoShares = shareInteger(completionRyo, participantWeights);
-        for (const participant of mission.participants) {
+        const playerRyoShares = shareInteger(committedCompletionRyo, participantWeights);
+        for (const participant of liveMission.participants) {
           await tx.missionParticipant.update({
             where: { missionId_userId: { missionId, userId: participant.userId } },
             data: {
@@ -247,9 +312,9 @@ export async function moveMissionAction(input: {
           });
         }
 
-        const groupWeights = mission.assignments.map((assignment) => ({
+        const groupWeights = liveMission.assignments.map((assignment) => ({
           key: assignment.groupId,
-          weight: mission.participants.filter(
+          weight: liveMission.participants.filter(
             (participant) => participant.groupId === assignment.groupId,
           ).length,
         }));
@@ -258,7 +323,7 @@ export async function moveMissionAction(input: {
         }
         for (const line of breakdown) {
           const groupShares = shareInteger(line.points, groupWeights);
-          for (const assignment of mission.assignments) {
+          for (const assignment of liveMission.assignments) {
             const points = groupShares.get(assignment.groupId) ?? 0;
             if (points === 0) continue;
             await tx.missionScore.create({
@@ -285,21 +350,21 @@ export async function moveMissionAction(input: {
       if (toStatus === "COMPLETED" || toStatus === "FAILED") {
         intelResult = await applyMissionOutcomeToProfiles(tx, {
           missionId,
-          missionCode: mission.code,
+          missionCode: liveMission.code,
           // Les groupes qui ont réellement engagé des agents, pas les simples
           // attributions : c'est la participation qui ouvre l'accès.
           groupIds: [
             ...new Set(
-              mission.participants
+              liveMission.participants
                 .map((participant) => participant.groupId)
                 .filter((groupId): groupId is string => Boolean(groupId)),
             ),
           ],
           actorId: current.session.userId,
-          clientProfileId: mission.clientProfileId,
+          clientProfileId: liveMission.clientProfileId,
         });
       }
-    });
+    }, { isolationLevel: "Serializable" });
   } catch (error) {
     if (error instanceof Error && error.message === "CONCURRENT_MOVE") {
       return {
@@ -319,6 +384,27 @@ export async function moveMissionAction(input: {
         error: "Cette mission a déjà été récompensée ; aucun second crédit n'est possible.",
       };
     }
+    if (error instanceof Error && error.message === "REWARD_CHANGED") {
+      return {
+        ok: false,
+        error: "La fourchette de récompense vient de changer ; rechargez puis confirmez le montant.",
+      };
+    }
+    if (
+      error instanceof Error &&
+      ["NO_PARTICIPANTS", "PARTICIPANT_WITHOUT_ASSIGNMENT"].includes(error.message)
+    ) {
+      return {
+        ok: false,
+        error: "L'équipe engagée vient de changer ou n'est plus complète ; rechargez la mission.",
+      };
+    }
+    if ((error as { code?: string }).code === "P2034") {
+      return {
+        ok: false,
+        error: "L'équipe ou la mission vient d'être modifiée ; rechargez puis réessayez.",
+      };
+    }
     throw error;
   }
 
@@ -331,8 +417,8 @@ export async function moveMissionAction(input: {
     newValues: {
       status: toStatus,
       ...(releasing ? { releaseAssignments } : {}),
-      ...(completionRyo !== null
-        ? { awardedRyo: completionRyo, participantCount: mission.participants.length }
+      ...(committedCompletionRyo !== null
+        ? { awardedRyo: committedCompletionRyo, participantCount: committedMission.participants.length }
         : {}),
       // Ce que la résolution a changé dans les dossiers : une modification
       // automatique doit rester traçable au même titre qu'une saisie.
@@ -349,9 +435,9 @@ export async function moveMissionAction(input: {
 
   // Notifications : les agents effectivement engagés ; repli historique sur
   // tous les membres du groupe si l'ancienne mission n'avait pas de sélection.
-  const targets = new Set(mission.participants.map((participant) => participant.userId));
+  const targets = new Set(committedMission.participants.map((participant) => participant.userId));
   if (targets.size === 0) {
-    for (const assignment of mission.assignments) {
+    for (const assignment of committedMission.assignments) {
       for (const id of await groupMemberIds(assignment.groupId)) targets.add(id);
     }
   }
@@ -365,7 +451,7 @@ export async function moveMissionAction(input: {
           : toStatus === "EXPIRED"
             ? "MISSION_EXPIRED"
             : "MISSION_STATUS_CHANGED",
-      payload: { ...publicPayload(mission), fromStatus, toStatus },
+      payload: { ...publicPayload(committedMission), fromStatus, toStatus },
       missionId,
       batchKey: `status:${missionId}`,
     });
@@ -423,14 +509,15 @@ export async function claimMissionAction(input: {
     where: {
       groupId,
       userId: { in: participantIds },
-      user: { status: "ACTIVE" },
+      user: { status: "ACTIVE", profileCompleted: true },
     },
-    include: { user: { include: { playerLevel: true } } },
+    select: { userId: true },
   });
   if (selectedMembers.length !== participantIds.length) {
     return {
       ok: false,
-      error: "Un agent sélectionné n'appartient plus à ce groupe ou n'est plus actif.",
+      error:
+        "Un agent sélectionné n'appartient plus à ce groupe, n'est plus actif ou n'a pas terminé son profil.",
     };
   }
 
@@ -440,47 +527,9 @@ export async function claimMissionAction(input: {
     where: { id: missionId },
     include: { minRecommendedLevel: true },
   });
-  if (!mission || !["AVAILABLE", "CLAIM_PENDING"].includes(mission.status)) {
+  if (!mission || !["AVAILABLE", "CLAIM_PENDING", "ASSIGNED"].includes(mission.status)) {
     return { ok: false, error: "Cette mission n'est plus disponible." };
   }
-
-  // Les critères portent sur l'effectif réellement proposé pour la mission,
-  // pas sur tous les membres que le groupe pourrait mobiliser.
-  const criteriaWarnings: string[] = [];
-  if (proposedHeadcount < mission.groupSizeMin) {
-    criteriaWarnings.push(
-      `L'effectif proposé est de ${proposedHeadcount} membre(s) ; minimum demandé : ${mission.groupSizeMin}.`,
-    );
-  }
-  if (proposedHeadcount > mission.groupSizeMax) {
-    criteriaWarnings.push(
-      `L'effectif proposé est de ${proposedHeadcount} membre(s) ; maximum demandé : ${mission.groupSizeMax}.`,
-    );
-  }
-  if (mission.minRecommendedLevelId) {
-    const minLevel = await prisma.playerLevel.findUnique({
-      where: { id: mission.minRecommendedLevelId },
-    });
-    if (minLevel) {
-      const below = selectedMembers.filter(
-        (m) => (m.user.playerLevel?.order ?? 0) < minLevel.order,
-      ).length;
-      if (below > 0) {
-        criteriaWarnings.push(
-          `${below} membre(s) du groupe se trouvent sous le niveau recommandé (${minLevel.label}).`,
-        );
-      }
-    }
-  }
-  const eligibility = applyEligibilityMode(mission.eligibilityMode, criteriaWarnings);
-  if (!eligibility.allowed) {
-    return {
-      ok: false,
-      error: "Critères d'éligibilité non remplis.",
-      warnings: eligibility.responseWarnings,
-    };
-  }
-  const warnings = eligibility.claimWarnings;
 
   const existing = await prisma.missionClaim.findUnique({
     where: { missionId_groupId: { missionId, groupId } },
@@ -492,6 +541,8 @@ export async function claimMissionAction(input: {
   // message) tant qu'elle n'a pas été traitée — on la met à jour en place.
 
   const meta = await requestMeta();
+  let warnings: string[] = [];
+  let responseWarnings: string[] = [];
   try {
     await prisma.$transaction(
       async (tx) => {
@@ -508,21 +559,46 @@ export async function claimMissionAction(input: {
         });
         if (!liveLeader) throw new Error("NOT_GROUP_LEADER");
 
-        const liveMemberCount = await tx.groupMember.count({
+        const liveMembers = await tx.groupMember.findMany({
           where: {
             groupId,
             userId: { in: participantIds },
-            user: { status: "ACTIVE" },
+            user: { status: "ACTIVE", profileCompleted: true },
+          },
+          select: {
+            userId: true,
+            user: { select: { playerLevel: { select: { order: true } } } },
           },
         });
-        if (liveMemberCount !== participantIds.length) throw new Error("MEMBERS_CHANGED");
+        if (liveMembers.length !== participantIds.length) throw new Error("MEMBERS_CHANGED");
 
         const liveMission = await tx.mission.findUnique({
           where: { id: missionId },
-          select: { status: true },
+          select: {
+            status: true,
+            groupSizeMin: true,
+            groupSizeMax: true,
+            eligibilityMode: true,
+            minRecommendedLevel: { select: { order: true, label: true } },
+          },
         });
-        if (!liveMission || !["AVAILABLE", "CLAIM_PENDING"].includes(liveMission.status)) {
+        if (!liveMission || !["AVAILABLE", "CLAIM_PENDING", "ASSIGNED"].includes(liveMission.status)) {
           throw new Error("MISSION_CHANGED");
+        }
+
+        // Évaluation autoritative dans la même transaction que l'écriture :
+        // critères et niveaux ne peuvent plus changer entre contrôle et dépôt.
+        const issues = evaluateTeamEligibility({
+          participantLevels: liveMembers.map((member) => member.user.playerLevel?.order),
+          groupSizeMin: liveMission.groupSizeMin,
+          groupSizeMax: liveMission.groupSizeMax,
+          minLevel: liveMission.minRecommendedLevel,
+        });
+        const eligibility = applyEligibilityMode(liveMission.eligibilityMode, issues);
+        warnings = eligibility.claimWarnings;
+        responseWarnings = eligibility.responseWarnings;
+        if (!eligibility.allowed) {
+          throw new EligibilityRejectedError(eligibility.responseWarnings);
         }
 
         const liveExisting = await tx.missionClaim.findUnique({
@@ -586,6 +662,13 @@ export async function claimMissionAction(input: {
       { isolationLevel: "Serializable" },
     );
   } catch (error) {
+    if (error instanceof EligibilityRejectedError) {
+      return {
+        ok: false,
+        error: "Critères d'éligibilité non remplis.",
+        warnings: error.warnings,
+      };
+    }
     if (error instanceof Error) {
       if (error.message === "NOT_GROUP_LEADER") {
         return { ok: false, error: "Vous ne dirigez plus ce groupe ou il est inactif." };
@@ -632,7 +715,7 @@ export async function claimMissionAction(input: {
 
   revalidatePath("/missions");
   revalidatePath(`/missions/${missionId}`);
-  return { ok: true, warnings: eligibility.responseWarnings };
+  return { ok: true, warnings: responseWarnings };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -643,6 +726,7 @@ export async function decideClaimAction(input: {
   claimId: string;
   decision: "ACCEPTED" | "REJECTED" | "INFO_REQUESTED";
   note?: string;
+  reviewConfirmed?: boolean;
 }): Promise<ActionResult> {
   const current = await requireUser();
   if (!current.permissions.has(PERMISSIONS.CLAIM_REVIEW)) {
@@ -650,7 +734,7 @@ export async function decideClaimAction(input: {
   }
   const parsed = claimDecisionSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Requête invalide." };
-  const { claimId, decision, note } = parsed.data;
+  const { claimId, decision, note, reviewConfirmed } = parsed.data;
 
   const claim = await prisma.missionClaim.findUnique({
     where: { id: claimId },
@@ -681,19 +765,30 @@ export async function decideClaimAction(input: {
     }
     let acceptedParticipantIds = claim.participants.map((participant) => participant.userId);
     let acceptedPublicRoster = claim.publicRoster;
+    let enhancedReviewPerformed = false;
     try {
       await prisma.$transaction(
         async (tx) => {
           const liveClaim = await tx.missionClaim.findUnique({
             where: { id: claimId },
             include: {
-              participants: { select: { userId: true } },
+              participants: {
+                select: {
+                  userId: true,
+                  user: { select: { playerLevel: { select: { order: true } } } },
+                },
+              },
               mission: {
                 select: {
                   status: true,
                   assignedFactionId: true,
                   assignedGroupId: true,
                   assignedAt: true,
+                  groupSizeMin: true,
+                  groupSizeMax: true,
+                  eligibilityMode: true,
+                  requiresEnhancedReview: true,
+                  minRecommendedLevel: { select: { order: true, label: true } },
                 },
               },
               group: { select: { factionId: true, isActive: true } },
@@ -707,16 +802,40 @@ export async function decideClaimAction(input: {
             throw new Error("MISSION_CHANGED");
           }
 
+          const enhancedReviewRequired =
+            liveClaim.mission.requiresEnhancedReview ||
+            liveClaim.mission.eligibilityMode === "MANUAL_REVIEW";
+          if (enhancedReviewRequired && (!reviewConfirmed || !note?.trim())) {
+            throw new Error("ENHANCED_REVIEW_REQUIRED");
+          }
+          enhancedReviewPerformed = enhancedReviewRequired;
+
           const liveParticipantIds = liveClaim.participants.map((participant) => participant.userId);
           if (liveParticipantIds.length === 0) throw new Error("NO_PARTICIPANTS");
           const activeMemberCount = await tx.groupMember.count({
             where: {
               groupId: liveClaim.groupId,
               userId: { in: liveParticipantIds },
-              user: { status: "ACTIVE" },
+              user: { status: "ACTIVE", profileCompleted: true },
             },
           });
           if (activeMemberCount !== liveParticipantIds.length) throw new Error("MEMBERS_CHANGED");
+
+          // Une revendication peut être restée ouverte pendant qu'un niveau ou
+          // les critères de mission changeaient. L'acceptation repart toujours
+          // des valeurs vivantes, dans la transaction d'attribution.
+          const issues = evaluateTeamEligibility({
+            participantLevels: liveClaim.participants.map(
+              (participant) => participant.user.playerLevel?.order,
+            ),
+            groupSizeMin: liveClaim.mission.groupSizeMin,
+            groupSizeMax: liveClaim.mission.groupSizeMax,
+            minLevel: liveClaim.mission.minRecommendedLevel,
+          });
+          const eligibility = applyEligibilityMode(liveClaim.mission.eligibilityMode, issues);
+          if (!eligibility.allowed) {
+            throw new EligibilityRejectedError(eligibility.responseWarnings);
+          }
 
           // Un utilisateur peut appartenir à plusieurs groupes, mais il ne peut
           // représenter qu'un seul groupe sur une mission donnée.
@@ -738,6 +857,7 @@ export async function decideClaimAction(input: {
               status: "ACCEPTED",
               moderatorId: current.session.userId,
               moderatorNote: note ?? null,
+              warnings: eligibility.claimWarnings,
               resolvedAt: new Date(),
             },
           });
@@ -825,6 +945,14 @@ export async function decideClaimAction(input: {
         { isolationLevel: "Serializable" },
       );
     } catch (error) {
+      if (error instanceof EligibilityRejectedError) {
+        return {
+          ok: false,
+          error:
+            "Les critères ou les niveaux ont changé : cette équipe ne peut plus être acceptée en blocage strict.",
+          warnings: error.warnings,
+        };
+      }
       if (error instanceof Error) {
         if (error.message === "CLAIM_CHANGED") {
           return { ok: false, error: "Cette revendication vient d'être modifiée ou traitée." };
@@ -834,6 +962,14 @@ export async function decideClaimAction(input: {
         }
         if (error.message === "MISSION_CHANGED") {
           return { ok: false, error: "La mission n'est plus attribuable." };
+        }
+        if (error.message === "ENHANCED_REVIEW_REQUIRED") {
+          return {
+            ok: false,
+            error:
+              "Le contrôle renforcé doit être confirmé et accompagné d'une note avant l'attribution.",
+            needsReviewConfirmation: true,
+          };
         }
         if (error.message === "NO_PARTICIPANTS" || error.message === "MEMBERS_CHANGED") {
           return {
@@ -868,6 +1004,8 @@ export async function decideClaimAction(input: {
         headcount: acceptedParticipantIds.length,
         participantCount: acceptedParticipantIds.length,
         publicRoster: acceptedPublicRoster,
+        enhancedReviewPerformed,
+        reviewConfirmed: enhancedReviewPerformed && reviewConfirmed,
       },
       reason: note,
       ...meta,

@@ -1,7 +1,7 @@
 /**
  * Audit visuel de la branche « invitation » : première connexion (Titre et
- * grade déclarés par le joueur), page « Mes informations », formulaire
- * d'invitation sans grade, liste des dossiers (noms de famille, filtres
+ * grade fixé dans l'invitation), page « Mes informations », formulaire
+ * d'invitation avec grade, liste des dossiers (noms de famille, filtres
  * fluides) et section Apparence de l'éditeur (couleurs visibles).
  *
  * Usage : node e2e/capture-invitation.mjs <dossier-de-sortie>
@@ -58,11 +58,11 @@ async function shot(userId, url, name, width, height, prepare) {
 }
 
 for (const [label, width, height] of VIEWPORTS) {
-  // Première connexion : le Titre est expliqué, le grade est proposé
+  // Première connexion : le Titre est expliqué, le grade invité est affiché
   await shot("demo-incomplete", "/bienvenue", `bienvenue-${label}`, width, height);
   // Mes informations : auto-édition
   await shot("demo-admin", "/compte", `compte-${label}`, width, height);
-  // Invitation : plus aucun grade imposé, terminologie « groupe »
+  // Invitation : grade contrôlé et terminologie « groupe »
   await shot("demo-admin", "/invitations", `invitations-${label}`, width, height);
   // Liste des dossiers : noms de famille et filtres sans bouton
   await shot("demo-admin", "/profils", `profils-liste-${label}`, width, height);
