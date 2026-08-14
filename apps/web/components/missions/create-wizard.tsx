@@ -27,7 +27,7 @@ const STEPS = [
   "Niveau de la cible",
   "Récompenses",
   "Délais",
-  "Critères d'éligibilité",
+  "Contrôle de l'équipe proposée",
   "Notifications",
   "Vérification & publication",
 ] as const;
@@ -373,6 +373,9 @@ export function CreateWizard({
                   <option key={level.slug} value={level.slug}>{level.label}</option>
                 ))}
               </select>
+              <p className="mt-1 text-xs text-ink-faint">
+                Information sur la cible uniquement : ce niveau ne sert pas à accepter ou refuser une revendication.
+              </p>
             </div>
             <div>
               <label htmlFor="minRecommendedLevelSlug" className={label}>Niveau minimal recommandé</label>
@@ -382,17 +385,22 @@ export function CreateWizard({
                   <option key={level.slug} value={level.slug}>{level.label}</option>
                 ))}
               </select>
+              <p className="mt-1 text-xs text-ink-faint">
+                Comparé séparément au niveau de chaque agent sélectionné par le chef.
+              </p>
             </div>
             <div>
               <label htmlFor="groupSizeMin" className={label}>Effectif minimal</label>
               <input id="groupSizeMin" type="number" min={1} max={50}
                 {...register("groupSizeMin", { valueAsNumber: true })} className={input} />
+              <p className="mt-1 text-xs text-ink-faint">Nombre minimal d&rsquo;agents sélectionnés.</p>
             </div>
             <div>
               <label htmlFor="groupSizeMax" className={label}>Effectif maximal</label>
               <input id="groupSizeMax" type="number" min={1} max={50}
                 {...register("groupSizeMax", { valueAsNumber: true })} className={input} />
               {err("groupSizeMax") && <p className="mt-1 text-xs text-blood-bright">{err("groupSizeMax")}</p>}
+              <p className="mt-1 text-xs text-ink-faint">Nombre maximal d&rsquo;agents sélectionnés.</p>
             </div>
           </div>
         )}
@@ -469,26 +477,50 @@ export function CreateWizard({
         )}
 
         {step === 7 && (
-          <fieldset className="space-y-2">
-            <legend className={label}>Application des critères (niveau, effectif)</legend>
+          <fieldset className="space-y-4">
+            <legend className={label}>Que faire si l&rsquo;équipe proposée ne respecte pas les critères&nbsp;?</legend>
+            <div className="space-y-2 border border-border-default bg-elevated p-3 text-xs leading-relaxed text-ink-muted">
+              <p className="font-medium text-ink">Critères configurés pour cette mission</p>
+              <p>
+                <strong className="font-medium text-ink">Effectif :</strong>{" "}
+                entre {values.groupSizeMin} et {values.groupSizeMax} agents sélectionnés.
+              </p>
+              <p>
+                <strong className="font-medium text-ink">Niveau :</strong>{" "}
+                {values.minRecommendedLevelSlug
+                  ? `chaque agent sélectionné devrait être au moins ${levels.find((level) => level.slug === values.minRecommendedLevelSlug)?.label ?? values.minRecommendedLevelSlug}.`
+                  : "aucun niveau minimal n'est demandé."}
+              </p>
+              <p className="text-ink-faint">
+                Le contrôle porte uniquement sur les agents nommément choisis par le chef, pas sur tout son groupe.
+              </p>
+            </div>
+            <p className="text-xs leading-relaxed text-ink-muted">
+              Ce réglage décide seulement si le chef peut <strong className="font-medium text-ink">déposer</strong>{" "}
+              sa revendication et si un écart est signalé. Une revendication déposée n&rsquo;est pas encore
+              attribuée&nbsp;: un modérateur doit toujours prendre la décision finale.
+            </p>
             {([
-              ["RECOMMENDATION", "Critères affichés, aucun signalement ni blocage"],
-              ["WARNING", "Revendication acceptée, écarts signalés au tisseur"],
-              ["STRICT", "Revendication refusée au moindre écart"],
-              ["MANUAL_REVIEW", "Revendication acceptée mais toujours marquée à contrôler"],
+              ["RECOMMENDATION", "Le chef peut déposer sa revendication même en cas d'écart. Aucun avertissement n'est ajouté au dossier."],
+              ["WARNING", "Le chef peut déposer sa revendication. Les écarts exacts lui sont affichés et sont ajoutés au dossier du modérateur."],
+              ["STRICT", "Le dépôt est refusé si l'effectif sort de la fourchette ou si au moins un agent est sous le niveau recommandé. Le chef doit corriger son équipe."],
+              ["MANUAL_REVIEW", "Le chef peut toujours déposer sa revendication. Le dossier porte un signalement « contrôle requis », même lorsque tous les critères sont respectés."],
             ] as const).map(([value, text]) => (
-              <label key={value} className="flex items-start gap-2 text-sm text-ink-muted">
+              <label
+                key={value}
+                className={`flex cursor-pointer items-start gap-3 border p-3 text-sm transition-colors ${
+                  values.eligibilityMode === value
+                    ? "border-border-gold bg-gold/5 text-ink"
+                    : "border-border-default text-ink-muted hover:border-border-gold"
+                }`}
+              >
                 <input type="radio" value={value} {...register("eligibilityMode")} className="mt-1 accent-[var(--toile-gold)]" />
                 <span>
-                  <strong className="font-medium text-ink">{ELIGIBILITY_MODE_LABELS[value]}</strong>
-                  {` — ${text}`}
+                  <strong className="block font-medium text-ink">{ELIGIBILITY_MODE_LABELS[value]}</strong>
+                  <span className="mt-0.5 block text-xs leading-relaxed">{text}</span>
                 </span>
               </label>
             ))}
-            <p className="pt-2 text-xs leading-relaxed text-ink-faint">
-              L&rsquo;effectif et le niveau sont contrôlés sur les agents nommément
-              sélectionnés par le chef dans sa revendication.
-            </p>
           </fieldset>
         )}
 
