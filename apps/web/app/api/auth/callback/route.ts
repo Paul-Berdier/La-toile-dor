@@ -96,7 +96,10 @@ export async function GET(req: NextRequest) {
       },
     });
     // Rôle critique perdu → suspension immédiate + sessions coupées
-    if (!hasRequiredRole && existing.user.status === "ACTIVE") {
+    if (
+      !hasRequiredRole &&
+      (existing.user.status === "ACTIVE" || existing.user.status === "PENDING")
+    ) {
       await prisma.user.update({
         where: { id: existing.userId },
         data: {
@@ -129,7 +132,27 @@ export async function GET(req: NextRequest) {
       });
       return redirectTo(req, "/connexion?erreur=acces");
     }
-    if (status === "PENDING") return redirectTo(req, "/attente");
+    if (status === "PENDING") {
+      // Compatibilité avec un compte créé par un ancien lien qui exigeait
+      // encore une approbation : la consommation du fil suffit désormais.
+      const consumedInvitation = await prisma.invitation.findUnique({
+        where: { usedById: existing.userId },
+        select: { id: true },
+      });
+      if (!consumedInvitation) return redirectTo(req, "/attente");
+      await prisma.user.update({
+        where: { id: existing.userId },
+        data: { status: "ACTIVE", approvedAt: existing.user.approvedAt ?? new Date() },
+      });
+      await audit({
+        actorId: existing.userId,
+        action: "access.auto_activated",
+        resourceType: "user",
+        resourceId: existing.userId,
+        reason: "Invitation déjà consommée",
+        ...meta,
+      });
+    }
     userId = existing.userId;
     profileCompleted = existing.user.profileCompleted;
   } else {
@@ -204,8 +227,8 @@ export async function GET(req: NextRequest) {
             rpTitle,
             village,
             playerLevelId: invitation.playerLevelId,
-            status: invitation.requireApproval ? "PENDING" : "ACTIVE",
-            approvedAt: invitation.requireApproval ? null : new Date(),
+            status: "ACTIVE",
+            approvedAt: new Date(),
             discordAccount: {
               create: {
                 discordId: discordUser.id,
@@ -246,7 +269,6 @@ export async function GET(req: NextRequest) {
       ...meta,
     });
 
-    if (invitation.requireApproval) return redirectTo(req, "/attente");
     userId = user.id;
   }
 

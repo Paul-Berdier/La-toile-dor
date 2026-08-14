@@ -34,7 +34,10 @@ confidentialité du RP.
 - Usage unique : création du compte, consommation conditionnelle, rôle et
   rattachement au groupe sont dans une même transaction résistante aux courses.
   Expiration obligatoire, révocation et restriction
-  possible à un ID Discord précis, approbation manuelle optionnelle.
+  possible à un ID Discord précis.
+- Après validation du jeton, de l'appartenance au serveur et de l'éventuelle
+  restriction d'ID Discord, le compte est actif immédiatement : aucune seconde
+  approbation manuelle. Les comptes suspendus ou révoqués restent refusés.
 - Le niveau porté par l'invitation est validé côté serveur et affecté dans
   cette même transaction ; un identifiant de niveau inconnu est refusé.
 - Le lien clair n'est affiché **qu'une fois** à sa création.

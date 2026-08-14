@@ -39,7 +39,7 @@ docs/           conception, sécurité, identité, groupes, attributions, déplo
    retries avec backoff exponentiel, regroupement (`batchKey`), historique.
    Si le bot tombe, rien n'est perdu. Redis ne serait justifié qu'à fort débit.
 3. **Auth maison plutôt qu'Auth.js** — le parcours invitation → OAuth →
-   approbation → révocation immédiate exige un contrôle fin des sessions en
+   activation immédiate → révocation exige un contrôle fin des sessions en
    base ; Auth.js v5 (beta) aurait été contourné en permanence. ~300 lignes
    auditées, testées.
 4. **Server Actions pour les mutations** — CSRF géré par Next, co-localisation

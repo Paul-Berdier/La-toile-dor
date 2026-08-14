@@ -47,18 +47,22 @@ export function InvitationForm({
   allowedRoles,
   groups,
   leaderGroups,
+  factions = [],
 }: {
   allowedRoles: string[];
   groups: GroupOption[];
   leaderGroups: GroupOption[] | null;
+  /** Factions actives — rattachement facultatif du groupe qu'un chef fondera. */
+  factions?: { id: string; name: string }[];
 }) {
   const router = useRouter();
   const [roleSlug, setRoleSlug] = useState(allowedRoles[allowedRoles.length - 1] ?? "group_member");
   const [groupId, setGroupId] = useState(leaderGroups?.[0]?.id ?? "");
   // Parcours du chef invité : rejoindre un groupe existant ou fonder le sien
   const [leaderMode, setLeaderMode] = useState<"EXISTING_GROUP" | "CREATE_NEW_GROUP">("EXISTING_GROUP");
+  // Faction du futur groupe (mode fondation) — vide = aucun rattachement
+  const [factionId, setFactionId] = useState("");
   const [hours, setHours] = useState(72);
-  const [requireApproval, setRequireApproval] = useState(true);
   const [restrictedDiscordId, setRestrictedDiscordId] = useState("");
   const [note, setNote] = useState("");
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
@@ -77,9 +81,9 @@ export function InvitationForm({
       const res = await createInvitationAction({
         roleSlug,
         groupId: groupId && !creatingNewGroup ? groupId : undefined,
+        factionId: creatingNewGroup && factionId ? factionId : undefined,
         groupOnboardingMode: isLeaderInvite && !leaderGroups ? leaderMode : "NONE",
         expiresInHours: hours,
-        requireApproval,
         restrictedDiscordId: restrictedDiscordId || undefined,
         note: note || undefined,
       });
@@ -176,20 +180,61 @@ export function InvitationForm({
               </select>
             </div>
           ) : creatingNewGroup ? (
-            <p className="border border-border-default bg-elevated px-3 py-2 text-xs text-ink-muted sm:col-span-2">
-              Le chef fondera son groupe lui-même à sa première connexion : il en
-              choisira le nom, la résidence et les spécialités.
-            </p>
+            <div className="space-y-3 sm:col-span-2">
+              <p className="border border-border-default bg-elevated px-3 py-2 text-xs text-ink-muted">
+                Le chef fondera son groupe lui-même à sa première connexion : il en
+                choisira le nom, la résidence et les spécialités.
+              </p>
+              <div>
+                <label htmlFor="inv-faction" className={label}>
+                  Faction du futur groupe (facultatif)
+                </label>
+                <select
+                  id="inv-faction"
+                  value={factionId}
+                  onChange={(e) => setFactionId(e.target.value)}
+                  className={input}
+                >
+                  <option value="">— Aucune —</option>
+                  {factions.map((faction) => (
+                    <option key={faction.id} value={faction.id}>{faction.name}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[0.65rem] text-ink-faint">
+                  Le rattachement reste modifiable ensuite par la modération.
+                </p>
+              </div>
+            </div>
           ) : (
             <div className="sm:col-span-2">
               <label htmlFor="inv-group" className={label}>
                 Groupe {roleNeedsGroup ? "rejoint *" : "rejoint (facultatif)"}
               </label>
+              {/* Groupes rassemblés par faction — les sans-faction ferment la liste */}
               <select id="inv-group" value={groupId} onChange={(e) => setGroupId(e.target.value)} className={input}>
                 <option value="">—</option>
-                {groups.map((group) => (
-                  <option key={group.id} value={group.id}>{group.name}</option>
-                ))}
+                {factions
+                  .map((faction) => ({
+                    faction,
+                    members: groups.filter((group) => group.factionId === faction.id),
+                  }))
+                  .filter(({ members }) => members.length > 0)
+                  .map(({ faction, members }) => (
+                    <optgroup key={faction.id} label={faction.name}>
+                      {members.map((group) => (
+                        <option key={group.id} value={group.id}>{group.name}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                {groups.some((group) => group.factionId === null) && (
+                  <optgroup label="Sans faction">
+                    {groups
+                      .filter((group) => group.factionId === null)
+                      .map((group) => (
+                        <option key={group.id} value={group.id}>{group.name}</option>
+                      ))}
+                  </optgroup>
+                )}
               </select>
             </div>
           )}
@@ -197,7 +242,12 @@ export function InvitationForm({
           {/* Fiche du groupe sélectionné : le modérateur confirme en connaissance */}
           {!leaderGroups && selectedGroup && !creatingNewGroup && (
             <aside className="border border-border-default bg-elevated p-3 text-xs text-ink-muted sm:col-span-2">
-              <p className="font-medium text-ink">{selectedGroup.name}</p>
+              <p className="font-medium text-ink">
+                {selectedGroup.name}
+                <span className="ml-2 text-ink-faint">
+                  · {selectedGroup.factionName ?? "Sans faction"}
+                </span>
+              </p>
               <p className="mt-1">
                 {[selectedGroup.primaryVillage, selectedGroup.primaryCountry]
                   .filter(Boolean)
@@ -232,12 +282,9 @@ export function InvitationForm({
             <input id="inv-note" value={note} onChange={(e) => setNote(e.target.value)}
               maxLength={500} className={input} />
           </div>
-          <label className="flex items-center gap-2 text-sm text-ink-muted sm:col-span-2">
-            <input type="checkbox" checked={requireApproval}
-              onChange={(e) => setRequireApproval(e.target.checked)}
-              className="accent-[var(--toile-gold)]" />
-            Exiger une approbation manuelle après la connexion Discord
-          </label>
+          <p className="text-xs text-ink-faint sm:col-span-2">
+            Le compte sera actif dès que cette invitation aura été validée avec Discord.
+          </p>
           {error && <p className="text-xs text-blood-bright sm:col-span-2">{error}</p>}
           <div className="sm:col-span-2">
             <Button

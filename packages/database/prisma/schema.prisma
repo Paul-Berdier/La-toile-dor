@@ -16,7 +16,7 @@ datasource db {
 // ─────────────────────────────────────────────────────────────
 
 enum UserStatus {
-  PENDING // invitation consommée, en attente d'approbation manuelle
+  PENDING // statut historique ou compte créé hors du parcours d'invitation
   ACTIVE
   SUSPENDED // rôle Discord critique perdu, réactivable
   REVOKED
@@ -151,8 +151,9 @@ model Invitation {
   // Parcours de groupe à la première connexion d'un chef :
   // EXISTING_GROUP → rattaché à groupId ; CREATE_NEW_GROUP → formulaire de création
   groupOnboardingMode GroupOnboardingMode @default(NONE)
-  // Approbation manuelle exigée après l'OAuth Discord
-  requireApproval Boolean @default(true)
+  // Champ historique conservé pour compatibilité ; les invitations activent
+  // désormais immédiatement le compte après validation du jeton et de Discord.
+  requireApproval Boolean @default(false)
   // Restriction facultative à un identifiant Discord précis
   restrictedDiscordId String?
 

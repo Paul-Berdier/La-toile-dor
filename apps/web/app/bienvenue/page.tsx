@@ -27,6 +27,13 @@ export default async function BienvenuePage() {
     orderBy: { order: "asc" },
     select: { id: true, label: true },
   });
+  // Faction prévue par l'invitation pour le futur groupe (facultative)
+  const plannedFaction = state.invitation?.factionId
+    ? await prisma.faction.findUnique({
+        where: { id: state.invitation.factionId },
+        select: { name: true },
+      })
+    : null;
 
   return (
     <main className="relative flex min-h-dvh items-center justify-center px-4 py-8">
@@ -59,6 +66,9 @@ export default async function BienvenuePage() {
               <p className="mb-4 text-xs leading-relaxed text-ink-muted">
                 Votre invitation vous autorise à fonder un nouveau groupe sur la Toile.
                 Vous en deviendrez le premier chef.
+                {plannedFaction
+                  ? ` Il naîtra rattaché à ${plannedFaction.name}.`
+                  : " Il naîtra sans rattachement de faction — la modération peut l'ajuster ensuite."}
               </p>
               <OnboardingGroupForm />
             </>

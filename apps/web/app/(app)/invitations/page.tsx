@@ -157,6 +157,7 @@ export default async function InvitationsPage() {
           allowedRoles={allowedRoles}
           groups={groups}
           leaderGroups={leaderGroups}
+          factions={factions.map((faction) => ({ id: faction.id, name: faction.name }))}
         />
 
         <div className="overflow-x-auto border border-border-default bg-raised">

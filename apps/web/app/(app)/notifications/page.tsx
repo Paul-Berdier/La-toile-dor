@@ -1,41 +1,42 @@
 import Link from "next/link";
 import { prisma } from "@toile/database";
+import { PERMISSIONS } from "@toile/shared";
 import { requireUser } from "@/lib/session";
+import {
+  EVENT_LABELS,
+  BASE_CONFIGURABLE_EVENTS,
+  MODERATION_CONFIGURABLE_EVENTS,
+} from "@/lib/notification-events";
+import { PreferencesForm, type EventSetting } from "@/components/notifications/preferences-form";
 
 export const dynamic = "force-dynamic";
-
-/** Libellés des événements — remplace les DM Discord (mode sans bot). */
-const EVENT_LABELS: Record<string, { glyph: string; text: string }> = {
-  PROFILE_REQUEST_CREATED: { glyph: "諜", text: "Nouvelle demande d'accès à un dossier de renseignement" },
-  PROFILE_REQUEST_APPROVED: { glyph: "承", text: "Votre groupe possède désormais l'accès à un dossier" },
-  PROFILE_REQUEST_REFUSED: { glyph: "断", text: "Votre demande d'accès à un dossier a été refusée" },
-  PROFILE_UPDATED: { glyph: "筆", text: "Un dossier détenu par votre groupe a été mis à jour" },
-  MISSION_AVAILABLE: { glyph: "🕸", text: "Un nouveau fil a été tendu sur la Toile" },
-  CLAIM_ACCEPTED: { glyph: "承", text: "Votre revendication a été acceptée — le dossier vous est ouvert" },
-  CLAIM_REJECTED: { glyph: "断", text: "Votre revendication a été refusée" },
-  CLAIM_INFO_REQUESTED: { glyph: "問", text: "Le tisseur demande des précisions sur votre revendication" },
-  MISSION_UPDATED: { glyph: "筆", text: "Le dossier d'un contrat attribué a été mis à jour" },
-  MISSION_STATUS_CHANGED: { glyph: "変", text: "Le statut d'un contrat suivi a changé" },
-  MISSION_DEADLINE_SOON: { glyph: "刻", text: "Un délai approche — moins d'un jour réel" },
-  MISSION_EXPIRED: { glyph: "灰", text: "Un contrat a expiré" },
-  MISSION_CANCELLED: { glyph: "断", text: "Un fil a été rompu — contrat annulé" },
-  NEW_CLAIM: { glyph: "願", text: "Nouvelle revendication à examiner" },
-  CLAIM_WITHDRAWN: { glyph: "退", text: "Une cellule retire sa revendication" },
-  FINAL_REPORT_SUBMITTED: { glyph: "書", text: "Un rapport final a été transmis" },
-  SYNC_ISSUE: { glyph: "乱", text: "Problème de synchronisation Discord" },
-  ACCESS_DENIED_ALERT: { glyph: "警", text: "Tentatives d'accès refusées répétées" },
-};
 
 export default async function NotificationsPage() {
   const current = await requireUser();
   const userId = current.session.userId;
 
-  const notifications = await prisma.notificationDelivery.findMany({
-    where: { userId },
-    orderBy: { createdAt: "desc" },
-    take: 100,
-    include: { mission: { select: { id: true } } },
+  const [notifications, preferences] = await Promise.all([
+    prisma.notificationDelivery.findMany({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+      include: { mission: { select: { id: true } } },
+    }),
+    prisma.notificationPreference.findMany({ where: { userId } }),
+  ]);
+
+  // Réglages : sans ligne en base, un événement est actif par défaut
+  const prefByEvent = new Map(preferences.map((p) => [p.event as string, p]));
+  const toSetting = (event: string): EventSetting => ({
+    event,
+    glyph: EVENT_LABELS[event]?.glyph ?? "糸",
+    label: EVENT_LABELS[event]?.text ?? event,
+    enabled: prefByEvent.get(event)?.enabled ?? true,
   });
+  const isModerator = current.permissions.has(PERMISSIONS.CLAIM_REVIEW);
+  const baseEvents = BASE_CONFIGURABLE_EVENTS.map(toSetting);
+  const moderationEvents = isModerator ? MODERATION_CONFIGURABLE_EVENTS.map(toSetting) : [];
+  const quietRow = preferences.find((p) => p.quietHourStart !== null);
 
   // Les échos affichés sont considérés comme lus
   const unreadIds = notifications.filter((n) => n.status === "PENDING").map((n) => n.id);
@@ -54,6 +55,22 @@ export default async function NotificationsPage() {
       <p className="mt-1 mb-6 text-xs text-ink-faint">
         Chaque frémissement du réseau qui vous concerne est consigné ici.
       </p>
+
+      {/* Choix des échos reçus — appliqué ici comme en messages privés Discord */}
+      <details className="mb-6 border border-border-default bg-raised">
+        <summary className="cursor-pointer px-4 py-3 font-display text-sm tracking-widest text-gold uppercase hover:bg-hover-bg">
+          Choisir mes échos
+        </summary>
+        <div className="border-t border-border-default p-4">
+          <PreferencesForm
+            baseEvents={baseEvents}
+            moderationEvents={moderationEvents}
+            missionAvailableRanks={(prefByEvent.get("MISSION_AVAILABLE")?.rankFilter ?? []) as string[]}
+            quietHourStart={quietRow?.quietHourStart ?? null}
+            quietHourEnd={quietRow?.quietHourEnd ?? null}
+          />
+        </div>
+      </details>
 
       {notifications.length === 0 && (
         <p className="border border-border-default bg-raised p-8 text-center text-sm text-ink-faint italic">

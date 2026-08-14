@@ -112,14 +112,25 @@ async function main() {
       create: { slug, name: def.name, isSystem: true },
     });
     const keys = def.perms === "all" ? allPerms.map((p) => p.key) : def.perms;
+    const wantedIds: string[] = [];
     for (const key of keys) {
       const perm = allPerms.find((p) => p.key === key);
       if (!perm) continue;
+      wantedIds.push(perm.id);
       await prisma.rolePermission.upsert({
         where: { roleId_permissionId: { roleId: role.id, permissionId: perm.id } },
         update: {},
         create: { roleId: role.id, permissionId: perm.id },
       });
+    }
+    // Convergence : une base ayant connu d'anciennes listes perd les
+    // permissions retirées — sinon un rôle système garde à vie des droits
+    // périmés (ex. un chef de groupe qui modifierait des missions).
+    const pruned = await prisma.rolePermission.deleteMany({
+      where: { roleId: role.id, permissionId: { notIn: wantedIds } },
+    });
+    if (pruned.count > 0) {
+      console.log(`Rôle ${slug} : ${pruned.count} permission(s) périmée(s) retirée(s).`);
     }
   }
 

@@ -5,7 +5,6 @@ describe("modèle groupe d'abord", () => {
   it("accepte les nouveaux rôles de groupe et refuse les anciens rôles de faction", () => {
     const base = {
       expiresInHours: 72,
-      requireApproval: true,
       playerLevelId: "cm12345678901234567890123",
     };
     expect(invitationCreateSchema.safeParse({ ...base, roleSlug: "group_leader" }).success).toBe(true);

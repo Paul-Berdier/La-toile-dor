@@ -292,7 +292,6 @@ export async function createInvitationAction(raw: unknown): Promise<Result> {
     playerLevelId: playerLevel?.id,
     groupOnboardingMode,
     expiresInHours: data.expiresInHours,
-    requireApproval: data.requireApproval,
     restrictedDiscordId: data.restrictedDiscordId,
     note: data.note,
   });

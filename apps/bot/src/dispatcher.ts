@@ -11,9 +11,20 @@ function backoffMs(attempts: number): number {
   return 60_000 * 4 ** Math.min(attempts, 4);
 }
 
+/** Heure courante à Paris — le conteneur Railway vit en UTC, pas les joueurs. */
+function currentHourParis(): number {
+  return Number(
+    new Intl.DateTimeFormat("fr-FR", {
+      timeZone: "Europe/Paris",
+      hour: "numeric",
+      hour12: false,
+    }).format(new Date()),
+  );
+}
+
 function inQuietHours(pref: { quietHourStart: number | null; quietHourEnd: number | null }): boolean {
   if (pref.quietHourStart == null || pref.quietHourEnd == null) return false;
-  const hour = new Date().getHours();
+  const hour = currentHourParis();
   if (pref.quietHourStart <= pref.quietHourEnd) {
     return hour >= pref.quietHourStart && hour < pref.quietHourEnd;
   }
@@ -61,13 +72,14 @@ export function startDispatcher(client: Client): void {
           continue;
         }
 
-        // Période silencieuse : reporter à la fin de la fenêtre
+        // Période silencieuse : reporter à la fin de la fenêtre (heure de Paris)
         const prefs = await prisma.notificationPreference.findMany({ where: { userId } });
         const quiet = prefs.find((p) => inQuietHours(p));
         if (quiet) {
+          const hoursUntilEnd = ((quiet.quietHourEnd ?? 8) - currentHourParis() + 24) % 24 || 24;
           const resume = new Date();
-          resume.setHours(quiet.quietHourEnd ?? 8, 0, 0, 0);
-          if (resume <= new Date()) resume.setDate(resume.getDate() + 1);
+          resume.setMinutes(0, 0, 0);
+          resume.setTime(resume.getTime() + hoursUntilEnd * 3_600_000);
           await prisma.notificationDelivery.updateMany({
             where: { id: { in: deliveries.map((d) => d.id) } },
             data: { nextAttemptAt: resume },

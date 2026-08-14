@@ -174,7 +174,6 @@ export const invitationCreateSchema = z.object({
     .enum(["NONE", "EXISTING_GROUP", "CREATE_NEW_GROUP"])
     .default("NONE"),
   expiresInHours: z.number().int().min(1).max(24 * 30).default(72),
-  requireApproval: z.boolean().default(true),
   restrictedDiscordId: z
     .string()
     .regex(/^\d{15,21}$/, "Identifiant Discord invalide")

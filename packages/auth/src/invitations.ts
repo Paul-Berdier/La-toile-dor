@@ -11,7 +11,6 @@ export interface CreateInvitationInput {
   playerLevelId?: string;
   groupOnboardingMode?: "NONE" | "EXISTING_GROUP" | "CREATE_NEW_GROUP";
   expiresInHours: number;
-  requireApproval: boolean;
   restrictedDiscordId?: string;
   note?: string;
 }
@@ -34,7 +33,9 @@ export async function createInvitation(
       playerLevelId: input.playerLevelId ?? null,
       groupOnboardingMode: input.groupOnboardingMode ?? "NONE",
       expiresAt: new Date(Date.now() + input.expiresInHours * 3600 * 1000),
-      requireApproval: input.requireApproval,
+      // La possession d'un fil valide vaut admission : aucune seconde
+      // approbation manuelle ne doit pouvoir être réactivée par un appelant.
+      requireApproval: false,
       restrictedDiscordId: input.restrictedDiscordId ?? null,
       note: input.note ?? null,
     },

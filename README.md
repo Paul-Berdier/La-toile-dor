@@ -3,8 +3,8 @@
 Plateforme clandestine de contrats pour un serveur de jeu de rôle dans un
 univers de shinobis. **Tout le contenu est fictif et limité au cadre du RP.**
 
-Accès strictement privé : invitation à usage unique + Discord OAuth2 +
-approbation manuelle. Aucune inscription publique.
+Accès strictement privé : invitation à usage unique + Discord OAuth2.
+Une invitation valide active immédiatement le compte ; aucune inscription publique.
 
 ## Démarrage local
 
