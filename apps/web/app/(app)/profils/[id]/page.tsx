@@ -11,6 +11,8 @@ import { DossierRow, FieldValue, SwatchValue, swatchesOf } from "@/components/pr
 import { RequestAccessPanel, RevokeGrantButton } from "@/components/profils/request-access";
 import { OriginBadge } from "@/components/profils/dossier-card";
 import { ProfileGallery } from "@/components/profils/gallery";
+import { ContributeIntel, MyContributions, PendingContributions } from "@/components/profils/contribute";
+import { loadProfileRefs } from "@/server/profiles/edit-data";
 import { buttonClasses } from "@/components/ui/button";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +32,10 @@ export default async function DossierPage({
 
   const { dossier, relations, viewer, internal, requestableGroups } = detail;
   const f = dossier.fields;
+  // Référentiels pour la palette « + Ajouter un renseignement » — chargés
+  // seulement si le lecteur peut contribuer : un lecteur sans accès n'a pas
+  // besoin des listes, et ne doit pas voir le bouton.
+  const contributeRefs = detail.access.canContribute ? await loadProfileRefs() : null;
 
   // Colonne latérale : gestion des accès (modération) ou, pour tout autre
   // lecteur, l'état du dossier (possédé, scellé, demande en cours).
@@ -132,6 +138,11 @@ export default async function DossierPage({
             </dl>
             <p className="mt-2 whitespace-nowrap font-mono-toile text-[0.6rem] text-ink-faint">
               Mise à jour : {new Date(dossier.updatedAt).toLocaleString("fr-FR")}
+              {detail.completion && (
+                <span className="ml-3" title="Part des champs renseignés">
+                  · complétude {Math.round((detail.completion.known / detail.completion.total) * 100)} %
+                </span>
+              )}
             </p>
           </div>
           {detail.access.canEdit && (
@@ -343,6 +354,57 @@ export default async function DossierPage({
               </div>
             ))}
           </section>
+
+          {/* Renseignement : contributions (lecteurs autorisés) et historique */}
+          {detail.access.canContribute && (
+            <section className={sectionCls} id="renseignement">
+              <h2 className={headingCls}>Renseignement</h2>
+              {contributeRefs && (
+                <ContributeIntel
+                  profileId={dossier.id}
+                  refs={contributeRefs}
+                  groups={viewer.groupIds.map((gid) => ({ id: gid, name: viewer.groupNames.get(gid) ?? "Groupe" }))}
+                  directWrite={detail.access.canEdit}
+                  sourceMissionId={mission}
+                />
+              )}
+              {detail.contributions.pending.length > 0 && (
+                <div className="mt-4">
+                  <h3 className={`mb-2 text-[0.7rem] uppercase tracking-wider ${open ? "text-parchment-text/60" : "text-ink-faint"}`}>
+                    Propositions à trancher ({detail.contributions.pending.length})
+                  </h3>
+                  <PendingContributions rows={detail.contributions.pending} />
+                </div>
+              )}
+              {detail.contributions.mine.length > 0 && (
+                <div className="mt-4">
+                  <h3 className={`mb-2 text-[0.7rem] uppercase tracking-wider ${open ? "text-parchment-text/60" : "text-ink-faint"}`}>
+                    Mes contributions
+                  </h3>
+                  <MyContributions rows={detail.contributions.mine} />
+                </div>
+              )}
+              {detail.history.length > 0 && (
+                <details className="mt-4">
+                  <summary className={`cursor-pointer text-[0.7rem] uppercase tracking-wider ${open ? "text-parchment-text/60 hover:text-blood" : "text-ink-faint hover:text-gold"}`}>
+                    Historique des mises à jour ({detail.history.length})
+                  </summary>
+                  <ul className="mt-2 space-y-1 text-[0.7rem]">
+                    {detail.history.map((h) => (
+                      <li key={h.id} className={open ? "text-parchment-text/80" : "text-ink-muted"}>
+                        <span className="font-mono-toile">{new Date(h.createdAt).toLocaleString("fr-FR")}</span>
+                        {" — "}<span className={open ? "text-parchment-text" : "text-ink"}>{h.fieldLabel}</span>
+                        {h.authorName && <span className={open ? "text-parchment-text/60" : "text-ink-faint"}> · {h.authorName}</span>}
+                        {h.sourceMissionCode && <span className={open ? "text-parchment-text/60" : "text-ink-faint"}> · mission {h.sourceMissionCode}</span>}
+                        {h.confidence && <span className={open ? "text-parchment-text/60" : "text-ink-faint"}> · {CONFIDENCE_LABELS[h.confidence as IntelConfidenceCode] ?? h.confidence}</span>}
+                        {h.justification && <span className={open ? "text-parchment-text/60" : "text-ink-faint"}> — {h.justification}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </section>
+          )}
 
           {/* Renseignements : modération uniquement */}
           {internal && (

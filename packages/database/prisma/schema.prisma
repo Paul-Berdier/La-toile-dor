@@ -285,6 +285,7 @@ model Group {
   profileRequests ProfilePurchaseRequest[] @relation("GroupProfileRequests")
   profileGrants   ProfileAccessGrant[]     @relation("GroupProfileGrants")
   createdProfiles CharacterProfile[]       @relation("GroupCreatedProfiles")
+  intelContributions ProfileIntelContribution[] @relation("GroupIntelContributions")
 
   @@unique([factionId, name])
 }
@@ -467,6 +468,7 @@ model Mission {
 
   targets       MissionTarget[]
   profileImages ProfileImage[] @relation("ProfileImageSourceMission")
+  intelContributions ProfileIntelContribution[] @relation("ContributionSourceMission")
   visibility    MissionVisibility?
   claims        MissionClaim[]
   assignments   MissionAssignment[]
@@ -753,6 +755,9 @@ enum NotificationEvent {
   PROFILE_REQUEST_APPROVED
   PROFILE_REQUEST_REFUSED
   PROFILE_UPDATED
+  // Contribution de renseignement : reçue (modération) / tranchée (contributeur)
+  PROFILE_CONTRIBUTION_RECEIVED
+  PROFILE_CONTRIBUTION_REVIEWED
   MEMBER_PROMOTED
   MISSION_AVAILABLE
   CLAIM_ACCEPTED
@@ -1015,6 +1020,63 @@ model ProfileImage {
   @@index([sourceMissionId])
 }
 
+// ── Contributions de renseignement ──
+// Un lecteur qui VOIT un dossier sans pouvoir le modifier (acquéreur, groupe
+// engagé en mission) propose une information. La modération, ou le groupe
+// créateur, tranche. Une contribution n'écrase JAMAIS la valeur en place
+// d'elle-même ; et quand elle la contredit, le contributeur ne l'apprend pas
+// — `conflictsWithExisting` reste côté modération.
+enum ProfileContributionSource {
+  GROUP   // un membre, au nom de son groupe
+  USER    // un membre, sans groupe (modération, cas rares)
+  MISSION // issue d'un rapport de fin de mission
+}
+
+enum ProfileContributionStatus {
+  PENDING_REVIEW // en attente de la modération
+  APPLIED        // écrite directement (auteur habilité : modération, groupe créateur)
+  ACCEPTED       // validée par la modération, puis écrite
+  MERGED         // fusionnée avec la valeur existante (textes, listes)
+  REJECTED       // refusée — la valeur en place reste
+  CONTRADICTORY  // le champ est marqué contradictoire, les deux versions gardées
+}
+
+model ProfileIntelContribution {
+  id        String @id @default(cuid())
+  profileId String
+  fieldKey  String
+  // Valeur proposée, forme JSON propre au champ (identifiants de référentiel,
+  // texte, plage…). Le libellé lisible est calculé à l'écriture pour la
+  // revue — il n'est montré qu'à qui voit le dossier.
+  proposedValue  Json
+  proposedLabel  String
+  // Ce que le contributeur affirme : « connu », ou « vérifié absent »
+  knowledgeState ProfileKnowledgeState @default(KNOWN)
+  confidence     IntelConfidence?
+  note           String?
+  sourceType     ProfileContributionSource
+  groupId        String?
+  contributorId  String
+  sourceMissionId String?
+  status         ProfileContributionStatus @default(PENDING_REVIEW)
+  // La valeur en place différait à la soumission. Jamais renvoyé au
+  // contributeur — c'est précisément l'information qu'il n'a pas le droit d'avoir.
+  conflictsWithExisting Boolean @default(false)
+  reviewedById String?
+  reviewedAt   DateTime?
+  reviewNote   String?
+  createdAt    DateTime @default(now())
+
+  profile       CharacterProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  group         Group?           @relation("GroupIntelContributions", fields: [groupId], references: [id], onDelete: SetNull)
+  sourceMission Mission?         @relation("ContributionSourceMission", fields: [sourceMissionId], references: [id], onDelete: SetNull)
+
+  @@index([profileId, status])
+  @@index([status, createdAt])
+  @@index([groupId])
+  @@index([sourceMissionId])
+}
+
 // Proposition d'une nouvelle entrée de référentiel (validée par un super-mod)
 model ProfileReferenceSuggestion {
   id            String  @id @default(cuid())
@@ -1121,6 +1183,7 @@ model CharacterProfile {
   mergedFrom CharacterProfile[] @relation("ProfileMerge")
 
   images        ProfileImage[]
+  contributions ProfileIntelContribution[]
   fieldIntel    CharacterFieldIntel[]
   traits        CharacterProfileTrait[]
   techniques    CharacterSignatureTechnique[]

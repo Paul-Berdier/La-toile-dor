@@ -1,7 +1,14 @@
 import "server-only";
 import { prisma } from "@toile/database";
 import type { Prisma } from "@toile/database";
-import { formatDossierTitle, normalizeRefLabel, type GrantSource } from "@toile/shared";
+import {
+  PROFILE_FIELD_KEYS,
+  PROFILE_FIELD_LABELS,
+  formatDossierTitle,
+  normalizeRefLabel,
+  type GrantSource,
+  type ProfileFieldKey,
+} from "@toile/shared";
 import type { CurrentUser } from "@/lib/session";
 import { getRpTimeConfig } from "@/server/rp-config";
 import {
@@ -319,6 +326,56 @@ export interface DossierDetail {
   title: string;
   /** Groupe propriétaire : nom seulement, et seulement s'il en a un */
   ownerGroupName: string | null;
+  /**
+   * Contributions — pour un lecteur AUTORISÉ seulement (sinon tableau vide) :
+   * les siennes (et leur sort), et, s'il peut trancher, celles en attente.
+   */
+  contributions: {
+    mine: ContributionView[];
+    pending: ContributionView[];
+  };
+  /**
+   * Historique lisible — lecteurs autorisés : qui a changé quoi, quand, avec
+   * quelle confiance. Les valeurs brutes (old/new) restent côté modération.
+   */
+  history: HistoryEntry[];
+  /**
+   * Score de complétude : part des champs connus. Lecteurs autorisés
+   * seulement — pour les autres, ce serait un second compte à côté de
+   * sealedCount, et la soustraction parlerait.
+   */
+  completion: { known: number; total: number } | null;
+}
+
+export interface ContributionView {
+  id: string;
+  fieldKey: string;
+  fieldLabel: string;
+  proposedLabel: string;
+  knowledgeState: string;
+  confidence: string | null;
+  note: string | null;
+  status: string;
+  sourceType: string;
+  groupName: string | null;
+  contributorName: string;
+  sourceMissionCode: string | null;
+  /** Revue uniquement : la valeur en place différait à la soumission */
+  conflictsWithExisting?: boolean;
+  reviewNote: string | null;
+  createdAt: string;
+  reviewedAt: string | null;
+}
+
+export interface HistoryEntry {
+  id: string;
+  fieldKey: string;
+  fieldLabel: string;
+  justification: string | null;
+  confidence: string | null;
+  authorName: string | null;
+  sourceMissionCode: string | null;
+  createdAt: string;
 }
 
 export async function getDossierDetail(
@@ -493,6 +550,96 @@ export async function getDossierDetail(
     };
   }
 
+  // Contributions et historique : pour qui VOIT le dossier. Un lecteur sans
+  // accès ne doit pas savoir qu'on y travaille — combien, ni sur quels champs.
+  const contributions: DossierDetail["contributions"] = { mine: [], pending: [] };
+  const history: HistoryEntry[] = [];
+  let completion: DossierDetail["completion"] = null;
+  if (canView) {
+    const [rows, revisions] = await Promise.all([
+      prisma.profileIntelContribution.findMany({
+        where: {
+          profileId: profile.id,
+          OR: [
+            { contributorId: viewer.userId },
+            ...(access.canEdit ? [{ status: "PENDING_REVIEW" as const }] : []),
+          ],
+        },
+        include: {
+          group: { select: { name: true } },
+          sourceMission: { select: { code: true } },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      }),
+      prisma.characterProfileRevision.findMany({
+        where: { profileId: profile.id },
+        orderBy: { createdAt: "desc" },
+        take: 40,
+        select: {
+          id: true, fieldKey: true, justification: true, confidence: true, createdAt: true, changedById: true, sourceMissionId: true,
+        },
+      }),
+    ]);
+    const userIds = new Set<string>();
+    for (const r of rows) userIds.add(r.contributorId);
+    for (const r of revisions) if (r.changedById) userIds.add(r.changedById);
+    const missionIds = new Set(revisions.map((r) => r.sourceMissionId).filter((id): id is string => Boolean(id)));
+    const [users, missions] = await Promise.all([
+      userIds.size
+        ? prisma.user.findMany({ where: { id: { in: [...userIds] } }, select: { id: true, displayName: true } })
+        : [],
+      missionIds.size
+        ? prisma.mission.findMany({ where: { id: { in: [...missionIds] } }, select: { id: true, code: true } })
+        : [],
+    ]);
+    const nameOf = new Map(users.map((u) => [u.id, u.displayName]));
+    const missionCode = new Map(missions.map((m) => [m.id, m.code]));
+
+    const toView = (r: (typeof rows)[number]): ContributionView => ({
+      id: r.id,
+      fieldKey: r.fieldKey,
+      fieldLabel: PROFILE_FIELD_LABELS[r.fieldKey as ProfileFieldKey] ?? r.fieldKey,
+      proposedLabel: r.proposedLabel,
+      knowledgeState: r.knowledgeState,
+      confidence: r.confidence,
+      note: r.note,
+      status: r.status,
+      sourceType: r.sourceType,
+      groupName: r.group?.name ?? null,
+      contributorName: nameOf.get(r.contributorId) ?? "—",
+      sourceMissionCode: r.sourceMission?.code ?? null,
+      ...(access.canEdit ? { conflictsWithExisting: r.conflictsWithExisting } : {}),
+      reviewNote: r.reviewNote,
+      createdAt: r.createdAt.toISOString(),
+      reviewedAt: r.reviewedAt?.toISOString() ?? null,
+    });
+    for (const r of rows) {
+      if (r.contributorId === viewer.userId) contributions.mine.push(toView(r));
+      if (access.canEdit && r.status === "PENDING_REVIEW" && r.contributorId !== viewer.userId) {
+        contributions.pending.push(toView(r));
+      }
+    }
+    for (const r of revisions) {
+      history.push({
+        id: r.id,
+        fieldKey: r.fieldKey,
+        fieldLabel: PROFILE_FIELD_LABELS[r.fieldKey as ProfileFieldKey] ?? r.fieldKey,
+        justification: r.justification,
+        confidence: r.confidence,
+        authorName: r.changedById ? (nameOf.get(r.changedById) ?? null) : null,
+        sourceMissionCode: r.sourceMissionId ? (missionCode.get(r.sourceMissionId) ?? null) : null,
+        createdAt: r.createdAt.toISOString(),
+      });
+    }
+    const total = PROFILE_FIELD_KEYS.length;
+    const known = PROFILE_FIELD_KEYS.filter((k) => {
+      const state = dossier.fields[k]?.displayState;
+      return state === "VISIBLE" || state === "NONE";
+    }).length;
+    completion = { known, total };
+  }
+
   return {
     dossier,
     relations,
@@ -504,6 +651,9 @@ export async function getDossierDetail(
     lastPrice,
     estimate,
     access,
+    contributions,
+    history,
+    completion,
     title: profile.title ?? formatDossierTitle(profile.characterFirstName, profile.characterLastName),
     // Le nom du groupe propriétaire n'est montré qu'à qui voit le dossier :
     // savoir QUI a ouvert une fiche est déjà un renseignement.

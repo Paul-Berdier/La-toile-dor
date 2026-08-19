@@ -98,6 +98,9 @@ export default async function ProfilsPage({
       ? prisma.playerLevel.findMany({ select: { id: true, label: true }, orderBy: { order: "asc" } })
       : [],
   ]);
+  const pendingContributions = viewer.canManage
+    ? await prisma.profileIntelContribution.count({ where: { status: "PENDING_REVIEW" } })
+    : 0;
 
   const asOptions = (rows: { id: string; label: string }[]) =>
     rows.map((row) => ({ value: row.id, label: row.label }));
@@ -122,6 +125,16 @@ export default async function ProfilsPage({
           {viewer.canReview && (
             <Link href="/profils/demandes" className={buttonClasses("outline", "md")}>
               Demandes d&rsquo;accès
+            </Link>
+          )}
+          {viewer.canManage && (
+            <Link href="/profils/contributions" className={buttonClasses("outline", "md")}>
+              Renseignements proposés
+              {pendingContributions > 0 && (
+                <span className="ml-2 border border-warning/60 px-1.5 font-mono-toile text-[0.65rem] text-warning">
+                  {pendingContributions}
+                </span>
+              )}
             </Link>
           )}
           {viewer.canCreate && (
