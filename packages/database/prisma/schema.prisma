@@ -466,6 +466,7 @@ model Mission {
   assignedGroup       Group?   @relation("MissionAssignedGroup", fields: [assignedGroupId], references: [id])
 
   targets       MissionTarget[]
+  profileImages ProfileImage[] @relation("ProfileImageSourceMission")
   visibility    MissionVisibility?
   claims        MissionClaim[]
   assignments   MissionAssignment[]
@@ -965,12 +966,53 @@ model ProfileReferenceOption {
   traits           CharacterProfileTrait[]
   hairProfiles     CharacterProfile[] @relation("ProfileHairColor")
   skinProfiles     CharacterProfile[] @relation("ProfileSkinTone")
+  eyeProfiles          CharacterProfile[] @relation("ProfileEyeColor")
+  eyeSecondaryProfiles CharacterProfile[] @relation("ProfileEyeColorSecondary")
+  classProfiles        CharacterProfile[] @relation("ProfileNinjaClass")
   techniques       CharacterSignatureTechnique[] @relation("TechniqueJutsuType")
   mergedSuggestions ProfileReferenceSuggestion[] @relation("SuggestionMergedInto")
 
   @@unique([type, code])
   @@unique([type, normalizedLabel])
   @@index([type, isActive, sortOrder])
+}
+
+// ── Images d'un dossier : portrait principal + galerie ──
+// Sort les octets de la table principale (ils étaient chargés à CHAQUE
+// lecture, y compris sans droit) et permet plusieurs images : autre apparence,
+// tenue, arme, preuve prise en mission. Copie du patron MissionReportImage.
+// Servies par une route gardée aux MÊMES règles que le dossier — une image
+// non visible ne produit ni URL, ni clé, ni octet.
+enum ProfileImageType {
+  PORTRAIT   // le visage, de face — un seul est « principal »
+  APPEARANCE // autre apparence, tenue, déguisement
+  EVIDENCE   // preuve visuelle rapportée d'une mission
+  OTHER
+}
+
+model ProfileImage {
+  id        String @id @default(cuid())
+  profileId String
+  imageData Bytes
+  imageMime String
+  sizeBytes Int
+  type      ProfileImageType @default(OTHER)
+  caption   String?
+  // Un seul portrait principal par dossier (index partiel en migration)
+  isPrimary Boolean @default(false)
+  sortOrder Int     @default(0)
+  // D'où vient l'image : mission d'origine, et qui l'a versée
+  sourceMissionId String?
+  uploadedById    String
+  createdAt       DateTime  @default(now())
+  // Suppression LOGIQUE : une preuve ne disparaît pas, elle se retire
+  deletedAt       DateTime?
+
+  profile       CharacterProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  sourceMission Mission?         @relation("ProfileImageSourceMission", fields: [sourceMissionId], references: [id], onDelete: SetNull)
+
+  @@index([profileId, deletedAt, sortOrder])
+  @@index([sourceMissionId])
 }
 
 // Proposition d'une nouvelle entrée de référentiel (validée par un super-mod)
@@ -1016,6 +1058,17 @@ model CharacterProfile {
   heightMaxCm Int?
   hairColorId String?
   skinToneId  String?
+  // Couleur des yeux : apparence physique normale, JAMAIS un dôjutsu (le
+  // Sharingan reste un Kekkei Genkai). L'œil 2 n'est renseigné qu'en cas
+  // d'hétérochromie — un seul renseignement « yeux » pour les deux, sinon
+  // l'hétérochromie deviendrait achetable à part (CHECK en migration).
+  eyeColorId          String?
+  eyeColorSecondaryId String?
+
+  // ── Classe du serveur (Soigneur / Traqueur / Ravageur / Défenseur) ──
+  // Classification propre au RP, pas canonique Naruto. Référentiel
+  // administrable NINJA_CLASS ; une seule classe principale en V1.
+  ninjaClassId String?
 
   // ── Affiliation ──
   factionId String? // réutilise la table Faction existante
@@ -1059,11 +1112,15 @@ model CharacterProfile {
   createdByGroup Group? @relation("GroupCreatedProfiles", fields: [createdByGroupId], references: [id], onDelete: SetNull)
   hairColor ProfileReferenceOption? @relation("ProfileHairColor", fields: [hairColorId], references: [id])
   skinTone  ProfileReferenceOption? @relation("ProfileSkinTone", fields: [skinToneId], references: [id])
+  eyeColor          ProfileReferenceOption? @relation("ProfileEyeColor", fields: [eyeColorId], references: [id], onDelete: SetNull)
+  eyeColorSecondary ProfileReferenceOption? @relation("ProfileEyeColorSecondary", fields: [eyeColorSecondaryId], references: [id], onDelete: SetNull)
+  ninjaClass        ProfileReferenceOption? @relation("ProfileNinjaClass", fields: [ninjaClassId], references: [id], onDelete: SetNull)
   faction   Faction?     @relation("ProfileFaction", fields: [factionId], references: [id])
   rank      PlayerLevel? @relation("ProfileRank", fields: [rankId], references: [id])
   mergedInto CharacterProfile? @relation("ProfileMerge", fields: [mergedIntoId], references: [id])
   mergedFrom CharacterProfile[] @relation("ProfileMerge")
 
+  images        ProfileImage[]
   fieldIntel    CharacterFieldIntel[]
   traits        CharacterProfileTrait[]
   techniques    CharacterSignatureTechnique[]

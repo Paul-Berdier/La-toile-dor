@@ -1,7 +1,7 @@
 import "server-only";
 import { prisma } from "@toile/database";
 import type { Prisma } from "@toile/database";
-import { normalizeRefLabel, type GrantSource } from "@toile/shared";
+import { formatDossierTitle, normalizeRefLabel, type GrantSource } from "@toile/shared";
 import type { CurrentUser } from "@/lib/session";
 import { getRpTimeConfig } from "@/server/rp-config";
 import {
@@ -125,7 +125,12 @@ export async function listProfiles(
     if (filters.rankId) where.rankId = filters.rankId;
     if (filters.lifeStatus) where.lifeStatus = filters.lifeStatus as never;
     if (filters.sexCode) where.sexCode = filters.sexCode as never;
-    if (filters.withPortrait) where.imageMime = { not: null };
+    const and: Prisma.CharacterProfileWhereInput[] = [];
+    if (filters.withPortrait) {
+      // Portrait en galerie OU ancienne colonne : les deux comptent. En AND
+      // séparé pour ne pas écraser le OR de la recherche textuelle.
+      and.push({ OR: [{ images: { some: { deletedAt: null } } }, { imageMime: { not: null } }] });
+    }
 
     // Traits cumulés : une clause par trait, sinon Prisma ne garderait que le
     // dernier `some` et « Fûton ET Sharingan » deviendrait « Sharingan ».
@@ -133,9 +138,8 @@ export async function listProfiles(
       ...(filters.clanOptionId ? [filters.clanOptionId] : []),
       ...(filters.traitOptionIds ?? []),
     ].filter(Boolean);
-    if (traitIds.length > 0) {
-      where.AND = traitIds.map((optionId) => ({ traits: { some: { optionId } } }));
-    }
+    for (const optionId of traitIds) and.push({ traits: { some: { optionId } } });
+    if (and.length > 0) where.AND = and;
 
     if (filters.minIntel && filters.minIntel > 0) {
       where.fieldIntel = { some: { knowledgeState: "KNOWN" } };
@@ -177,7 +181,7 @@ export async function listProfiles(
       archivedAt: true,
       imageMime: true,
       updatedAt: true,
-      _count: { select: { fieldIntel: true } },
+      _count: { select: { fieldIntel: true, images: { where: { deletedAt: null } } } },
       // Octrois des groupes du lecteur seulement : de quoi décider et dire
       // POURQUOI il voit, sans charger ceux des autres groupes.
       accessGrants: viewer.canViewAll
@@ -225,7 +229,7 @@ export async function listProfiles(
       // les trois seules vraies valeurs qu'un lecteur sans accès reçoit.
       lastName: profile.characterLastName,
       canViewValues: canView,
-      hasVisiblePortrait: canView && profile.imageMime != null,
+      hasVisiblePortrait: canView && (profile._count.images > 0 || profile.imageMime != null),
       updatedAt: profile.updatedAt.toISOString(),
       accessOrigin: decision.origin,
       accessBadge,
@@ -429,7 +433,13 @@ export async function getDossierDetail(
         select: { id: true, name: true },
       }),
     ]);
-    const blocked = new Set([...grants.map((g) => g.groupId), ...pending.map((p) => p.groupId)]);
+    // Le groupe créateur possède déjà le dossier : on ne lui propose pas de
+    // racheter ce qu'il a ouvert lui-même.
+    const blocked = new Set([
+      ...grants.map((g) => g.groupId),
+      ...pending.map((p) => p.groupId),
+      ...(profile.createdByGroupId ? [profile.createdByGroupId] : []),
+    ]);
     requestableGroups = groups.filter((g) => !blocked.has(g.id));
     myPendingRequest = pending.length > 0;
   }
@@ -499,11 +509,6 @@ export async function getDossierDetail(
     // savoir QUI a ouvert une fiche est déjà un renseignement.
     ownerGroupName: canView ? (profile.createdByGroup?.name ?? null) : null,
   };
-}
-
-/** « Dossier — Akira Hoki » : le titre par défaut, jamais vide. */
-export function formatDossierTitle(firstName: string, lastName: string | null | undefined): string {
-  return `Dossier — ${[firstName, lastName].filter(Boolean).join(" ")}`;
 }
 
 // ── Doublons potentiels ──

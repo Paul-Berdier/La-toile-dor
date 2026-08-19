@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { prisma } from "@toile/database";
 import { PERMISSIONS } from "@toile/shared";
 import { requireUser } from "@/lib/session";
+import { getProfileViewer } from "@/server/profiles/access";
 import { loadEditData, loadProfileRefs } from "@/server/profiles/edit-data";
 import { ProfileEditForm } from "@/components/profils/edit-form";
 import {
@@ -11,6 +12,8 @@ import {
   ProfileImageUpload,
 } from "@/components/profils/technique-relation";
 import { MergePanel } from "@/components/profils/merge-panel";
+import { ProfileGalleryEditor } from "@/components/profils/gallery";
+import { PROFILE_IMAGE_TYPE_LABELS, type ProfileImageType, type ProfileImageView } from "@toile/shared";
 
 export const dynamic = "force-dynamic";
 
@@ -40,12 +43,14 @@ export default async function ModifierDossierPage({
   searchParams: Promise<{ mission?: string }>;
 }) {
   const current = await requireUser();
-  if (!current.permissions.has(PERMISSIONS.PROFILE_MANAGE)) redirect("/profils");
-
+  const viewer = await getProfileViewer(current);
+  // Modération OU groupe créateur : la décision est prise par loadEditData,
+  // qui renvoie null à quiconque ne peut pas modifier CE dossier. Un
+  // acquéreur atterrit sur le dossier en lecture, pas sur un 404 sec.
   const { id } = await params;
   const { mission } = await searchParams;
   const [editData, refs, profile] = await Promise.all([
-    loadEditData(id),
+    loadEditData(id, viewer),
     loadProfileRefs(),
     prisma.characterProfile.findUnique({
       where: { id },
@@ -61,10 +66,34 @@ export default async function ModifierDossierPage({
             fromProfile: { select: { code: true, characterFirstName: true, archivedAt: true } },
           },
         },
+        // Métadonnées seulement : les octets passent par la route gardée
+        images: {
+          where: { deletedAt: null },
+          orderBy: [{ isPrimary: "desc" }, { sortOrder: "asc" }, { createdAt: "asc" }],
+          select: {
+            id: true, type: true, caption: true, isPrimary: true, sortOrder: true,
+            sizeBytes: true, createdAt: true, sourceMission: { select: { code: true } },
+          },
+        },
       },
     }),
   ]);
-  if (!editData || !profile) notFound();
+  if (!profile) notFound();
+  // La garde d'édition est prise par loadEditData (null = pas le droit) ; le
+  // reste de la page n'expose rien au-delà de ce que la page de lecture montre.
+  if (!editData) redirect(`/profils/${id}`);
+
+  const galleryImages: ProfileImageView[] = profile.images.map((img) => ({
+    id: img.id,
+    type: img.type as ProfileImageType,
+    typeLabel: PROFILE_IMAGE_TYPE_LABELS[img.type as ProfileImageType] ?? img.type,
+    caption: img.caption,
+    isPrimary: img.isPrimary,
+    sortOrder: img.sortOrder,
+    sizeBytes: img.sizeBytes,
+    createdAt: img.createdAt.toISOString(),
+    sourceMissionCode: img.sourceMission?.code ?? null,
+  }));
 
   const relations = [
     ...profile.relationsFrom
@@ -126,9 +155,18 @@ export default async function ModifierDossierPage({
           </h2>
           <RelationManager profileId={id} relations={relations} />
         </section>
-        <section className="border border-border-default bg-raised p-5">
-          <h2 className="mb-3 font-display text-sm tracking-widest text-gold uppercase">Portrait</h2>
-          <ProfileImageUpload profileId={id} />
+        <section className="border border-border-default bg-raised p-5 lg:col-span-2">
+          <h2 className="mb-3 font-display text-sm tracking-widest text-gold uppercase">Portrait et galerie</h2>
+          <div className="grid gap-5 lg:grid-cols-2">
+            <div>
+              <p className="mb-2 text-[0.7rem] uppercase tracking-wider text-ink-faint">Portrait recadré</p>
+              <ProfileImageUpload profileId={id} />
+            </div>
+            <div>
+              <p className="mb-2 text-[0.7rem] uppercase tracking-wider text-ink-faint">Galerie (apparence, preuves…)</p>
+              <ProfileGalleryEditor profileId={id} images={galleryImages} sourceMissionId={mission} />
+            </div>
+          </div>
         </section>
 
         {/* Fusion et archivage : super-modérateurs uniquement */}

@@ -124,7 +124,13 @@ export default async function ProfilsPage({
               Demandes d&rsquo;accès
             </Link>
           )}
-          {viewer.canManage && <QuickCreateProfile sourceMissionId={attachMission?.id} />}
+          {viewer.canCreate && (
+            <QuickCreateProfile
+              sourceMissionId={attachMission?.id}
+              groups={viewer.groupIds.map((id) => ({ id, name: viewer.groupNames.get(id) ?? "Groupe" }))}
+              canCreateWithoutGroup={viewer.canManage}
+            />
+          )}
         </div>
       </div>
 

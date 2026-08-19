@@ -86,8 +86,10 @@ export const PROFILE_FIELD_KEYS = [
   "height",
   "hairColor",
   "skinTone",
+  "eyeColor",
   "faction",
   "clans",
+  "ninjaClass",
   "rank",
   "lifeStatus",
   "age",
@@ -113,8 +115,10 @@ export const PROFILE_FIELD_LABELS: Record<ProfileFieldKey, string> = {
   height: "Taille",
   hairColor: "Cheveux",
   skinTone: "Couleur de peau",
+  eyeColor: "Couleur des yeux",
   faction: "Faction",
   clans: "Clan",
+  ninjaClass: "Classe",
   rank: "Grade",
   lifeStatus: "État",
   age: "Âge",
@@ -136,6 +140,12 @@ export const PROFILE_FIELD_LABELS: Record<ProfileFieldKey, string> = {
 export const REFERENCE_TYPES = {
   HAIR_COLOR: "HAIR_COLOR",
   SKIN_TONE: "SKIN_TONE",
+  // Couleur de l'iris, PAS le dôjutsu : un Sharingan est une technique de
+  // clan, l'œil qui le porte reste noir ou rouge de naissance.
+  EYE_COLOR: "EYE_COLOR",
+  // Classe de combat (Soigneur, Traqueur, Ravageur, Défenseur). Référentiel
+  // administrable et non enum SQL : la modération pourra renommer ou ajouter.
+  NINJA_CLASS: "NINJA_CLASS",
   CLAN_FAMILY: "CLAN_FAMILY",
   CHAKRA_NATURE: "CHAKRA_NATURE",
   KEKKEI_GENKAI: "KEKKEI_GENKAI",
@@ -157,6 +167,8 @@ export type ReferenceType = (typeof REFERENCE_TYPES)[keyof typeof REFERENCE_TYPE
 export const REFERENCE_TYPE_LABELS: Record<ReferenceType, string> = {
   HAIR_COLOR: "Couleurs de cheveux",
   SKIN_TONE: "Teintes de peau",
+  EYE_COLOR: "Couleurs des yeux",
+  NINJA_CLASS: "Classes ninja",
   CLAN_FAMILY: "Clans et familles",
   CHAKRA_NATURE: "Natures de chakra",
   KEKKEI_GENKAI: "Kekkei Genkai",
@@ -227,4 +239,10 @@ export function formatHeight(minCm: number | null, maxCm: number | null): string
 /** Code lisible PRF-000142 depuis le compteur interne. */
 export function formatProfileCode(codeNumber: number): string {
   return `PRF-${String(codeNumber).padStart(6, "0")}`;
+}
+
+/** « Dossier — Akira Hoki » : le titre par défaut d'un dossier, jamais vide. */
+export function formatDossierTitle(firstName: string, lastName?: string | null): string {
+  const name = [firstName, lastName].map((s) => s?.trim()).filter(Boolean).join(" ");
+  return name ? `Dossier — ${name}` : "Dossier";
 }

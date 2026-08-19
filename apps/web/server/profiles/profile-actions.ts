@@ -6,6 +6,7 @@ import type { Prisma, ProfileKnowledgeState } from "@toile/database";
 import { audit } from "@toile/auth";
 import {
   PERMISSIONS,
+  formatDossierTitle,
   formatProfileCode,
   normalizeRefLabel,
   profileQuickCreateSchema,
@@ -25,6 +26,7 @@ import { requireUser, requestMeta } from "@/lib/session";
 import { enqueueNotifications, userIdsWithPermission } from "@/server/notifications";
 import { getProfileViewer, decideAccess, toAccessTarget, accessTargetSelect } from "./access";
 import { findSimilarProfiles } from "./queries";
+import { uploadProfileGalleryImageAction } from "./image-actions";
 
 export interface ProfileActionResult {
   ok: boolean;
@@ -127,8 +129,7 @@ export async function quickCreateProfileAction(raw: unknown): Promise<ProfileAct
     }
   }
 
-  const title =
-    parsed.data.title?.trim() || `Dossier — ${[firstName, lastName].filter(Boolean).join(" ")}`;
+  const title = parsed.data.title?.trim() || formatDossierTitle(firstName, lastName);
 
   const profile = await prisma.$transaction(async (tx) => {
     const created = await createProfileRecord(tx, {
@@ -182,12 +183,11 @@ export async function quickCreateProfileAction(raw: unknown): Promise<ProfileAct
 // ─────────────────────────────────────────────────────────────
 
 const SCALAR_CONFLICT_FIELDS: ProfileFieldKey[] = [
-  "lastName", "sex", "height", "hairColor", "skinTone", "faction", "rank", "lifeStatus",
+  "lastName", "sex", "height", "hairColor", "skinTone", "eyeColor", "ninjaClass", "faction", "rank", "lifeStatus",
 ];
 
 export async function updateProfileAction(raw: unknown): Promise<ProfileActionResult> {
-  const current = await guardManage();
-  if (!current) return { ok: false, error: "Seule la modération peut modifier un dossier." };
+  const current = await requireUser();
 
   const parsed = profileUpdateSchema.safeParse(raw);
   if (!parsed.success) {
@@ -198,15 +198,31 @@ export async function updateProfileAction(raw: unknown): Promise<ProfileActionRe
   const profile = await prisma.characterProfile.findUnique({
     where: { id: input.profileId },
     include: {
+      accessGrants: accessTargetSelect.accessGrants,
       fieldIntel: true,
       traits: { include: { option: true } },
       hairColor: true,
       skinTone: true,
+      eyeColor: true,
+      eyeColorSecondary: true,
+      ninjaClass: true,
       faction: { select: { name: true } },
       rank: { select: { label: true } },
     },
   });
   if (!profile || profile.archivedAt) return { ok: false, error: "Dossier introuvable." };
+
+  // Modération, ou groupe créateur : c'est la règle centrale qui tranche, la
+  // même que celle de la page. Un acquéreur passe par une contribution, pas
+  // par ici. Les notes internes, elles, restent à la modération seule.
+  const viewer = await getProfileViewer(current);
+  const access = decideAccess(viewer, toAccessTarget(profile));
+  if (!access.canEdit) {
+    return { ok: false, error: "Seuls la modération et le groupe créateur peuvent modifier ce dossier." };
+  }
+  if (input.internalNotes !== undefined && !access.canAdminister) {
+    return { ok: false, error: "Les notes internes sont réservées à la modération." };
+  }
 
   // Verrouillage optimiste : le formulaire renvoie la version qu'il a chargée.
   // Sans ce contrôle, deux modérateurs complétant le même dossier pendant la
@@ -235,6 +251,10 @@ export async function updateProfileAction(raw: unknown): Promise<ProfileActionRe
     height: [profile.heightMinCm, profile.heightMaxCm].filter((v) => v != null).join("–"),
     hairColor: profile.hairColor?.label ?? "",
     skinTone: profile.skinTone?.label ?? "",
+    eyeColor: profile.eyeColor
+      ? [profile.eyeColor.label, profile.eyeColorSecondary?.label].filter(Boolean).join(" / ")
+      : "",
+    ninjaClass: profile.ninjaClass?.label ?? "",
     faction: profile.faction?.name ?? "",
     rank: profile.rank?.label ?? "",
     lifeStatus: profile.lifeStatus ?? "",
@@ -256,6 +276,16 @@ export async function updateProfileAction(raw: unknown): Promise<ProfileActionRe
   }
   if (has("hairColorId")) provided.hairColor = { newLabel: input.hairColorId ?? "", changed: (input.hairColorId ?? null) !== profile.hairColorId };
   if (has("skinToneId")) provided.skinTone = { newLabel: input.skinToneId ?? "", changed: (input.skinToneId ?? null) !== profile.skinToneId };
+  if (has("eyeColorId") || has("eyeColorSecondaryId")) {
+    // Les deux iris forment UN champ : changer l'un ou l'autre change le champ.
+    const nextPrimary = has("eyeColorId") ? (input.eyeColorId ?? null) : profile.eyeColorId;
+    const nextSecondary = has("eyeColorSecondaryId") ? (input.eyeColorSecondaryId ?? null) : profile.eyeColorSecondaryId;
+    provided.eyeColor = {
+      newLabel: [nextPrimary, nextSecondary].filter(Boolean).join(" / "),
+      changed: nextPrimary !== profile.eyeColorId || nextSecondary !== profile.eyeColorSecondaryId,
+    };
+  }
+  if (has("ninjaClassId")) provided.ninjaClass = { newLabel: input.ninjaClassId ?? "", changed: (input.ninjaClassId ?? null) !== profile.ninjaClassId };
   if (has("factionId")) provided.faction = { newLabel: input.factionId ?? "", changed: (input.factionId ?? null) !== profile.factionId };
   if (has("rankId")) provided.rank = { newLabel: input.rankId ?? "", changed: (input.rankId ?? null) !== profile.rankId };
   if (has("lifeStatus")) provided.lifeStatus = { newLabel: input.lifeStatus ?? "", changed: (input.lifeStatus ?? null) !== profile.lifeStatus };
@@ -394,6 +424,16 @@ export async function updateProfileAction(raw: unknown): Promise<ProfileActionRe
   }, { min: profile.heightMinCm, max: profile.heightMaxCm }, { min: input.heightMinCm ?? null, max: input.heightMaxCm ?? null });
   applyScalar("hairColor", () => { data.hairColorId = input.hairColorId ?? null; }, profile.hairColorId, input.hairColorId ?? null);
   applyScalar("skinTone", () => { data.skinToneId = input.skinToneId ?? null; }, profile.skinToneId, input.skinToneId ?? null);
+  applyScalar("eyeColor", () => {
+    if (has("eyeColorId")) data.eyeColorId = input.eyeColorId ?? null;
+    if (has("eyeColorSecondaryId")) data.eyeColorSecondaryId = input.eyeColorSecondaryId ?? null;
+    // Pas de second œil sans premier — la contrainte SQL le refuserait de
+    // toute façon, mais on ne veut pas d'une erreur 500 pour une case oubliée.
+    const primaryAfter = has("eyeColorId") ? (input.eyeColorId ?? null) : profile.eyeColorId;
+    if (!primaryAfter) data.eyeColorSecondaryId = null;
+  }, { primary: profile.eyeColorId, secondary: profile.eyeColorSecondaryId },
+     { primary: input.eyeColorId ?? null, secondary: input.eyeColorSecondaryId ?? null });
+  applyScalar("ninjaClass", () => { data.ninjaClassId = input.ninjaClassId ?? null; }, profile.ninjaClassId, input.ninjaClassId ?? null);
   applyScalar("faction", () => { data.factionId = input.factionId ?? null; }, profile.factionId, input.factionId ?? null);
   applyScalar("rank", () => { data.rankId = input.rankId ?? null; }, profile.rankId, input.rankId ?? null);
   applyScalar("lifeStatus", () => {
@@ -528,6 +568,8 @@ export async function updateProfileAction(raw: unknown): Promise<ProfileActionRe
       if (fieldKey === "height") { data.heightMinCm = null; data.heightMaxCm = null; }
       if (fieldKey === "hairColor") data.hairColorId = null;
       if (fieldKey === "skinTone") data.skinToneId = null;
+      if (fieldKey === "eyeColor") { data.eyeColorId = null; data.eyeColorSecondaryId = null; }
+      if (fieldKey === "ninjaClass") data.ninjaClassId = null;
       if (fieldKey === "faction") data.factionId = null;
       if (fieldKey === "rank") data.rankId = null;
       if (fieldKey === "lifeStatus") data.lifeStatus = null;
@@ -710,7 +752,7 @@ export async function addRelationAction(raw: unknown): Promise<ProfileActionResu
         const minimal = await createProfileRecord(tx, {
           characterFirstName: firstName,
           firstNameNorm: normalizeRefLabel(firstName),
-          title: `Dossier — ${firstName}`,
+          title: formatDossierTitle(firstName),
           createdById: current.session.userId,
           createdByGroupId: parent?.createdByGroupId ?? null,
         });
@@ -830,9 +872,12 @@ export async function requestProfileAccessAction(raw: unknown): Promise<ProfileA
 
   const profile = await prisma.characterProfile.findUnique({
     where: { id: input.profileId },
-    select: { id: true, code: true, characterFirstName: true, archivedAt: true },
+    select: { id: true, code: true, characterFirstName: true, archivedAt: true, createdByGroupId: true },
   });
   if (!profile || profile.archivedAt) return { ok: false, error: "Dossier introuvable." };
+  if (profile.createdByGroupId === input.groupId) {
+    return { ok: false, error: "Votre groupe a ouvert ce dossier : il le possède déjà." };
+  }
 
   try {
     await prisma.profilePurchaseRequest.create({
@@ -1154,50 +1199,17 @@ export async function createReferenceOptionAction(raw: unknown): Promise<Profile
 // Portrait
 // ─────────────────────────────────────────────────────────────
 
-const IMAGE_MAX_BYTES = 500 * 1024;
-const IMAGE_SIGNATURES: { mime: string; check: (b: Buffer) => boolean }[] = [
-  { mime: "image/png", check: (b) => b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) },
-  { mime: "image/jpeg", check: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
-  { mime: "image/webp", check: (b) => b.subarray(0, 4).toString("ascii") === "RIFF" && b.subarray(8, 12).toString("ascii") === "WEBP" },
-];
-
+/**
+ * Téléversement du portrait : UNE seule voie d'écriture, la galerie. Le
+ * fichier devient le portrait principal (type PORTRAIT). L'ancienne colonne
+ * `imageData` n'est plus écrite — elle reste lue tant que des dossiers
+ * antérieurs à la galerie n'ont pas de ProfileImage.
+ */
 export async function uploadProfileImageAction(formData: FormData): Promise<ProfileActionResult> {
-  const current = await guardManage();
-  if (!current) return { ok: false, error: "Permission refusée." };
-
-  const profileId = String(formData.get("profileId") ?? "");
-  const file = formData.get("image");
-  const profile = await prisma.characterProfile.findUnique({ where: { id: profileId } });
-  if (!profile || profile.archivedAt) return { ok: false, error: "Dossier introuvable." };
-  if (!(file instanceof File) || file.size === 0) return { ok: false, error: "Aucun fichier reçu." };
-  if (file.size > IMAGE_MAX_BYTES) return { ok: false, error: "Portrait trop lourd : 500 Ko maximum." };
-
-  const bytes = Buffer.from(await file.arrayBuffer());
-  const signature = IMAGE_SIGNATURES.find((s) => s.check(bytes));
-  if (!signature) return { ok: false, error: "Format refusé : PNG, JPG/JPEG ou WEBP uniquement." };
-
-  await prisma.$transaction([
-    prisma.characterProfile.update({
-      where: { id: profileId },
-      data: { imageData: bytes, imageMime: signature.mime, updatedById: current.session.userId },
-    }),
-    prisma.characterFieldIntel.upsert({
-      where: { profileId_fieldKey: { profileId, fieldKey: "image" } },
-      update: { knowledgeState: "KNOWN", updatedById: current.session.userId },
-      create: { profileId, fieldKey: "image", knowledgeState: "KNOWN", updatedById: current.session.userId },
-    }),
-  ]);
-  const meta = await requestMeta();
-  await audit({
-    actorId: current.session.userId,
-    action: "profile.image_changed",
-    resourceType: "characterProfile",
-    resourceId: profileId,
-    newValues: { mime: signature.mime, sizeBytes: bytes.length },
-    ...meta,
-  });
-  revalidatePath(`/profils/${profileId}`);
-  return { ok: true };
+  formData.set("type", "PORTRAIT");
+  formData.set("primary", "true");
+  const res = await uploadProfileGalleryImageAction(formData);
+  return res.ok ? { ok: true, profileId: String(formData.get("profileId") ?? "") } : { ok: false, error: res.error };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1242,9 +1254,41 @@ export async function deleteProfileAction(profileId: string): Promise<ProfileAct
   }
   const profile = await prisma.characterProfile.findUnique({
     where: { id: profileId },
-    select: { id: true, code: true, characterFirstName: true, characterLastName: true },
+    select: {
+      id: true,
+      code: true,
+      characterFirstName: true,
+      characterLastName: true,
+      _count: {
+        select: {
+          // Un accès PAYÉ est une dette de la Toile envers un groupe : on ne
+          // l'efface pas d'un clic. Idem pour une mission qui vise ce dossier —
+          // la supprimer laisserait une cible fantôme sans nom.
+          accessGrants: { where: { revokedAt: null, sourceType: "PURCHASED", priceRyos: { gt: 0 } } },
+          targetedBy: true,
+          missionsAsTarget: true,
+          missionsAsClient: true,
+        },
+      },
+    },
   });
   if (!profile) return { ok: false, error: "Dossier introuvable." };
+  if (profile._count.accessGrants > 0) {
+    return {
+      ok: false,
+      error:
+        `${profile._count.accessGrants} groupe(s) ont acheté ce dossier. ` +
+        "Révoquez ces accès (avec motif) ou archivez le dossier plutôt que de le supprimer.",
+    };
+  }
+  if (profile._count.targetedBy + profile._count.missionsAsTarget + profile._count.missionsAsClient > 0) {
+    return {
+      ok: false,
+      error:
+        "Des missions visent ou citent ce dossier. Détachez-les, ou archivez le dossier : " +
+        "la suppression laisserait des cibles sans nom.",
+    };
+  }
 
   await prisma.$transaction(async (tx) => {
     await tx.characterProfile.updateMany({
@@ -1498,6 +1542,47 @@ export async function mergeProfilesAction(input: {
       where: { clientProfileId: source.id },
       data: { clientProfileId: target.id },
     });
+
+    // ── Galerie ──
+    // Les images suivent le survivant ; si la cible a déjà un portrait
+    // principal, celles de la source perdent ce statut (un seul portrait
+    // vivant par dossier — l'index partiel le garantit).
+    const targetHasPrimary = await tx.profileImage.count({
+      where: { profileId: target.id, isPrimary: true, deletedAt: null },
+    });
+    const targetImageCount = await tx.profileImage.count({ where: { profileId: target.id, deletedAt: null } });
+    if (targetHasPrimary > 0) {
+      await tx.profileImage.updateMany({
+        where: { profileId: source.id, isPrimary: true },
+        data: { isPrimary: false },
+      });
+    }
+    const sourceImages = await tx.profileImage.findMany({
+      where: { profileId: source.id },
+      select: { id: true, sortOrder: true },
+      orderBy: { sortOrder: "asc" },
+    });
+    for (const [i, img] of sourceImages.entries()) {
+      await tx.profileImage.update({
+        where: { id: img.id },
+        data: { profileId: target.id, sortOrder: targetImageCount + i },
+      });
+    }
+    // Le portrait d'origine (colonne) de la source n'est jamais perdu : s'il
+    // existe et que la cible n'a rien, il devient une image de galerie.
+    if (source.imageData && source.imageMime && targetHasPrimary === 0 && targetImageCount === 0 && sourceImages.length === 0) {
+      await tx.profileImage.create({
+        data: {
+          profileId: target.id,
+          imageData: source.imageData,
+          imageMime: source.imageMime,
+          sizeBytes: source.imageData.length,
+          type: "PORTRAIT",
+          isPrimary: true,
+          uploadedById: current.session.userId,
+        },
+      });
+    }
 
     // Le dossier source devient une redirection archivée
     await tx.characterProfile.update({

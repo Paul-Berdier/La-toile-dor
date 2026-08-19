@@ -117,7 +117,8 @@ export function DossierCard({
 }
 
 /** Pourquoi le lecteur voit ce dossier — il ne doit pas se le demander. */
-function OriginBadge({ origin, isModerator }: { origin: GrantSource | null; isModerator: boolean }) {
+/** « ✓ Créé par votre groupe », « ✓ Dossier acquis »… — pourquoi on voit. */
+export function OriginBadge({ origin, isModerator }: { origin: GrantSource | null; isModerator: boolean }) {
   if (origin) {
     const owned = origin === "CREATED_BY_GROUP";
     return (

@@ -85,10 +85,15 @@ export const profileUpdateSchema = z
     heightMaxCm: z.number().int().min(30).max(400).nullable().optional(),
     hairColorId: z.string().cuid().nullable().optional(),
     skinToneId: z.string().cuid().nullable().optional(),
+    /** Iris (référentiel EYE_COLOR). Le second n'existe qu'en hétérochromie. */
+    eyeColorId: z.string().cuid().nullable().optional(),
+    eyeColorSecondaryId: z.string().cuid().nullable().optional(),
 
     // ── Affiliation ──
     factionId: z.string().cuid().nullable().optional(),
     rankId: z.string().cuid().nullable().optional(),
+    /** Classe de combat (référentiel NINJA_CLASS) — une seule en V1 */
+    ninjaClassId: z.string().cuid().nullable().optional(),
 
     // ── État vital & âge ──
     lifeStatus: z.enum(["ALIVE", "DEAD", "MISSING"]).nullable().optional(),
@@ -126,6 +131,11 @@ export const profileUpdateSchema = z
   .refine(
     (d) => d.ageMinNow == null || d.ageMaxNow == null || d.ageMinNow <= d.ageMaxNow,
     { message: "L'âge minimal ne peut pas dépasser le maximal.", path: ["ageMaxNow"] },
+  )
+  .refine(
+    // Deux fois la même couleur n'est pas une hétérochromie.
+    (d) => d.eyeColorSecondaryId == null || d.eyeColorSecondaryId !== d.eyeColorId,
+    { message: "Les deux yeux ont la même couleur : décochez l'hétérochromie.", path: ["eyeColorSecondaryId"] },
   );
 
 export type ProfileUpdateInput = z.infer<typeof profileUpdateSchema>;

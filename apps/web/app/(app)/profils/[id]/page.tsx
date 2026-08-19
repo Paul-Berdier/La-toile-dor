@@ -7,8 +7,10 @@ import {
 } from "@toile/shared";
 import { requireUser } from "@/lib/session";
 import { getDossierDetail, type RelationView } from "@/server/profiles/queries";
-import { DossierRow, FieldValue } from "@/components/profils/field-value";
+import { DossierRow, FieldValue, SwatchValue, swatchesOf } from "@/components/profils/field-value";
 import { RequestAccessPanel, RevokeGrantButton } from "@/components/profils/request-access";
+import { OriginBadge } from "@/components/profils/dossier-card";
+import { ProfileGallery } from "@/components/profils/gallery";
 import { buttonClasses } from "@/components/ui/button";
 
 export const dynamic = "force-dynamic";
@@ -91,15 +93,29 @@ export default async function DossierPage({
             </div>
           )}
           <div className="min-w-0 flex-1">
-            <p className="whitespace-nowrap font-mono-toile text-xs tracking-wider text-ink-faint">
-              Dossier {dossier.code}
-            </p>
-            <h1 className="mt-1 font-display text-2xl text-ink">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="whitespace-nowrap font-mono-toile text-xs tracking-wider text-ink-faint">
+                {dossier.code}
+              </p>
+              <OriginBadge origin={detail.access.origin} isModerator={viewer.canViewAll} />
+              {!detail.access.canView && (
+                <span className="inline-flex items-center gap-1 border border-border-strong px-1.5 py-0.5 font-mono-toile text-[0.6rem] uppercase tracking-wider text-ink-faint">
+                  <span aria-hidden>封</span> Non acquis
+                </span>
+              )}
+            </div>
+            <h1 className="mt-1 font-display text-2xl text-gold">{detail.title}</h1>
+            <p className="mt-0.5 text-sm text-ink">
               {dossier.firstName}
               {f.lastName.displayState === "VISIBLE" && (
-                <span className="ml-2">{f.lastName.displayValue}</span>
+                <span className="ml-1.5">{f.lastName.displayValue}</span>
               )}
-            </h1>
+            </p>
+            {detail.ownerGroupName && (
+              <p className="mt-1 text-[0.7rem] text-ink-faint">
+                Dossier ouvert par le groupe <span className="text-ink-muted">{detail.ownerGroupName}</span>
+              </p>
+            )}
             {/* Paires insécables : chaque couple label/valeur reste solidaire
                 lorsque la ligne se replie sur mobile. */}
             <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5 text-xs">
@@ -118,7 +134,7 @@ export default async function DossierPage({
               Mise à jour : {new Date(dossier.updatedAt).toLocaleString("fr-FR")}
             </p>
           </div>
-          {viewer.canManage && (
+          {detail.access.canEdit && (
             <Link
               href={`/profils/${dossier.id}/modifier${mission ? `?mission=${mission}` : ""}`}
               // Pleine largeur sous sm : superposé au titre en mobile sinon
@@ -172,40 +188,24 @@ export default async function DossierPage({
             <dl>
               <DossierRow label={PROFILE_FIELD_LABELS.image} field={dossier.image} tone={tone} />
               <DossierRow label={PROFILE_FIELD_LABELS.height} field={f.height} tone={tone} />
-              <DossierRow label={PROFILE_FIELD_LABELS.hairColor} field={f.hairColor} tone={tone}>
-                {f.hairColor.displayState === "VISIBLE" &&
-                f.hairColor.value &&
-                typeof f.hairColor.value === "object" &&
-                "colorHex" in (f.hairColor.value as object) ? (
-                  <span className={`inline-flex items-center gap-2 text-sm ${open ? "text-parchment-text" : "text-ink"}`}>
-                    {(f.hairColor.value as { colorHex: string | null }).colorHex && (
-                      <span
-                        aria-hidden
-                        className="inline-block h-3 w-3 border border-border-strong"
-                        style={{ background: (f.hairColor.value as { colorHex: string }).colorHex }}
-                      />
-                    )}
-                    {f.hairColor.displayValue}
-                  </span>
-                ) : undefined}
-              </DossierRow>
-              <DossierRow label={PROFILE_FIELD_LABELS.skinTone} field={f.skinTone} tone={tone}>
-                {f.skinTone.displayState === "VISIBLE" &&
-                f.skinTone.value &&
-                typeof f.skinTone.value === "object" ? (
-                  <span className={`inline-flex items-center gap-2 text-sm ${open ? "text-parchment-text" : "text-ink"}`}>
-                    {(f.skinTone.value as { colorHex: string | null }).colorHex && (
-                      <span
-                        aria-hidden
-                        className="inline-block h-3 w-3 border border-border-strong"
-                        style={{ background: (f.skinTone.value as { colorHex: string }).colorHex }}
-                      />
-                    )}
-                    {f.skinTone.displayValue}
-                  </span>
-                ) : undefined}
-              </DossierRow>
+              {/* Pastilles de couleur : uniquement quand la valeur est VISIBLE —
+                  la branche `undefined` laisse DossierRow rendre l'état censuré */}
+              {(["hairColor", "skinTone", "eyeColor"] as const).map((key) => (
+                <DossierRow key={key} label={PROFILE_FIELD_LABELS[key]} field={f[key]} tone={tone}>
+                  {f[key].displayState === "VISIBLE" ? (
+                    <SwatchValue swatches={swatchesOf(f[key].value)} label={f[key].displayValue} tone={tone} />
+                  ) : undefined}
+                </DossierRow>
+              ))}
             </dl>
+            {/* Galerie : la forme de `gallery` porte la confidentialité — pas
+                d'identifiant ni d'URL sans accès, donc rien à masquer ici */}
+            <div className={`mt-3 border-t pt-3 ${open ? "border-parchment-deep" : "border-border-default"}`}>
+              <h3 className={`mb-2 text-[0.7rem] uppercase tracking-wider ${open ? "text-parchment-text/60" : "text-ink-faint"}`}>
+                Galerie
+              </h3>
+              <ProfileGallery profileId={dossier.id} gallery={dossier.gallery} tone={tone} />
+            </div>
           </section>
 
           {/* Capacités */}
@@ -217,6 +217,7 @@ export default async function DossierPage({
               <DossierRow label={PROFILE_FIELD_LABELS.clanTechniques} field={f.clanTechniques} tone={tone} />
               <DossierRow label={PROFILE_FIELD_LABELS.signatureTechniques} field={f.signatureTechniques} tone={tone} />
               <DossierRow label={PROFILE_FIELD_LABELS.rank} field={f.rank} tone={tone} />
+              <DossierRow label={PROFILE_FIELD_LABELS.ninjaClass} field={f.ninjaClass} tone={tone} />
               <DossierRow label={PROFILE_FIELD_LABELS.combatStyles} field={f.combatStyles} tone={tone} />
               <DossierRow label={PROFILE_FIELD_LABELS.kenjutsuStyles} field={f.kenjutsuStyles} tone={tone} />
               <DossierRow label={PROFILE_FIELD_LABELS.artifacts} field={f.artifacts} tone={tone} />

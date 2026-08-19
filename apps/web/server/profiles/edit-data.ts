@@ -2,6 +2,7 @@ import "server-only";
 import { prisma } from "@toile/database";
 import { REFERENCE_TYPES, SOURCE_SCOPE_LABELS } from "@toile/shared";
 import type { RefOption, EditFormData } from "@/components/profils/edit-form";
+import { accessTargetSelect, decideAccess, toAccessTarget, type ProfileViewer } from "./access";
 
 async function loadRef(type: string): Promise<RefOption[]> {
   const rows = await prisma.profileReferenceOption.findMany({
@@ -22,11 +23,13 @@ async function loadRef(type: string): Promise<RefOption[]> {
 
 export async function loadProfileRefs() {
   const [
-    hairColors, skinTones, clans, chakraNatures, kekkeiGenkai, clanTechniques,
+    hairColors, skinTones, eyeColors, ninjaClasses, clans, chakraNatures, kekkeiGenkai, clanTechniques,
     combatStyles, kenjutsuStyles, artifacts, jutsuTypes, signatureTechniques, factions, ranks,
   ] = await Promise.all([
     loadRef(REFERENCE_TYPES.HAIR_COLOR),
     loadRef(REFERENCE_TYPES.SKIN_TONE),
+    loadRef(REFERENCE_TYPES.EYE_COLOR),
+    loadRef(REFERENCE_TYPES.NINJA_CLASS),
     loadRef(REFERENCE_TYPES.CLAN_FAMILY),
     loadRef(REFERENCE_TYPES.CHAKRA_NATURE),
     loadRef(REFERENCE_TYPES.KEKKEI_GENKAI),
@@ -39,13 +42,21 @@ export async function loadProfileRefs() {
     prisma.faction.findMany({ where: { isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
     prisma.playerLevel.findMany({ select: { id: true, label: true }, orderBy: { order: "asc" } }),
   ]);
-  return { hairColors, skinTones, clans, chakraNatures, kekkeiGenkai, clanTechniques, combatStyles, kenjutsuStyles, artifacts, jutsuTypes, signatureTechniques, factions, ranks };
+  return { hairColors, skinTones, eyeColors, ninjaClasses, clans, chakraNatures, kekkeiGenkai, clanTechniques, combatStyles, kenjutsuStyles, artifacts, jutsuTypes, signatureTechniques, factions, ranks };
 }
 
-export async function loadEditData(profileId: string): Promise<EditFormData | null> {
+/**
+ * Données du formulaire d'édition — pour un lecteur DONNÉ. Renvoie null si le
+ * dossier n'existe pas, est archivé, ou si ce lecteur n'a pas le droit de le
+ * modifier : les valeurs réelles (et les notes internes) ne sortent jamais
+ * d'ici pour quelqu'un qui ne pourrait que les lire, encore moins pour
+ * quelqu'un qui ne le pourrait pas du tout.
+ */
+export async function loadEditData(profileId: string, viewer: ProfileViewer): Promise<EditFormData | null> {
   const profile = await prisma.characterProfile.findUnique({
     where: { id: profileId },
     include: {
+      accessGrants: accessTargetSelect.accessGrants,
       traits: { include: { option: { select: { id: true, type: true } } } },
       fieldIntel: { select: { fieldKey: true, knowledgeState: true } },
       // Sert à déduire l'état des Subjutsu sur les dossiers antérieurs au suivi
@@ -53,6 +64,8 @@ export async function loadEditData(profileId: string): Promise<EditFormData | nu
     },
   });
   if (!profile || profile.archivedAt) return null;
+  const access = decideAccess(viewer, toAccessTarget(profile));
+  if (!access.canEdit) return null;
   const traitIds = (type: string) =>
     profile.traits.filter((t) => t.option.type === type).map((t) => t.optionId);
 
@@ -71,6 +84,8 @@ export async function loadEditData(profileId: string): Promise<EditFormData | nu
   inferKnown("height", profile.heightMinCm != null || profile.heightMaxCm != null);
   inferKnown("hairColor", profile.hairColorId != null);
   inferKnown("skinTone", profile.skinToneId != null);
+  inferKnown("eyeColor", profile.eyeColorId != null);
+  inferKnown("ninjaClass", profile.ninjaClassId != null);
   inferKnown("faction", profile.factionId != null);
   inferKnown("rank", profile.rankId != null);
   inferKnown("lifeStatus", profile.lifeStatus != null);
@@ -98,6 +113,9 @@ export async function loadEditData(profileId: string): Promise<EditFormData | nu
     heightMaxCm: profile.heightMaxCm,
     hairColorId: profile.hairColorId ?? "",
     skinToneId: profile.skinToneId ?? "",
+    eyeColorId: profile.eyeColorId ?? "",
+    eyeColorSecondaryId: profile.eyeColorSecondaryId ?? "",
+    ninjaClassId: profile.ninjaClassId ?? "",
     factionId: profile.factionId ?? "",
     rankId: profile.rankId ?? "",
     lifeStatus: profile.lifeStatus ?? "",

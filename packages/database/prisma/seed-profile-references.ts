@@ -23,6 +23,11 @@ interface RefDef {
   sourceScope?: ReferenceSourceScope;
   isUnique?: boolean;
   sortOrder?: number;
+  /**
+   * Le libellé appartient à la modération : le seed le pose à la création
+   * mais ne l'écrase plus ensuite (ex. renommer « Défenseur » en « Rempart »).
+   */
+  preserveLabel?: boolean;
 }
 
 function normalize(label: string): string {
@@ -64,6 +69,38 @@ const SKIN_TONES: RefDef[] = [
   sortOrder: (i + 1) * 10,
   sourceScope: "SERVER_CUSTOM" as const,
   descriptionShort: "Échelle neutre de teintes, du plus clair au plus profond.",
+}));
+
+// ── Couleurs des yeux : l'iris, jamais le dôjutsu ──
+// Un Sharingan ou un Byakugan se consigne en technique de clan ; ici on note
+// la couleur de naissance. « Autre » ferme la liste pour les cas rares.
+const EYE_COLORS: RefDef[] = [
+  { code: "BLACK", label: "Noir", colorHex: "#17120f" },
+  { code: "DARK_BROWN", label: "Brun foncé", colorHex: "#3b2414" },
+  { code: "BROWN", label: "Brun", colorHex: "#6b4424" },
+  { code: "HAZEL", label: "Noisette", colorHex: "#8b6a3a" },
+  { code: "AMBER", label: "Ambre", colorHex: "#c48a2a" },
+  { code: "GREEN", label: "Vert", colorHex: "#3f7a4a" },
+  { code: "BLUE", label: "Bleu", colorHex: "#3b6ea8" },
+  { code: "GRAY", label: "Gris", colorHex: "#8c8f94" },
+  { code: "RED", label: "Rouge", colorHex: "#a8262c" },
+  { code: "PURPLE", label: "Violet", colorHex: "#6b3f8a" },
+  { code: "WHITE", label: "Blanc", colorHex: "#e6e2da" },
+  { code: "GOLD", label: "Doré", colorHex: "#d4a838" },
+  { code: "OTHER", label: "Autre" },
+].map((d, i) => ({ ...d, sortOrder: (i + 1) * 10, sourceScope: "SERVER_CUSTOM" as const }));
+
+// ── Classes de combat : référentiel, pas enum — la modération peut renommer ──
+const NINJA_CLASSES: RefDef[] = [
+  { code: "HEALER", label: "Soigneur", descriptionShort: "Soins, soutien, survie du groupe." },
+  { code: "TRACKER", label: "Traqueur", descriptionShort: "Pistage, reconnaissance, capture." },
+  { code: "RAVAGER", label: "Ravageur", descriptionShort: "Offensive pure, dégâts, percée." },
+  { code: "DEFENDER", label: "Défenseur", descriptionShort: "Protection, contrôle, tenue de ligne." },
+].map((d, i) => ({
+  ...d,
+  sortOrder: (i + 1) * 10,
+  sourceScope: "SERVER_CUSTOM" as const,
+  preserveLabel: true,
 }));
 
 // ── Clans et familles ──
@@ -253,6 +290,8 @@ const ARTIFACTS: RefDef[] = [
 const ALL_REFERENCES: [string, RefDef[]][] = [
   ["HAIR_COLOR", HAIR_COLORS],
   ["SKIN_TONE", SKIN_TONES],
+  ["EYE_COLOR", EYE_COLORS],
+  ["NINJA_CLASS", NINJA_CLASSES],
   ["CLAN_FAMILY", CLANS],
   ["CHAKRA_NATURE", CHAKRA_NATURES],
   ["KEKKEI_GENKAI", KEKKEI_GENKAI],
@@ -271,8 +310,7 @@ export async function seedProfileReferences(prisma: PrismaClient): Promise<numbe
       await prisma.profileReferenceOption.upsert({
         where: { type_code: { type, code: def.code } },
         update: {
-          label: def.label,
-          normalizedLabel: normalize(def.label),
+          ...(def.preserveLabel ? {} : { label: def.label, normalizedLabel: normalize(def.label) }),
           aliases: def.aliases ?? [],
           kanji: def.kanji ?? null,
           romaji: def.romaji ?? null,

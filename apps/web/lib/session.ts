@@ -38,6 +38,18 @@ export async function requireUser(): Promise<CurrentUser> {
   return current;
 }
 
+/**
+ * Garde de ROUTE API : même règle que `requireUser` (session valide ET
+ * onboarding terminé), mais sans redirection — une route renvoie un statut.
+ * Les routes qui validaient seulement la session laissaient passer un compte
+ * encore en « bienvenue » ; la règle doit être la même des deux côtés.
+ */
+export async function getApiUser(): Promise<CurrentUser | null> {
+  const current = await getCurrentUser();
+  if (!current || !current.session.user.profileCompleted) return null;
+  return current;
+}
+
 /** Garde de page avec permission obligatoire. */
 export async function requireUserWith(permission: string): Promise<CurrentUser> {
   const current = await requireUser();

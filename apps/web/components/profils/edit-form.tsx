@@ -31,6 +31,10 @@ export interface EditFormData {
   heightMaxCm: number | null;
   hairColorId: string;
   skinToneId: string;
+  eyeColorId: string;
+  /** Second iris — vide hors hétérochromie */
+  eyeColorSecondaryId: string;
+  ninjaClassId: string;
   factionId: string;
   rankId: string;
   lifeStatus: string;
@@ -57,6 +61,8 @@ export interface EditFormData {
 interface Refs {
   hairColors: RefOption[];
   skinTones: RefOption[];
+  eyeColors: RefOption[];
+  ninjaClasses: RefOption[];
   clans: RefOption[];
   chakraNatures: RefOption[];
   kekkeiGenkai: RefOption[];
@@ -212,6 +218,8 @@ export function ProfileEditForm({
   /** Le dossier a été enregistré ailleurs pendant la saisie */
   const [stale, setStale] = useState(false);
   const [suggestion, setSuggestion] = useState<{ type: string; label: string } | null>(null);
+  // Coché d'office si le dossier porte déjà deux iris
+  const [heterochromia, setHeterochromia] = useState(Boolean(initial.eyeColorSecondaryId));
   const [isPending, startTransition] = useTransition();
 
   const set = <K extends keyof EditFormData>(key: K, value: EditFormData[K]) =>
@@ -269,6 +277,9 @@ export function ProfileEditForm({
         heightMaxCm: known("height") ? data.heightMaxCm : null,
         hairColorId: known("hairColor") ? data.hairColorId || null : null,
         skinToneId: known("skinTone") ? data.skinToneId || null : null,
+        eyeColorId: known("eyeColor") ? data.eyeColorId || null : null,
+        eyeColorSecondaryId: known("eyeColor") && data.eyeColorId ? data.eyeColorSecondaryId || null : null,
+        ninjaClassId: known("ninjaClass") ? data.ninjaClassId || null : null,
         factionId: known("faction") ? data.factionId || null : null,
         rankId: known("rank") ? data.rankId || null : null,
         lifeStatus: known("lifeStatus") ? data.lifeStatus || null : null,
@@ -435,6 +446,54 @@ export function ProfileEditForm({
               />
             </KnowledgeField>
 
+            <KnowledgeField fieldKey="eyeColor" state={stateOf("eyeColor")} onStateChange={(s) => setState("eyeColor", s)}>
+              <div className="space-y-2">
+                <ReferencePicker
+                  legend={data.eyeColorSecondaryId ? "Œil 1" : "Couleur des yeux"} hideLegend={!data.eyeColorSecondaryId}
+                  options={refs.eyeColors}
+                  selected={data.eyeColorId ? [data.eyeColorId] : []}
+                  onChange={(ids) => {
+                    const next = ids[ids.length - 1] ?? "";
+                    setValue("eyeColor", "eyeColorId", next);
+                    // Sans premier œil, pas de second : on évite d'envoyer un
+                    // état que la contrainte en base refuserait.
+                    if (!next) set("eyeColorSecondaryId", "");
+                  }}
+                  onSuggest={(label) => setSuggestion({ type: "EYE_COLOR", label })}
+                  referenceType="EYE_COLOR"
+                  canCreate={canManageReferences}
+                  onCreated={(o) => addOption("eyeColors", o)}
+                />
+                <label className="flex items-center gap-2 text-xs text-ink-muted">
+                  <input
+                    type="checkbox"
+                    checked={heterochromia}
+                    disabled={!data.eyeColorId}
+                    onChange={(e) => {
+                      setHeterochromia(e.target.checked);
+                      if (!e.target.checked) set("eyeColorSecondaryId", "");
+                    }}
+                  />
+                  Couleurs différentes (hétérochromie)
+                </label>
+                {heterochromia && data.eyeColorId && (
+                  <ReferencePicker
+                    legend="Œil 2"
+                    options={refs.eyeColors.filter((o) => o.id !== data.eyeColorId)}
+                    selected={data.eyeColorSecondaryId ? [data.eyeColorSecondaryId] : []}
+                    onChange={(ids) => set("eyeColorSecondaryId", ids[ids.length - 1] ?? "")}
+                    onSuggest={(label) => setSuggestion({ type: "EYE_COLOR", label })}
+                    referenceType="EYE_COLOR"
+                    canCreate={canManageReferences}
+                    onCreated={(o) => addOption("eyeColors", o)}
+                  />
+                )}
+                <p className="text-[0.65rem] text-ink-faint">
+                  Couleur de l&rsquo;iris uniquement — un dôjutsu se consigne dans les techniques de clan.
+                </p>
+              </div>
+            </KnowledgeField>
+
             <p className="text-[0.65rem] text-ink-faint">
               Le portrait se téléverse depuis la page du dossier.
             </p>
@@ -454,6 +513,13 @@ export function ProfileEditForm({
               <select aria-label="Grade" value={data.rankId} onChange={(e) => setValue("rank", "rankId", e.target.value)} className={input}>
                 <option value="">— choisir —</option>
                 {refs.ranks.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+              </select>
+            </KnowledgeField>
+
+            <KnowledgeField fieldKey="ninjaClass" state={stateOf("ninjaClass")} onStateChange={(s) => setState("ninjaClass", s)}>
+              <select aria-label="Classe" value={data.ninjaClassId} onChange={(e) => setValue("ninjaClass", "ninjaClassId", e.target.value)} className={input}>
+                <option value="">— choisir —</option>
+                {refs.ninjaClasses.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
               </select>
             </KnowledgeField>
 
@@ -803,6 +869,15 @@ function PermissionPreview({
       ["faction", "Faction", refs.factions.find((f) => f.id === data.factionId)?.name ?? ""],
       ["clans", "Clan", labelOf(refs.clans, data.clanIds)],
       ["hairColor", "Cheveux", refs.hairColors.find((o) => o.id === data.hairColorId)?.label ?? ""],
+      [
+        "eyeColor",
+        "Yeux",
+        [data.eyeColorId, data.eyeColorSecondaryId]
+          .map((id) => refs.eyeColors.find((o) => o.id === id)?.label)
+          .filter(Boolean)
+          .join(" / "),
+      ],
+      ["ninjaClass", "Classe", refs.ninjaClasses.find((o) => o.id === data.ninjaClassId)?.label ?? ""],
       ["kekkeiGenkai", "Kekkei Genkai", labelOf(refs.kekkeiGenkai, data.kekkeiGenkaiIds)],
       ["artifacts", "Artefact", labelOf(refs.artifacts, data.artifactIds)],
     ] as const;
