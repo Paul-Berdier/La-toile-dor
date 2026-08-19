@@ -1,16 +1,28 @@
 import "server-only";
 import { prisma } from "@toile/database";
-import { REFERENCE_TYPES, SOURCE_SCOPE_LABELS } from "@toile/shared";
+import {
+  computeCharacterAge,
+  formatDossierTitle,
+  REFERENCE_TYPES,
+  SOURCE_SCOPE_LABELS,
+} from "@toile/shared";
 import type { RefOption, EditFormData } from "@/components/profils/edit-form";
+import { getRpTimeConfig } from "@/server/rp-config";
+import { accessTargetSelect, decideAccess, toAccessTarget, type ProfileViewer } from "./access";
 
 async function loadRef(type: string): Promise<RefOption[]> {
   const rows = await prisma.profileReferenceOption.findMany({
-    where: { type, isActive: true },
+    // Une option désactivée reste nécessaire pour afficher et conserver les
+    // dossiers historiques qui l'utilisent déjà. Le sélecteur la montre comme
+    // telle, mais ne permet pas de l'ajouter à un nouveau dossier.
+    where: { type },
     orderBy: { sortOrder: "asc" },
   });
   return rows.map((r) => ({
     id: r.id,
+    code: r.code,
     label: r.label,
+    isActive: r.isActive,
     category: r.category,
     colorHex: r.colorHex,
     sourceScopeLabel: SOURCE_SCOPE_LABELS[r.sourceScope] ?? r.sourceScope,
@@ -22,11 +34,13 @@ async function loadRef(type: string): Promise<RefOption[]> {
 
 export async function loadProfileRefs() {
   const [
-    hairColors, skinTones, clans, chakraNatures, kekkeiGenkai, clanTechniques,
+    hairColors, skinTones, eyeColors, ninjaClasses, clans, chakraNatures, kekkeiGenkai, clanTechniques,
     combatStyles, kenjutsuStyles, artifacts, jutsuTypes, signatureTechniques, factions, ranks,
   ] = await Promise.all([
     loadRef(REFERENCE_TYPES.HAIR_COLOR),
     loadRef(REFERENCE_TYPES.SKIN_TONE),
+    loadRef(REFERENCE_TYPES.EYE_COLOR),
+    loadRef(REFERENCE_TYPES.NINJA_CLASS),
     loadRef(REFERENCE_TYPES.CLAN_FAMILY),
     loadRef(REFERENCE_TYPES.CHAKRA_NATURE),
     loadRef(REFERENCE_TYPES.KEKKEI_GENKAI),
@@ -36,16 +50,24 @@ export async function loadProfileRefs() {
     loadRef(REFERENCE_TYPES.LEGENDARY_ARTIFACT),
     loadRef(REFERENCE_TYPES.JUTSU_TYPE),
     loadRef(REFERENCE_TYPES.SIGNATURE_TECHNIQUE),
-    prisma.faction.findMany({ where: { isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    prisma.faction.findMany({ select: { id: true, name: true, isActive: true }, orderBy: { name: "asc" } }),
     prisma.playerLevel.findMany({ select: { id: true, label: true }, orderBy: { order: "asc" } }),
   ]);
-  return { hairColors, skinTones, clans, chakraNatures, kekkeiGenkai, clanTechniques, combatStyles, kenjutsuStyles, artifacts, jutsuTypes, signatureTechniques, factions, ranks };
+  return { hairColors, skinTones, eyeColors, ninjaClasses, clans, chakraNatures, kekkeiGenkai, clanTechniques, combatStyles, kenjutsuStyles, artifacts, jutsuTypes, signatureTechniques, factions, ranks };
 }
 
-export async function loadEditData(profileId: string): Promise<EditFormData | null> {
+/**
+ * Données du formulaire d'édition — pour un lecteur DONNÉ. Renvoie null si le
+ * dossier n'existe pas, est archivé, ou si ce lecteur n'a pas le droit de le
+ * modifier : les valeurs réelles (et les notes internes) ne sortent jamais
+ * d'ici pour quelqu'un qui ne pourrait que les lire, encore moins pour
+ * quelqu'un qui ne le pourrait pas du tout.
+ */
+export async function loadEditData(profileId: string, viewer: ProfileViewer): Promise<EditFormData | null> {
   const profile = await prisma.characterProfile.findUnique({
     where: { id: profileId },
     include: {
+      accessGrants: accessTargetSelect.accessGrants,
       traits: { include: { option: { select: { id: true, type: true } } } },
       fieldIntel: { select: { fieldKey: true, knowledgeState: true } },
       // Sert à déduire l'état des Subjutsu sur les dossiers antérieurs au suivi
@@ -53,8 +75,11 @@ export async function loadEditData(profileId: string): Promise<EditFormData | nu
     },
   });
   if (!profile || profile.archivedAt) return null;
+  const access = decideAccess(viewer, toAccessTarget(profile));
+  if (!access.canEdit) return null;
   const traitIds = (type: string) =>
     profile.traits.filter((t) => t.option.type === type).map((t) => t.optionId);
+  const age = computeCharacterAge(profile, new Date(), await getRpTimeConfig());
 
   // État de connaissance courant de chaque champ ; l'absence de ligne vaut
   // UNKNOWN, sauf si une valeur existe déjà (dossiers antérieurs au suivi).
@@ -71,6 +96,8 @@ export async function loadEditData(profileId: string): Promise<EditFormData | nu
   inferKnown("height", profile.heightMinCm != null || profile.heightMaxCm != null);
   inferKnown("hairColor", profile.hairColorId != null);
   inferKnown("skinTone", profile.skinToneId != null);
+  inferKnown("eyeColor", profile.eyeColorId != null);
+  inferKnown("ninjaClass", profile.ninjaClassId != null);
   inferKnown("faction", profile.factionId != null);
   inferKnown("rank", profile.rankId != null);
   inferKnown("lifeStatus", profile.lifeStatus != null);
@@ -91,6 +118,9 @@ export async function loadEditData(profileId: string): Promise<EditFormData | nu
     profileId: profile.id,
     // Sert au verrouillage optimiste lors de l'enregistrement
     version: profile.version,
+    title:
+      profile.title ??
+      formatDossierTitle(profile.characterFirstName, profile.characterLastName),
     firstName: profile.characterFirstName,
     lastName: profile.characterLastName ?? "",
     sexCode: profile.sexCode ?? "",
@@ -98,13 +128,23 @@ export async function loadEditData(profileId: string): Promise<EditFormData | nu
     heightMaxCm: profile.heightMaxCm,
     hairColorId: profile.hairColorId ?? "",
     skinToneId: profile.skinToneId ?? "",
+    eyeColorId: profile.eyeColorId ?? "",
+    eyeColorSecondaryId: profile.eyeColorSecondaryId ?? "",
+    ninjaClassId: profile.ninjaClassId ?? "",
     factionId: profile.factionId ?? "",
     rankId: profile.rankId ?? "",
     lifeStatus: profile.lifeStatus ?? "",
-    ageMode: profile.ageMode,
-    ageYearsNow: profile.ageYearsAtRef,
-    ageMinNow: profile.ageMinAtRef,
-    ageMaxNow: profile.ageMaxAtRef,
+    // Le formulaire parle d'âge ACTUEL. Lui renvoyer la valeur historique de
+    // référence ferait rajeunir le personnage au prochain enregistrement.
+    ageMode:
+      age.kind === "exact"
+        ? "AGE_AT_REFERENCE"
+        : age.kind === "range"
+          ? "AGE_RANGE_AT_REFERENCE"
+          : "UNKNOWN",
+    ageYearsNow: age.kind === "exact" ? age.years : null,
+    ageMinNow: age.kind === "range" ? age.minYears : null,
+    ageMaxNow: age.kind === "range" ? age.maxYears : null,
     clanIds: traitIds(REFERENCE_TYPES.CLAN_FAMILY),
     chakraNatureIds: traitIds(REFERENCE_TYPES.CHAKRA_NATURE),
     kekkeiGenkaiIds: traitIds(REFERENCE_TYPES.KEKKEI_GENKAI),
@@ -116,7 +156,9 @@ export async function loadEditData(profileId: string): Promise<EditFormData | nu
     details: profile.details ?? "",
     strengths: profile.strengths ?? "",
     weaknesses: profile.weaknesses ?? "",
-    internalNotes: profile.internalNotes ?? "",
+    // Réservées à la modération : un éditeur « groupe créateur » ne les reçoit
+    // jamais — pas même vides dans le HTML du formulaire.
+    internalNotes: access.canAdminister ? (profile.internalNotes ?? "") : "",
     fieldStates,
   };
 }

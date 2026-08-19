@@ -87,6 +87,51 @@ export function FieldValue({
 }
 
 /**
+ * Valeur VISIBLE d'un référentiel coloré (cheveux, peau, iris) : une ou deux
+ * pastilles devant le libellé. Deux pastilles = hétérochromie. À n'appeler que
+ * pour un champ VISIBLE — le composant n'a aucun moyen de censurer.
+ */
+export function SwatchValue({
+  swatches,
+  label,
+  tone = "dark",
+}: {
+  swatches: (string | null | undefined)[];
+  label: string;
+  tone?: "dark" | "parchment";
+}) {
+  const parchment = tone === "parchment";
+  const hexes = swatches.filter((hex): hex is string => Boolean(hex));
+  return (
+    <span className={`inline-flex items-center gap-2 text-sm ${parchment ? "text-parchment-text" : "text-ink"}`}>
+      {hexes.length > 0 && (
+        <span aria-hidden className="inline-flex">
+          {hexes.map((hex, i) => (
+            <span
+              key={`${hex}-${i}`}
+              className={`inline-block h-3 w-3 border border-border-strong ${i > 0 ? "-ml-1" : ""}`}
+              style={{ background: hex }}
+            />
+          ))}
+        </span>
+      )}
+      {label}
+    </span>
+  );
+}
+
+/** Extrait les teintes d'une valeur sérialisée (option simple ou paire d'iris). */
+export function swatchesOf(value: unknown): (string | null)[] {
+  if (!value || typeof value !== "object") return [];
+  if ("primary" in value) {
+    const pair = value as { primary: { colorHex: string | null }; secondary: { colorHex: string | null } | null };
+    return [pair.primary?.colorHex ?? null, pair.secondary?.colorHex ?? null];
+  }
+  if ("colorHex" in value) return [(value as { colorHex: string | null }).colorHex];
+  return [];
+}
+
+/**
  * Ligne « libellé : valeur » d'un dossier. Une valeur censurée occupe toute
  * la colonne de droite — c'est ce qui la distingue d'un « Inconnu » discret.
  */

@@ -34,9 +34,9 @@ test("depuis une mission : créer un dossier puis y verser un renseignement dat�
   await expect(page.getByText(new RegExp(`Renseignements de la mission.*${mission.code}`))).toBeVisible();
 
   // Création du dossier depuis ce contexte
-  await page.getByRole("button", { name: "Nouveau profil" }).click();
+  await page.getByRole("button", { name: "Nouveau dossier" }).click();
   await page.getByLabel("Prénom du personnage *").fill(NAME);
-  await page.getByRole("button", { name: "Créer et compléter maintenant" }).click();
+  await page.getByRole("button", { name: "Créer et compléter" }).click();
 
   // On arrive sur l'édition, toujours rattachée à la mission
   await page.waitForURL(/\/profils\/[a-z0-9]{20,}\/modifier\?mission=/);
@@ -73,5 +73,10 @@ test("depuis une mission : créer un dossier puis y verser un renseignement dat�
 
   // Le dossier affiche la source côté modération
   await page.goto(`/profils/${profile.id}`);
-  await expect(page.getByText(new RegExp(`mission ${mission.code}`)).first()).toBeVisible();
+  const moderationIntel = page
+    .getByRole("heading", { name: "Renseignements (modération)" })
+    .locator("..");
+  await expect(
+    moderationIntel.getByRole("listitem").filter({ hasText: `mission ${mission.code}` }),
+  ).toBeVisible();
 });

@@ -1103,7 +1103,10 @@ export async function submitReportAction(formData: FormData): Promise<ActionResu
   const current = await requireUser();
   const missionId = String(formData.get("missionId") ?? "");
   const content = String(formData.get("content") ?? "").trim();
-  const isFinal = formData.get("isFinal") === "true";
+  // Le rapport FINAL passe exclusivement par le parcours en trois étapes
+  // (finalizeMissionReportAction : sorts, renseignements, tout ou rien). Ici,
+  // seulement un point d'étape — quoi qu'envoie le client.
+  const isFinal = false;
   if (!content || content.length < 10 || content.length > 20_000) {
     return { ok: false, error: "Le rapport doit contenir entre 10 et 20 000 caractères." };
   }
@@ -1132,13 +1135,27 @@ export async function submitReportAction(formData: FormData): Promise<ActionResu
     images.push({ imageData: bytes, imageMime: mime, sizeBytes: bytes.length });
   }
 
-  const mission = await prisma.mission.findUnique({ where: { id: missionId } });
+  const mission = await prisma.mission.findUnique({
+    where: { id: missionId },
+    include: {
+      assignments: { where: { active: true }, select: { groupId: true } },
+    },
+  });
   if (!mission) return { ok: false, error: "Mission introuvable." };
 
   const ctx = await getAccessContext(current);
+  // Les affectations normalisées sont la source de vérité. L'ancien champ ne
+  // sert qu'aux missions qui n'ont encore aucune affectation active : le mêler
+  // aux données modernes rouvrirait l'accès à un ancien groupe désaffecté.
+  const assignedGroupIds =
+    mission.assignments.length > 0
+      ? mission.assignments.map((assignment) => assignment.groupId)
+      : mission.assignedGroupId
+        ? [mission.assignedGroupId]
+        : [];
   const authorized =
     ctx.isModerator ||
-    (mission.assignedGroupId != null && ctx.groupIds.has(mission.assignedGroupId));
+    assignedGroupIds.some((groupId) => ctx.groupIds.has(groupId));
   if (!authorized) return { ok: false, error: "Vous n'êtes pas affecté à cette mission." };
 
   await prisma.missionReport.create({

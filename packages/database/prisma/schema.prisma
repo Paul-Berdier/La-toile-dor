@@ -284,6 +284,10 @@ model Group {
   invitations Invitation[]
   profileRequests ProfilePurchaseRequest[] @relation("GroupProfileRequests")
   profileGrants   ProfileAccessGrant[]     @relation("GroupProfileGrants")
+  createdProfiles CharacterProfile[]       @relation("GroupCreatedProfiles")
+  intelContributions ProfileIntelContribution[] @relation("GroupIntelContributions")
+  reportDrafts       MissionReportDraft[]       @relation("GroupReportDrafts")
+  missionReports     MissionReport[]            @relation("GroupMissionReports")
 
   @@unique([factionId, name])
 }
@@ -465,6 +469,8 @@ model Mission {
   assignedGroup       Group?   @relation("MissionAssignedGroup", fields: [assignedGroupId], references: [id])
 
   targets       MissionTarget[]
+  profileImages ProfileImage[] @relation("ProfileImageSourceMission")
+  intelContributions ProfileIntelContribution[] @relation("ContributionSourceMission")
   visibility    MissionVisibility?
   claims        MissionClaim[]
   assignments   MissionAssignment[]
@@ -472,6 +478,7 @@ model Mission {
   attachments   MissionAttachment[]
   statusHistory MissionStatusHistory[]
   reports       MissionReport[]
+  reportDrafts  MissionReportDraft[]
   scores        MissionScore[]
   notifications NotificationDelivery[]
   intelSources  CharacterFieldIntel[]  @relation("IntelSourceMission")
@@ -664,17 +671,44 @@ model MissionStatusHistory {
 }
 
 model MissionReport {
-  id          String    @id @default(cuid())
-  missionId   String
-  authorId    String
-  content     String
-  submittedAt DateTime  @default(now())
-  isFinal     Boolean   @default(false)
+  id               String    @id @default(cuid())
+  missionId        String
+  authorId         String
+  // Groupe au nom duquel le rapport final est déposé. Null pour les rapports
+  // d'étape et les données historiques antérieures à cette notion.
+  reportingGroupId String?
+  // Charge structurée immuable du rapport final. Null pour les rapports
+  // d'étape et les rapports historiques créés avant ce parcours.
+  payload          Json?
+  content          String
+  submittedAt      DateTime  @default(now())
+  isFinal          Boolean   @default(false)
 
-  mission Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
-  images  MissionReportImage[]
+  mission        Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  reportingGroup Group?  @relation("GroupMissionReports", fields: [reportingGroupId], references: [id], onDelete: SetNull)
+  images         MissionReportImage[]
 
   @@index([missionId])
+  // PostgreSQL autorise plusieurs NULL : les rapports d'étape restent
+  // multiples, mais un groupe ne finalise qu'une fois une mission.
+  @@unique([missionId, reportingGroupId])
+}
+
+// Brouillon du rapport de fin de mission d'un groupe : sauvegardé au fil de
+// la saisie, effacé à la finalisation. Un seul par (mission, groupe) — deux
+// membres du même groupe travaillent sur le même brouillon.
+model MissionReportDraft {
+  id        String   @id @default(cuid())
+  missionId String
+  groupId   String
+  authorId  String
+  payload   Json
+  updatedAt DateTime @default(now()) @updatedAt
+
+  mission Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  group   Group   @relation("GroupReportDrafts", fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([missionId, groupId])
 }
 
 model MissionReportImage {
@@ -751,6 +785,9 @@ enum NotificationEvent {
   PROFILE_REQUEST_APPROVED
   PROFILE_REQUEST_REFUSED
   PROFILE_UPDATED
+  // Contribution de renseignement : reçue (modération) / tranchée (contributeur)
+  PROFILE_CONTRIBUTION_RECEIVED
+  PROFILE_CONTRIBUTION_REVIEWED
   MEMBER_PROMOTED
   MISSION_AVAILABLE
   CLAIM_ACCEPTED
@@ -964,12 +1001,110 @@ model ProfileReferenceOption {
   traits           CharacterProfileTrait[]
   hairProfiles     CharacterProfile[] @relation("ProfileHairColor")
   skinProfiles     CharacterProfile[] @relation("ProfileSkinTone")
+  eyeProfiles          CharacterProfile[] @relation("ProfileEyeColor")
+  eyeSecondaryProfiles CharacterProfile[] @relation("ProfileEyeColorSecondary")
+  classProfiles        CharacterProfile[] @relation("ProfileNinjaClass")
   techniques       CharacterSignatureTechnique[] @relation("TechniqueJutsuType")
   mergedSuggestions ProfileReferenceSuggestion[] @relation("SuggestionMergedInto")
 
   @@unique([type, code])
   @@unique([type, normalizedLabel])
   @@index([type, isActive, sortOrder])
+}
+
+// ── Images d'un dossier : portrait principal + galerie ──
+// Sort les octets de la table principale (ils étaient chargés à CHAQUE
+// lecture, y compris sans droit) et permet plusieurs images : autre apparence,
+// tenue, arme, preuve prise en mission. Copie du patron MissionReportImage.
+// Servies par une route gardée aux MÊMES règles que le dossier — une image
+// non visible ne produit ni URL, ni clé, ni octet.
+enum ProfileImageType {
+  PORTRAIT   // le visage, de face — un seul est « principal »
+  APPEARANCE // autre apparence, tenue, déguisement
+  EVIDENCE   // preuve visuelle rapportée d'une mission
+  OTHER
+}
+
+model ProfileImage {
+  id        String @id @default(cuid())
+  profileId String
+  imageData Bytes
+  imageMime String
+  sizeBytes Int
+  type      ProfileImageType @default(OTHER)
+  caption   String?
+  // Un seul portrait principal par dossier (index partiel en migration)
+  isPrimary Boolean @default(false)
+  sortOrder Int     @default(0)
+  // D'où vient l'image : mission d'origine, et qui l'a versée
+  sourceMissionId String?
+  uploadedById    String
+  createdAt       DateTime  @default(now())
+  // Suppression LOGIQUE : une preuve ne disparaît pas, elle se retire
+  deletedAt       DateTime?
+
+  profile       CharacterProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  sourceMission Mission?         @relation("ProfileImageSourceMission", fields: [sourceMissionId], references: [id], onDelete: SetNull)
+
+  @@index([profileId, deletedAt, sortOrder])
+  @@index([sourceMissionId])
+}
+
+// ── Contributions de renseignement ──
+// Un lecteur qui VOIT un dossier sans pouvoir le modifier (acquéreur, groupe
+// engagé en mission) propose une information. La modération, ou le groupe
+// créateur, tranche. Une contribution n'écrase JAMAIS la valeur en place
+// d'elle-même ; et quand elle la contredit, le contributeur ne l'apprend pas
+// — `conflictsWithExisting` reste côté modération.
+enum ProfileContributionSource {
+  GROUP   // un membre, au nom de son groupe
+  USER    // un membre, sans groupe (modération, cas rares)
+  MISSION // issue d'un rapport de fin de mission
+}
+
+enum ProfileContributionStatus {
+  PENDING_REVIEW // en attente de la modération
+  APPLIED        // écrite directement (auteur habilité : modération, groupe créateur)
+  ACCEPTED       // validée par la modération, puis écrite
+  MERGED         // fusionnée avec la valeur existante (textes, listes)
+  REJECTED       // refusée — la valeur en place reste
+  CONTRADICTORY  // le champ est marqué contradictoire, les deux versions gardées
+}
+
+model ProfileIntelContribution {
+  id        String @id @default(cuid())
+  profileId String
+  fieldKey  String
+  // Valeur proposée, forme JSON propre au champ (identifiants de référentiel,
+  // texte, plage…). Le libellé lisible est calculé à l'écriture pour la
+  // revue — il n'est montré qu'à qui voit le dossier.
+  proposedValue  Json
+  proposedLabel  String
+  // Ce que le contributeur affirme : « connu », ou « vérifié absent »
+  knowledgeState ProfileKnowledgeState @default(KNOWN)
+  confidence     IntelConfidence?
+  note           String?
+  sourceType     ProfileContributionSource
+  groupId        String?
+  contributorId  String
+  sourceMissionId String?
+  status         ProfileContributionStatus @default(PENDING_REVIEW)
+  // La valeur en place différait à la soumission. Jamais renvoyé au
+  // contributeur — c'est précisément l'information qu'il n'a pas le droit d'avoir.
+  conflictsWithExisting Boolean @default(false)
+  reviewedById String?
+  reviewedAt   DateTime?
+  reviewNote   String?
+  createdAt    DateTime @default(now())
+
+  profile       CharacterProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  group         Group?           @relation("GroupIntelContributions", fields: [groupId], references: [id], onDelete: SetNull)
+  sourceMission Mission?         @relation("ContributionSourceMission", fields: [sourceMissionId], references: [id], onDelete: SetNull)
+
+  @@index([profileId, status])
+  @@index([status, createdAt])
+  @@index([groupId])
+  @@index([sourceMissionId])
 }
 
 // Proposition d'une nouvelle entrée de référentiel (validée par un super-mod)
@@ -1015,6 +1150,17 @@ model CharacterProfile {
   heightMaxCm Int?
   hairColorId String?
   skinToneId  String?
+  // Couleur des yeux : apparence physique normale, JAMAIS un dôjutsu (le
+  // Sharingan reste un Kekkei Genkai). L'œil 2 n'est renseigné qu'en cas
+  // d'hétérochromie — un seul renseignement « yeux » pour les deux, sinon
+  // l'hétérochromie deviendrait achetable à part (CHECK en migration).
+  eyeColorId          String?
+  eyeColorSecondaryId String?
+
+  // ── Classe du serveur (Soigneur / Traqueur / Ravageur / Défenseur) ──
+  // Classification propre au RP, pas canonique Naruto. Référentiel
+  // administrable NINJA_CLASS ; une seule classe principale en V1.
+  ninjaClassId String?
 
   // ── Affiliation ──
   factionId String? // réutilise la table Faction existante
@@ -1040,6 +1186,14 @@ model CharacterProfile {
   internalNotes String?
 
   createdById String?
+  // Groupe qui a ouvert le dossier. C'est LUI le propriétaire — pas la
+  // personne : un membre qui part ne l'emporte pas, un nouveau membre en
+  // hérite. Nullable : les dossiers antérieurs à la notion, ouverts par la
+  // modération, n'ont pas de propriétaire et c'est exact — on ne devine pas.
+  createdByGroupId String?
+  // Titre du dossier — « L'Éclat Rouge ». Public au même titre que le prénom.
+  // Généré à la création s'il n'est pas fourni (« Dossier — Akira Hoki »).
+  title       String?
   updatedById String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @default(now()) @updatedAt
@@ -1047,13 +1201,19 @@ model CharacterProfile {
   mergedIntoId String? // redirection après fusion de doublons
   version     Int       @default(1)
 
+  createdByGroup Group? @relation("GroupCreatedProfiles", fields: [createdByGroupId], references: [id], onDelete: SetNull)
   hairColor ProfileReferenceOption? @relation("ProfileHairColor", fields: [hairColorId], references: [id])
   skinTone  ProfileReferenceOption? @relation("ProfileSkinTone", fields: [skinToneId], references: [id])
+  eyeColor          ProfileReferenceOption? @relation("ProfileEyeColor", fields: [eyeColorId], references: [id], onDelete: SetNull)
+  eyeColorSecondary ProfileReferenceOption? @relation("ProfileEyeColorSecondary", fields: [eyeColorSecondaryId], references: [id], onDelete: SetNull)
+  ninjaClass        ProfileReferenceOption? @relation("ProfileNinjaClass", fields: [ninjaClassId], references: [id], onDelete: SetNull)
   faction   Faction?     @relation("ProfileFaction", fields: [factionId], references: [id])
   rank      PlayerLevel? @relation("ProfileRank", fields: [rankId], references: [id])
   mergedInto CharacterProfile? @relation("ProfileMerge", fields: [mergedIntoId], references: [id])
   mergedFrom CharacterProfile[] @relation("ProfileMerge")
 
+  images        ProfileImage[]
+  contributions ProfileIntelContribution[]
   fieldIntel    CharacterFieldIntel[]
   traits        CharacterProfileTrait[]
   techniques    CharacterSignatureTechnique[]
@@ -1070,6 +1230,7 @@ model CharacterProfile {
   @@index([firstNameNorm])
   @@index([archivedAt])
   @@index([factionId])
+  @@index([createdByGroupId])
 }
 
 // État de connaissance par champ (fieldKey ∈ @toile/shared PROFILE_FIELD_KEYS).
@@ -1191,6 +1352,17 @@ model ProfilePurchaseRequest {
 
 // Autorisation d'accès d'un groupe à un dossier (révocable).
 // Un seul accès actif par (profil, groupe) — index partiel en migration.
+// D'où vient un accès. Un lecteur ne doit jamais se demander POURQUOI il voit
+// un dossier ; et la modération doit distinguer un accès payé d'un accès gagné
+// au prix du sang. Défaut PURCHASED : c'était la seule origine possible avant
+// cette colonne, hors mission (backfillée par requestId, voir la migration).
+enum ProfileGrantSource {
+  CREATED_BY_GROUP  // le groupe a ouvert le dossier
+  PURCHASED         // demande d'achat approuvée
+  MODERATOR_GRANTED // offert ou restauré par la modération
+  MISSION_GRANTED   // gagné à la clôture d'une mission
+}
+
 model ProfileAccessGrant {
   id          String  @id @default(cuid())
   profileId   String
@@ -1198,13 +1370,19 @@ model ProfileAccessGrant {
   grantedById String
   requestId   String?
   priceRyos   Int?
+  sourceType  ProfileGrantSource @default(PURCHASED)
+  // Ce qui a produit l'octroi, selon la source : id de mission pour
+  // MISSION_GRANTED, de demande pour PURCHASED — pour remonter à la cause.
+  sourceId    String?
   grantedAt   DateTime @default(now())
   revokedAt   DateTime?
   revokedById String?
+  revokedReason String?
 
   profile CharacterProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
   group   Group            @relation("GroupProfileGrants", fields: [groupId], references: [id], onDelete: Cascade)
 
   @@index([groupId, revokedAt])
   @@index([profileId, revokedAt])
+  @@index([profileId, sourceType])
 }

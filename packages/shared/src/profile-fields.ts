@@ -79,6 +79,15 @@ export function resolveFieldDisplay(
 
 // ── Clés de champ du dossier (CharacterFieldIntel.fieldKey) ──
 
+/**
+ * Champs PUBLICS : connus de tous dès qu'ils sont renseignés, sans accès au
+ * dossier — avec le titre et le prénom, ce sont les seules vraies valeurs
+ * qu'un lecteur sans accès reçoit. Le nom en fait partie : il figure déjà
+ * dans le titre (« Dossier — Akira Hoki »). Ils gardent un état de
+ * connaissance (on peut ignorer un nom) mais ne valent rien au barème.
+ */
+export const PUBLIC_FIELD_KEYS = ["lastName"] as const;
+
 export const PROFILE_FIELD_KEYS = [
   "lastName",
   "sex",
@@ -86,8 +95,10 @@ export const PROFILE_FIELD_KEYS = [
   "height",
   "hairColor",
   "skinTone",
+  "eyeColor",
   "faction",
   "clans",
+  "ninjaClass",
   "rank",
   "lifeStatus",
   "age",
@@ -106,6 +117,36 @@ export const PROFILE_FIELD_KEYS = [
 
 export type ProfileFieldKey = (typeof PROFILE_FIELD_KEYS)[number];
 
+const NONE_CAPABLE_FIELDS = new Set<ProfileFieldKey>([
+  "lastName",
+  "hairColor",
+  "ninjaClass",
+  "faction",
+  "rank",
+  "clans",
+  "chakraNatures",
+  "kekkeiGenkai",
+  "clanTechniques",
+  "signatureTechniques",
+  "combatStyles",
+  "kenjutsuStyles",
+  "artifacts",
+]);
+
+/**
+ * « Vérifié : il n'y en a pas » n'est proposé que lorsqu'une absence a un
+ * sens métier. Une personne n'a pas « aucune taille », « aucun âge », « aucun
+ * sexe » ou « aucun état vital » : dans ces cas, l'information est inconnue.
+ */
+export function canDeclareNoneForField(key: ProfileFieldKey): boolean {
+  return NONE_CAPABLE_FIELDS.has(key);
+}
+
+/** Le champ est-il lisible par tous (sans accès au dossier) ? */
+export function isPublicProfileField(key: ProfileFieldKey): boolean {
+  return (PUBLIC_FIELD_KEYS as readonly string[]).includes(key);
+}
+
 export const PROFILE_FIELD_LABELS: Record<ProfileFieldKey, string> = {
   lastName: "Nom",
   sex: "Sexe",
@@ -113,8 +154,10 @@ export const PROFILE_FIELD_LABELS: Record<ProfileFieldKey, string> = {
   height: "Taille",
   hairColor: "Cheveux",
   skinTone: "Couleur de peau",
+  eyeColor: "Couleur des yeux",
   faction: "Faction",
   clans: "Clan",
+  ninjaClass: "Classe",
   rank: "Grade",
   lifeStatus: "État",
   age: "Âge",
@@ -136,6 +179,12 @@ export const PROFILE_FIELD_LABELS: Record<ProfileFieldKey, string> = {
 export const REFERENCE_TYPES = {
   HAIR_COLOR: "HAIR_COLOR",
   SKIN_TONE: "SKIN_TONE",
+  // Couleur de l'iris, PAS le dôjutsu : un Sharingan est une technique de
+  // clan, l'œil qui le porte reste noir ou rouge de naissance.
+  EYE_COLOR: "EYE_COLOR",
+  // Classe de combat (Soigneur, Traqueur, Ravageur, Défenseur). Référentiel
+  // administrable et non enum SQL : la modération pourra renommer ou ajouter.
+  NINJA_CLASS: "NINJA_CLASS",
   CLAN_FAMILY: "CLAN_FAMILY",
   CHAKRA_NATURE: "CHAKRA_NATURE",
   KEKKEI_GENKAI: "KEKKEI_GENKAI",
@@ -157,6 +206,8 @@ export type ReferenceType = (typeof REFERENCE_TYPES)[keyof typeof REFERENCE_TYPE
 export const REFERENCE_TYPE_LABELS: Record<ReferenceType, string> = {
   HAIR_COLOR: "Couleurs de cheveux",
   SKIN_TONE: "Teintes de peau",
+  EYE_COLOR: "Couleurs des yeux",
+  NINJA_CLASS: "Classes ninja",
   CLAN_FAMILY: "Clans et familles",
   CHAKRA_NATURE: "Natures de chakra",
   KEKKEI_GENKAI: "Kekkei Genkai",
@@ -227,4 +278,10 @@ export function formatHeight(minCm: number | null, maxCm: number | null): string
 /** Code lisible PRF-000142 depuis le compteur interne. */
 export function formatProfileCode(codeNumber: number): string {
   return `PRF-${String(codeNumber).padStart(6, "0")}`;
+}
+
+/** « Dossier — Akira Hoki » : le titre par défaut d'un dossier, jamais vide. */
+export function formatDossierTitle(firstName: string, lastName?: string | null): string {
+  const name = [firstName, lastName].map((s) => s?.trim()).filter(Boolean).join(" ");
+  return name ? `Dossier — ${name}` : "Dossier";
 }

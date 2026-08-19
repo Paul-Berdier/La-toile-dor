@@ -3,12 +3,18 @@ import { notFound } from "next/navigation";
 import {
   PROFILE_FIELD_LABELS,
   CONFIDENCE_LABELS,
+  GRANT_SOURCE_LABELS,
+  type GrantSource,
   type IntelConfidenceCode,
 } from "@toile/shared";
 import { requireUser } from "@/lib/session";
 import { getDossierDetail, type RelationView } from "@/server/profiles/queries";
-import { DossierRow, FieldValue } from "@/components/profils/field-value";
+import { DossierRow, FieldValue, SwatchValue, swatchesOf } from "@/components/profils/field-value";
 import { RequestAccessPanel, RevokeGrantButton } from "@/components/profils/request-access";
+import { OriginBadge } from "@/components/profils/dossier-card";
+import { ProfileGallery } from "@/components/profils/gallery";
+import { ContributeIntel, MyContributions, PendingContributions } from "@/components/profils/contribute";
+import { loadProfileRefs } from "@/server/profiles/edit-data";
 import { buttonClasses } from "@/components/ui/button";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +34,10 @@ export default async function DossierPage({
 
   const { dossier, relations, viewer, internal, requestableGroups } = detail;
   const f = dossier.fields;
+  // Référentiels pour la palette « + Ajouter un renseignement » — chargés
+  // seulement si le lecteur peut contribuer : un lecteur sans accès n'a pas
+  // besoin des listes, et ne doit pas voir le bouton.
+  const contributeRefs = detail.access.canContribute ? await loadProfileRefs() : null;
 
   // Colonne latérale : gestion des accès (modération) ou, pour tout autre
   // lecteur, l'état du dossier (possédé, scellé, demande en cours).
@@ -46,6 +56,13 @@ export default async function DossierPage({
   const headingCls = open
     ? "mb-2 border-b border-parchment-deep pb-1.5 font-display text-sm tracking-widest text-blood uppercase"
     : "mb-2 font-display text-sm tracking-widest text-gold uppercase";
+
+  // « Modifier » par section : ouvre le formulaire sur la bonne rubrique —
+  // seulement pour qui peut modifier (modération, groupe créateur).
+  const editHref = (section: string) =>
+    detail.access.canEdit
+      ? `/profils/${dossier.id}/modifier?section=${section}${mission ? `&mission=${mission}` : ""}`
+      : null;
 
   const relationGroups: { key: RelationView["group"]; position: string }[] = [
     { key: "parents", position: "haut" },
@@ -91,15 +108,29 @@ export default async function DossierPage({
             </div>
           )}
           <div className="min-w-0 flex-1">
-            <p className="whitespace-nowrap font-mono-toile text-xs tracking-wider text-ink-faint">
-              Dossier {dossier.code}
-            </p>
-            <h1 className="mt-1 font-display text-2xl text-ink">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="whitespace-nowrap font-mono-toile text-xs tracking-wider text-ink-faint">
+                {dossier.code}
+              </p>
+              <OriginBadge origin={detail.access.origin} isModerator={viewer.canViewAll} />
+              {!detail.access.canView && (
+                <span className="inline-flex items-center gap-1 border border-border-strong px-1.5 py-0.5 font-mono-toile text-[0.6rem] uppercase tracking-wider text-ink-faint">
+                  <span aria-hidden>封</span> Non acquis
+                </span>
+              )}
+            </div>
+            <h1 className="mt-1 font-display text-2xl text-gold">{detail.title}</h1>
+            <p className="mt-0.5 text-sm text-ink">
               {dossier.firstName}
               {f.lastName.displayState === "VISIBLE" && (
-                <span className="ml-2">{f.lastName.displayValue}</span>
+                <span className="ml-1.5">{f.lastName.displayValue}</span>
               )}
-            </h1>
+            </p>
+            {detail.ownerGroupName && (
+              <p className="mt-1 text-[0.7rem] text-ink-faint">
+                Dossier ouvert par le groupe <span className="text-ink-muted">{detail.ownerGroupName}</span>
+              </p>
+            )}
             {/* Paires insécables : chaque couple label/valeur reste solidaire
                 lorsque la ligne se replie sur mobile. */}
             <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5 text-xs">
@@ -116,9 +147,14 @@ export default async function DossierPage({
             </dl>
             <p className="mt-2 whitespace-nowrap font-mono-toile text-[0.6rem] text-ink-faint">
               Mise à jour : {new Date(dossier.updatedAt).toLocaleString("fr-FR")}
+              {detail.completion && (
+                <span className="ml-3" title="Part des champs renseignés">
+                  · complétude {Math.round((detail.completion.known / detail.completion.total) * 100)} %
+                </span>
+              )}
             </p>
           </div>
-          {viewer.canManage && (
+          {detail.access.canEdit && (
             <Link
               href={`/profils/${dossier.id}/modifier${mission ? `?mission=${mission}` : ""}`}
               // Pleine largeur sous sm : superposé au titre en mobile sinon
@@ -137,9 +173,18 @@ export default async function DossierPage({
         }`}
       >
         <div className="space-y-5">
+          {/* Navigation entre sections : ancres (accessibles, sans JS), collante sur grand écran */}
+          <nav aria-label="Sections du dossier" className="sticky top-0 z-10 -mx-1 flex gap-1 overflow-x-auto bg-base/95 px-1 py-2 backdrop-blur">
+            {SECTION_NAV.filter((s) => s.id !== "renseignement" || detail.access.canContribute).map((s) => (
+              <a key={s.id} href={`#${s.id}`} className="whitespace-nowrap border border-border-default px-2 py-1 text-[0.7rem] uppercase tracking-wider text-ink-faint hover:border-gold hover:text-gold">
+                {s.label}
+              </a>
+            ))}
+          </nav>
+
           {/* Identité */}
-          <section className={sectionCls}>
-            <h2 className={headingCls}>Identité</h2>
+          <section className={sectionCls} id="identite">
+            <SectionHeading cls={headingCls} title="Identité" editHref={editHref("identite")} />
             <dl>
               <div
                 className={`flex items-baseline justify-between gap-3 border-b py-1.5 ${
@@ -167,56 +212,41 @@ export default async function DossierPage({
           </section>
 
           {/* Signalement */}
-          <section className={sectionCls}>
-            <h2 className={headingCls}>Signalement</h2>
+          <section className={sectionCls} id="signalement">
+            <SectionHeading cls={headingCls} title="Signalement" editHref={editHref("signalement")} />
             <dl>
               <DossierRow label={PROFILE_FIELD_LABELS.image} field={dossier.image} tone={tone} />
               <DossierRow label={PROFILE_FIELD_LABELS.height} field={f.height} tone={tone} />
-              <DossierRow label={PROFILE_FIELD_LABELS.hairColor} field={f.hairColor} tone={tone}>
-                {f.hairColor.displayState === "VISIBLE" &&
-                f.hairColor.value &&
-                typeof f.hairColor.value === "object" &&
-                "colorHex" in (f.hairColor.value as object) ? (
-                  <span className={`inline-flex items-center gap-2 text-sm ${open ? "text-parchment-text" : "text-ink"}`}>
-                    {(f.hairColor.value as { colorHex: string | null }).colorHex && (
-                      <span
-                        aria-hidden
-                        className="inline-block h-3 w-3 border border-border-strong"
-                        style={{ background: (f.hairColor.value as { colorHex: string }).colorHex }}
-                      />
-                    )}
-                    {f.hairColor.displayValue}
-                  </span>
-                ) : undefined}
-              </DossierRow>
-              <DossierRow label={PROFILE_FIELD_LABELS.skinTone} field={f.skinTone} tone={tone}>
-                {f.skinTone.displayState === "VISIBLE" &&
-                f.skinTone.value &&
-                typeof f.skinTone.value === "object" ? (
-                  <span className={`inline-flex items-center gap-2 text-sm ${open ? "text-parchment-text" : "text-ink"}`}>
-                    {(f.skinTone.value as { colorHex: string | null }).colorHex && (
-                      <span
-                        aria-hidden
-                        className="inline-block h-3 w-3 border border-border-strong"
-                        style={{ background: (f.skinTone.value as { colorHex: string }).colorHex }}
-                      />
-                    )}
-                    {f.skinTone.displayValue}
-                  </span>
-                ) : undefined}
-              </DossierRow>
+              {/* Pastilles de couleur : uniquement quand la valeur est VISIBLE —
+                  la branche `undefined` laisse DossierRow rendre l'état censuré */}
+              {(["hairColor", "skinTone", "eyeColor"] as const).map((key) => (
+                <DossierRow key={key} label={PROFILE_FIELD_LABELS[key]} field={f[key]} tone={tone}>
+                  {f[key].displayState === "VISIBLE" ? (
+                    <SwatchValue swatches={swatchesOf(f[key].value)} label={f[key].displayValue} tone={tone} />
+                  ) : undefined}
+                </DossierRow>
+              ))}
             </dl>
+            {/* Galerie : la forme de `gallery` porte la confidentialité — pas
+                d'identifiant ni d'URL sans accès, donc rien à masquer ici */}
+            <div className={`mt-3 border-t pt-3 ${open ? "border-parchment-deep" : "border-border-default"}`}>
+              <h3 className={`mb-2 text-[0.7rem] uppercase tracking-wider ${open ? "text-parchment-text/60" : "text-ink-faint"}`}>
+                Galerie
+              </h3>
+              <ProfileGallery profileId={dossier.id} gallery={dossier.gallery} tone={tone} />
+            </div>
           </section>
 
           {/* Capacités */}
-          <section className={sectionCls}>
-            <h2 className={headingCls}>Capacités</h2>
+          <section className={sectionCls} id="capacites">
+            <SectionHeading cls={headingCls} title="Capacités" editHref={editHref("capacites")} />
             <dl>
               <DossierRow label={PROFILE_FIELD_LABELS.chakraNatures} field={f.chakraNatures} tone={tone} />
               <DossierRow label={PROFILE_FIELD_LABELS.kekkeiGenkai} field={f.kekkeiGenkai} tone={tone} />
               <DossierRow label={PROFILE_FIELD_LABELS.clanTechniques} field={f.clanTechniques} tone={tone} />
               <DossierRow label={PROFILE_FIELD_LABELS.signatureTechniques} field={f.signatureTechniques} tone={tone} />
               <DossierRow label={PROFILE_FIELD_LABELS.rank} field={f.rank} tone={tone} />
+              <DossierRow label={PROFILE_FIELD_LABELS.ninjaClass} field={f.ninjaClass} tone={tone} />
               <DossierRow label={PROFILE_FIELD_LABELS.combatStyles} field={f.combatStyles} tone={tone} />
               <DossierRow label={PROFILE_FIELD_LABELS.kenjutsuStyles} field={f.kenjutsuStyles} tone={tone} />
               <DossierRow label={PROFILE_FIELD_LABELS.artifacts} field={f.artifacts} tone={tone} />
@@ -231,6 +261,7 @@ export default async function DossierPage({
                   {(f.techniques.value as {
                     id: string; name: string; shortDescription: string | null;
                     typeLabel: string | null; rank: string | null;
+                    confidence: string | null; knowledgeState: string;
                   }[]).map((technique) => (
                     <li key={technique.id} className={`border p-2.5 ${open ? "border-parchment-deep bg-parchment-deep/30" : "border-border-default bg-elevated"}`}>
                       <p className={`text-sm ${open ? "text-parchment-text" : "text-ink"}`}>
@@ -240,6 +271,14 @@ export default async function DossierPage({
                         )}
                         {technique.typeLabel && (
                           <span className={`ml-2 text-xs ${open ? "text-parchment-text/60" : "text-ink-faint"}`}>{technique.typeLabel}</span>
+                        )}
+                        {technique.confidence && technique.confidence !== "CONFIRMED" && (
+                          <span className={`ml-2 border px-1 text-[0.6rem] uppercase tracking-wider ${open ? "border-parchment-deep text-parchment-text/70" : "border-border-default text-ink-faint"}`}>
+                            {CONFIDENCE_LABELS[technique.confidence as IntelConfidenceCode] ?? technique.confidence}
+                          </span>
+                        )}
+                        {technique.knowledgeState === "CONFLICTING" && (
+                          <span className="ml-2 border border-blood/60 px-1 text-[0.6rem] uppercase tracking-wider text-blood-bright">contradictoire</span>
                         )}
                       </p>
                       {technique.shortDescription && (
@@ -258,10 +297,8 @@ export default async function DossierPage({
           </section>
 
           {/* Réseau relationnel : fils dorés + vue liste accessible */}
-          <section className={sectionCls}>
-            <h2 className={headingCls}>
-              Réseau relationnel
-            </h2>
+          <section className={sectionCls} id="relations">
+            <SectionHeading cls={headingCls} title="Réseau relationnel" editHref={detail.access.canEdit ? `/profils/${dossier.id}/modifier#relations` : null} />
             {relations.length === 0 ? (
               <p className={`text-xs italic ${open ? "text-parchment-text/50" : "text-ink-faint"}`}>
                 Aucun lien répertorié.
@@ -325,8 +362,8 @@ export default async function DossierPage({
           </section>
 
           {/* Analyse */}
-          <section className={sectionCls}>
-            <h2 className={headingCls}>Analyse</h2>
+          <section className={sectionCls} id="analyse">
+            <SectionHeading cls={headingCls} title="Analyse" editHref={editHref("analyse")} />
             {(["details", "strengths", "weaknesses"] as const).map((key) => (
               <div key={key} className="mb-3 last:mb-0">
                 <h3 className={`text-[0.7rem] uppercase tracking-wider ${open ? "text-parchment-text/60" : "text-ink-faint"}`}>
@@ -342,6 +379,57 @@ export default async function DossierPage({
               </div>
             ))}
           </section>
+
+          {/* Renseignement : contributions (lecteurs autorisés) et historique */}
+          {detail.access.canContribute && (
+            <section className={sectionCls} id="renseignement">
+              <h2 className={headingCls}>Renseignement</h2>
+              {contributeRefs && (
+                <ContributeIntel
+                  profileId={dossier.id}
+                  refs={contributeRefs}
+                  groups={viewer.groupIds.map((gid) => ({ id: gid, name: viewer.groupNames.get(gid) ?? "Groupe" }))}
+                  directWrite={detail.access.canEdit}
+                  sourceMissionId={mission}
+                />
+              )}
+              {detail.contributions.pending.length > 0 && (
+                <div className="mt-4">
+                  <h3 className={`mb-2 text-[0.7rem] uppercase tracking-wider ${open ? "text-parchment-text/60" : "text-ink-faint"}`}>
+                    Propositions à trancher ({detail.contributions.pending.length})
+                  </h3>
+                  <PendingContributions rows={detail.contributions.pending} />
+                </div>
+              )}
+              {detail.contributions.mine.length > 0 && (
+                <div className="mt-4">
+                  <h3 className={`mb-2 text-[0.7rem] uppercase tracking-wider ${open ? "text-parchment-text/60" : "text-ink-faint"}`}>
+                    Mes contributions
+                  </h3>
+                  <MyContributions rows={detail.contributions.mine} />
+                </div>
+              )}
+              {detail.history.length > 0 && (
+                <details className="mt-4">
+                  <summary className={`cursor-pointer text-[0.7rem] uppercase tracking-wider ${open ? "text-parchment-text/60 hover:text-blood" : "text-ink-faint hover:text-gold"}`}>
+                    Historique des mises à jour ({detail.history.length})
+                  </summary>
+                  <ul className="mt-2 space-y-1 text-[0.7rem]">
+                    {detail.history.map((h) => (
+                      <li key={h.id} className={open ? "text-parchment-text/80" : "text-ink-muted"}>
+                        <span className="font-mono-toile">{new Date(h.createdAt).toLocaleString("fr-FR")}</span>
+                        {" — "}<span className={open ? "text-parchment-text" : "text-ink"}>{h.fieldLabel}</span>
+                        {h.authorName && <span className={open ? "text-parchment-text/60" : "text-ink-faint"}> · {h.authorName}</span>}
+                        {h.sourceMissionCode && <span className={open ? "text-parchment-text/60" : "text-ink-faint"}> · mission {h.sourceMissionCode}</span>}
+                        {h.confidence && <span className={open ? "text-parchment-text/60" : "text-ink-faint"}> · {CONFIDENCE_LABELS[h.confidence as IntelConfidenceCode] ?? h.confidence}</span>}
+                        {h.justification && <span className={open ? "text-parchment-text/60" : "text-ink-faint"}> — {h.justification}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </section>
+          )}
 
           {/* Renseignements : modération uniquement */}
           {internal && (
@@ -414,15 +502,22 @@ export default async function DossierPage({
                       <span aria-hidden className="mr-1 text-sm text-gold-dim">両</span>
                       {detail.estimate.price.toLocaleString("fr-FR")}
                     </p>
-                    <p className="text-[0.65rem] text-ink-faint">
-                      {detail.estimate.knownCount} renseignement
-                      {detail.estimate.knownCount > 1 ? "s" : ""}
-                      {detail.estimate.relationCount > 0 &&
-                        `, ${detail.estimate.relationCount} lien${detail.estimate.relationCount > 1 ? "s" : ""}`}
-                      {detail.estimate.gradeLabel &&
-                        ` · ${detail.estimate.gradeLabel} (×${detail.estimate.gradeMultiplier.toFixed(1)})`}
-                    </p>
-                    {viewer.canViewAll && (
+                    {/* Le détail n'existe que dans la forme « full », servie
+                        aux seuls lecteurs qui voient déjà le dossier. Un
+                        acheteur potentiel n'a que le montant : le nombre de
+                        renseignements ou le grade lui diraient ce qu'il
+                        vient précisément acheter. */}
+                    {detail.estimate.scope === "full" && (
+                      <p className="text-[0.65rem] text-ink-faint">
+                        {detail.estimate.knownCount} renseignement
+                        {detail.estimate.knownCount > 1 ? "s" : ""}
+                        {detail.estimate.relationCount > 0 &&
+                          `, ${detail.estimate.relationCount} lien${detail.estimate.relationCount > 1 ? "s" : ""}`}
+                        {detail.estimate.gradeLabel &&
+                          ` · ${detail.estimate.gradeLabel} (×${detail.estimate.gradeMultiplier.toFixed(1)})`}
+                      </p>
+                    )}
+                    {detail.estimate.scope === "full" && viewer.canViewAll && (
                       <details className="mt-2">
                         <summary className="cursor-pointer text-[0.65rem] text-ink-faint hover:text-gold">
                           Détail du calcul
@@ -483,16 +578,29 @@ export default async function DossierPage({
               )}
               <ul className="space-y-2">
                 {internal.grants.map((grant) => (
-                  <li key={grant.id} className="flex items-center justify-between gap-2 text-xs">
+                  <li key={grant.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
                     <span className={grant.revokedAt ? "text-ink-faint line-through" : "text-ink-muted"}>
                       {grant.groupName}
+                      <span className="ml-1 font-mono-toile text-[0.6rem] uppercase tracking-wider text-ink-faint">
+                        {GRANT_SOURCE_LABELS[grant.sourceType as GrantSource] ?? grant.sourceType}
+                      </span>
                       {grant.priceRyos != null && (
                         <span className="ml-1 font-mono-toile text-gold">
                           {grant.priceRyos.toLocaleString("fr-FR")} ryōs
                         </span>
                       )}
+                      {grant.revokedReason && (
+                        <span className="ml-1 text-[0.65rem] text-ink-faint no-underline">— {grant.revokedReason}</span>
+                      )}
                     </span>
-                    {!grant.revokedAt && <RevokeGrantButton grantId={grant.id} />}
+                    {!grant.revokedAt && (
+                      <RevokeGrantButton
+                        grantId={grant.id}
+                        groupName={grant.groupName}
+                        disabled={grant.sourceType === "CREATED_BY_GROUP"}
+                        disabledReason="Groupe créateur"
+                      />
+                    )}
                   </li>
                 ))}
               </ul>
@@ -501,6 +609,29 @@ export default async function DossierPage({
         </aside>
       </div>
     </main>
+  );
+}
+
+const SECTION_NAV = [
+  { id: "identite", label: "Identité" },
+  { id: "signalement", label: "Signalement" },
+  { id: "capacites", label: "Capacités" },
+  { id: "relations", label: "Relations" },
+  { id: "analyse", label: "Analyse" },
+  { id: "renseignement", label: "Renseignement" },
+] as const;
+
+/** Titre de section avec, pour qui le peut, le lien « Modifier » vers la bonne rubrique. */
+function SectionHeading({ cls, title, editHref }: { cls: string; title: string; editHref: string | null }) {
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <h2 className={cls}>{title}</h2>
+      {editHref && (
+        <Link href={editHref} className="shrink-0 text-[0.65rem] uppercase tracking-wider text-ink-faint hover:text-gold">
+          Modifier
+        </Link>
+      )}
+    </div>
   );
 }
 

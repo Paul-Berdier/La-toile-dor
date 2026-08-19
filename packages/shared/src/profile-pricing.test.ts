@@ -1,13 +1,31 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_PROFILE_PRICING,
+  PRICING_GROUPS,
   gradeMultiplier,
   priceProfile,
   type ProfilePricing,
 } from "./profile-pricing";
+import { PROFILE_FIELD_KEYS, isPublicProfileField } from "./profile-fields";
 
 const P = DEFAULT_PROFILE_PRICING;
 const empty = { knownFields: [], relationGradeRanks: [], gradeRank: null };
+
+describe("barème — chaque champ de dossier a un prix", () => {
+  // Le barème est un Partial<Record> : le compilateur laisse passer l'oubli.
+  // Un champ ajouté aux dossiers sans ligne ici serait vendu gratuitement.
+  it.each(PROFILE_FIELD_KEYS)("le champ « %s » figure au barème par défaut", (key) => {
+    expect(P.fieldValues[key]).toBeTypeOf("number");
+    // Un champ PUBLIC ne se vend pas : il vaut zéro, pas « oublié ».
+    if (isPublicProfileField(key)) expect(P.fieldValues[key]).toBe(0);
+    else expect(P.fieldValues[key]).toBeGreaterThan(0);
+  });
+
+  it("chaque champ du barème est rangé dans un groupe explicable", () => {
+    const grouped = new Set(PRICING_GROUPS.flatMap((g) => g.fields));
+    for (const key of PROFILE_FIELD_KEYS) expect(grouped.has(key), key).toBe(true);
+  });
+});
 
 describe("priceProfile — un dossier vide ne vaut que son ouverture", () => {
   it("prix plancher quand rien n'est renseigné", () => {

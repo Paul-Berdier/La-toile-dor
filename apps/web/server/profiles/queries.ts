@@ -1,10 +1,24 @@
 import "server-only";
 import { prisma } from "@toile/database";
 import type { Prisma } from "@toile/database";
-import { normalizeRefLabel } from "@toile/shared";
+import {
+  PROFILE_FIELD_KEYS,
+  PROFILE_FIELD_LABELS,
+  formatDossierTitle,
+  normalizeRefLabel,
+  type GrantSource,
+  type ProfileFieldKey,
+} from "@toile/shared";
 import type { CurrentUser } from "@/lib/session";
 import { getRpTimeConfig } from "@/server/rp-config";
-import { getProfileViewer, canViewProfileValues, type ProfileViewer } from "./access";
+import {
+  getProfileViewer,
+  canViewProfileValues,
+  decideAccess,
+  toAccessTarget,
+  type ProfileViewer,
+  type AccessDecision,
+} from "./access";
 import { dossierInclude, serializeDossier, type SerializedDossier } from "./serializer";
 import { estimateProfilePrice, type ProfileEstimate } from "./pricing";
 
@@ -44,18 +58,24 @@ export interface ProfileListFilters {
 export interface ProfileListRow {
   id: string;
   code: string;
-  firstName: string;
   /**
-   * Nom de famille — renseigné UNIQUEMENT pour un lecteur autorisé. Le nom
-   * est un renseignement comme un autre : il n'existe pas dans la charge utile
-   * envoyée à un lecteur sans accès (même garantie que le sérialiseur).
+   * Titre, prénom et nom sont les TROIS seules vraies valeurs publiques d'un
+   * dossier (règle du produit). Tout le reste est « Inconnu » ou « ??? » pour
+   * qui n'a pas accès.
    */
-  lastName?: string;
+  title: string;
+  firstName: string;
+  lastName: string | null;
   canViewValues: boolean;
   hasVisiblePortrait: boolean;
   updatedAt: string;
-  /** Chefs/agents : état d'accès de leurs groupes */
-  accessBadge: "granted" | "pending" | "refused" | null;
+  /**
+   * Pourquoi le lecteur voit ce dossier — le lecteur ne doit pas se le
+   * demander. `null` s'il ne le voit pas, ou le voit par fonction.
+   */
+  accessOrigin: GrantSource | null;
+  /** Chefs/agents : état d'une demande de leurs groupes, s'il y en a une */
+  accessBadge: "pending" | "refused" | null;
   /** Modération uniquement */
   intelCount?: number;
   pendingRequests?: number;
@@ -81,25 +101,43 @@ export async function listProfiles(
 
   if (filters.q) {
     const norm = normalizeRefLabel(filters.q);
+    // Titre, prénom, nom et code : les quatre champs PUBLICS d'un dossier.
+    // Chercher dessus ne révèle rien — ils s'affichent à tous sur la liste.
     where.OR = [
       { firstNameNorm: { contains: norm } },
+      { characterLastName: { contains: filters.q, mode: "insensitive" } },
+      { title: { contains: filters.q, mode: "insensitive" } },
       { code: { contains: filters.q.toUpperCase() } },
     ];
-    // Le nom de famille n'est cherchable que par la modération : sinon un
-    // lecteur pourrait deviner un nom protégé par essais successifs.
-    if (viewer.canViewAll) {
-      where.OR.push({ characterLastName: { contains: filters.q, mode: "insensitive" } });
-    }
   }
 
-  // Filtres avancés : STRICTEMENT modération — un chef ne peut pas déduire
-  // une faction protégée via un filtre ou un compteur.
-  if (viewer.canViewAll) {
+  // ── Filtres sur des champs PROTÉGÉS ──
+  // Un lecteur peut filtrer par classe, faction, clan… mais UNIQUEMENT parmi
+  // les dossiers qu'il voit déjà. Sinon « tous les Ravageurs » révélerait
+  // lesquels des dossiers verrouillés en sont — une fuite par différence de
+  // résultats. On restreint donc d'abord l'ensemble, puis on filtre dedans :
+  // les dossiers scellés ne sont tout simplement pas dans la base de recherche.
+  const protectedFilterRequested =
+    Boolean(filters.factionId || filters.rankId || filters.lifeStatus || filters.sexCode) ||
+    Boolean(filters.withPortrait) ||
+    Boolean(filters.clanOptionId) ||
+    (filters.traitOptionIds?.length ?? 0) > 0 ||
+    (filters.minIntel ?? 0) > 0;
+
+  if (protectedFilterRequested) {
+    if (!viewer.canViewAll) {
+      where.id = { in: [...viewer.grantedProfileIds, ...viewer.createdProfileIds] };
+    }
     if (filters.factionId) where.factionId = filters.factionId;
     if (filters.rankId) where.rankId = filters.rankId;
     if (filters.lifeStatus) where.lifeStatus = filters.lifeStatus as never;
     if (filters.sexCode) where.sexCode = filters.sexCode as never;
-    if (filters.withPortrait) where.imageMime = { not: null };
+    const and: Prisma.CharacterProfileWhereInput[] = [];
+    if (filters.withPortrait) {
+      // Portrait en galerie OU ancienne colonne : les deux comptent. En AND
+      // séparé pour ne pas écraser le OR de la recherche textuelle.
+      and.push({ OR: [{ images: { some: { deletedAt: null } } }, { imageMime: { not: null } }] });
+    }
 
     // Traits cumulés : une clause par trait, sinon Prisma ne garderait que le
     // dernier `some` et « Fûton ET Sharingan » deviendrait « Sharingan ».
@@ -107,9 +145,8 @@ export async function listProfiles(
       ...(filters.clanOptionId ? [filters.clanOptionId] : []),
       ...(filters.traitOptionIds ?? []),
     ].filter(Boolean);
-    if (traitIds.length > 0) {
-      where.AND = traitIds.map((optionId) => ({ traits: { some: { optionId } } }));
-    }
+    for (const optionId of traitIds) and.push({ traits: { some: { optionId } } });
+    if (and.length > 0) where.AND = and;
 
     if (filters.minIntel && filters.minIntel > 0) {
       where.fieldIntel = { some: { knowledgeState: "KNOWN" } };
@@ -119,7 +156,7 @@ export async function listProfiles(
   // Filtre d'accès pour chefs/agents (basé sur LEURS groupes uniquement)
   if (!viewer.canViewAll && filters.access) {
     if (filters.access === "granted") {
-      where.id = { in: [...viewer.grantedProfileIds] };
+      where.id = { in: [...viewer.grantedProfileIds, ...viewer.createdProfileIds] };
     } else {
       where.purchaseRequests = {
         some: {
@@ -144,11 +181,22 @@ export async function listProfiles(
     select: {
       id: true,
       code: true,
+      title: true,
       characterFirstName: true,
       characterLastName: true,
+      createdByGroupId: true,
+      archivedAt: true,
       imageMime: true,
       updatedAt: true,
-      _count: { select: { fieldIntel: true } },
+      _count: { select: { fieldIntel: true, images: { where: { deletedAt: null } } } },
+      // Octrois des groupes du lecteur seulement : de quoi décider et dire
+      // POURQUOI il voit, sans charger ceux des autres groupes.
+      accessGrants: viewer.canViewAll
+        ? false
+        : {
+            where: { groupId: { in: viewer.groupIds }, revokedAt: null },
+            select: { groupId: true, sourceType: true, revokedAt: true },
+          },
       purchaseRequests: viewer.canViewAll
         ? { where: { status: "PENDING" }, select: { id: true } }
         : {
@@ -161,28 +209,36 @@ export async function listProfiles(
   });
 
   const rows: ProfileListRow[] = profiles.map((profile) => {
-    const canView = canViewProfileValues(viewer, profile.id);
+    // La MÊME règle que le détail, nourrie des octrois du lecteur
+    const decision = decideAccess(viewer, {
+      id: profile.id,
+      createdByGroupId: profile.createdByGroupId,
+      archivedAt: profile.archivedAt,
+      grants: (profile.accessGrants ?? []) as {
+        groupId: string;
+        sourceType: GrantSource;
+        revokedAt: Date | null;
+      }[],
+    });
+    const canView = decision.canView;
     let accessBadge: ProfileListRow["accessBadge"] = null;
-    if (!viewer.canViewAll) {
-      if (viewer.grantedProfileIds.has(profile.id)) accessBadge = "granted";
-      else {
-        const last = profile.purchaseRequests[0] as { status?: string } | undefined;
-        if (last?.status === "PENDING") accessBadge = "pending";
-        else if (last?.status === "REFUSED") accessBadge = "refused";
-      }
+    if (!viewer.canViewAll && !canView) {
+      const last = profile.purchaseRequests[0] as { status?: string } | undefined;
+      if (last?.status === "PENDING") accessBadge = "pending";
+      else if (last?.status === "REFUSED") accessBadge = "refused";
     }
     return {
       id: profile.id,
       code: profile.code,
+      title: profile.title ?? formatDossierTitle(profile.characterFirstName, profile.characterLastName),
       firstName: profile.characterFirstName,
-      // La clé n'est ajoutée que si le lecteur y a droit ET que le nom est
-      // renseigné : rien à masquer côté client, il n'y a rien à masquer.
-      ...(canView && profile.characterLastName
-        ? { lastName: profile.characterLastName }
-        : {}),
+      // Le nom est PUBLIC, au même titre que le prénom et le titre : ce sont
+      // les trois seules vraies valeurs qu'un lecteur sans accès reçoit.
+      lastName: profile.characterLastName,
       canViewValues: canView,
-      hasVisiblePortrait: canView && profile.imageMime != null,
+      hasVisiblePortrait: canView && (profile._count.images > 0 || profile.imageMime != null),
       updatedAt: profile.updatedAt.toISOString(),
+      accessOrigin: decision.origin,
       accessBadge,
       ...(viewer.canViewAll
         ? {
@@ -245,8 +301,10 @@ export interface DossierDetail {
       id: string;
       groupName: string;
       priceRyos: number | null;
+      sourceType: string;
       grantedAt: string;
       revokedAt: string | null;
+      revokedReason: string | null;
     }[];
   };
   /** Chefs : leurs groupes sans accès (pour demander l'achat) */
@@ -261,6 +319,65 @@ export interface DossierDetail {
    * compte n'est débité, le règlement se fait en jeu.
    */
   estimate: ProfileEstimate | null;
+  /**
+   * Ce que le lecteur peut faire, décidé UNE fois par la règle centrale.
+   * `origin` dit pourquoi il voit : le lecteur ne doit pas se le demander.
+   */
+  access: AccessDecision;
+  /** Titre public du dossier — jamais nul en sortie, généré s'il manque */
+  title: string;
+  /** Groupe propriétaire : nom seulement, et seulement s'il en a un */
+  ownerGroupName: string | null;
+  /**
+   * Contributions — pour un lecteur AUTORISÉ seulement (sinon tableau vide) :
+   * les siennes (et leur sort), et, s'il peut trancher, celles en attente.
+   */
+  contributions: {
+    mine: ContributionView[];
+    pending: ContributionView[];
+  };
+  /**
+   * Historique lisible — lecteurs autorisés : qui a changé quoi, quand, avec
+   * quelle confiance. Les valeurs brutes (old/new) restent côté modération.
+   */
+  history: HistoryEntry[];
+  /**
+   * Score de complétude : part des champs connus. Lecteurs autorisés
+   * seulement — pour les autres, ce serait un second compte à côté de
+   * sealedCount, et la soustraction parlerait.
+   */
+  completion: { known: number; total: number } | null;
+}
+
+export interface ContributionView {
+  id: string;
+  fieldKey: string;
+  fieldLabel: string;
+  proposedLabel: string;
+  knowledgeState: string;
+  confidence: string | null;
+  note: string | null;
+  status: string;
+  sourceType: string;
+  groupName: string | null;
+  contributorName: string;
+  sourceMissionCode: string | null;
+  /** Revue uniquement : la valeur en place différait à la soumission */
+  conflictsWithExisting?: boolean;
+  reviewNote: string | null;
+  createdAt: string;
+  reviewedAt: string | null;
+}
+
+export interface HistoryEntry {
+  id: string;
+  fieldKey: string;
+  fieldLabel: string;
+  justification: string | null;
+  confidence: string | null;
+  authorName: string | null;
+  sourceMissionCode: string | null;
+  createdAt: string;
 }
 
 export async function getDossierDetail(
@@ -278,6 +395,9 @@ export async function getDossierDetail(
       relationsTo: {
         include: { fromProfile: { select: { id: true, code: true, characterFirstName: true, archivedAt: true } } },
       },
+      // Ce dont la règle d'accès a besoin, et rien de plus
+      accessGrants: { select: { groupId: true, sourceType: true, revokedAt: true } },
+      createdByGroup: { select: { name: true } },
     },
   });
   if (!profile) return null;
@@ -288,12 +408,15 @@ export async function getDossierDetail(
   }
   if (profile.archivedAt) return null;
 
-  const canView = canViewProfileValues(viewer, profile.id);
+  // UNE décision, prise par la règle centrale — pas une déduction locale.
+  const access = decideAccess(viewer, toAccessTarget(profile));
+  const canView = access.canView;
   const rpConfig = await getRpTimeConfig();
   const dossier = serializeDossier(profile, viewer, canView, rpConfig);
 
-  // Relations : prénom du profil lié toujours visible ; le TYPE est voilé
-  // pour un lecteur sans accès au dossier consulté.
+  // Relations = renseignement protégé. Un lecteur sans accès ne reçoit ni
+  // identifiant, ni profil lié, ni topologie (parent/enfant/fratrie) : aucun
+  // masquage CSS ne doit pouvoir reconstituer ces données.
   const relations: RelationView[] = [];
   const push = (
     relationId: string,
@@ -309,37 +432,50 @@ export async function getDossierDetail(
       related: { id: related.id, code: related.code, firstName: related.characterFirstName },
     });
   };
-  for (const rel of profile.relationsFrom) {
-    if (rel.type === "PARENT_OF") push(rel.id, "children", rel.toProfile);
-    else if (rel.type === "CREATOR_OF") push(rel.id, "creations", rel.toProfile);
-    else push(rel.id, "siblings", rel.toProfile);
-  }
-  for (const rel of profile.relationsTo) {
-    if (rel.type === "PARENT_OF") push(rel.id, "parents", rel.fromProfile);
-    else if (rel.type === "CREATOR_OF") push(rel.id, "creators", rel.fromProfile);
-    else push(rel.id, "siblings", rel.fromProfile);
+  if (canView) {
+    for (const rel of profile.relationsFrom) {
+      if (rel.type === "PARENT_OF") push(rel.id, "children", rel.toProfile);
+      else if (rel.type === "CREATOR_OF") push(rel.id, "creations", rel.toProfile);
+      else push(rel.id, "siblings", rel.toProfile);
+    }
+    for (const rel of profile.relationsTo) {
+      if (rel.type === "PARENT_OF") push(rel.id, "parents", rel.fromProfile);
+      else if (rel.type === "CREATOR_OF") push(rel.id, "creators", rel.fromProfile);
+      else push(rel.id, "siblings", rel.fromProfile);
+    }
   }
 
   // Volume de renseignements détenus : un compte, jamais un contenu — il est
-  // déjà déductible des « ??? » affichés, et motive la demande d'accès.
+  // déjà déductible des « ??? » affichés (règle assumée, cf.
+  // docs/PROFILE_VISIBILITY.md), et motive la demande d'accès. Il ne doit en
+  // revanche JAMAIS voisiner un autre compte (nombre de champs « connus », par
+  // ex.) : par soustraction, la différence dirait combien de champs sont
+  // « Aucun » ou « contradictoire ».
   const sealedCount = profile.fieldIntel.filter(
     (row) => row.knowledgeState !== "UNKNOWN",
   ).length;
-  // Dernier tarif consenti (indicatif) : le prix reste fixé par la modération
-  const lastGrant = canView
-    ? null
-    : await prisma.profileAccessGrant.findFirst({
+  // Dernier tarif consenti : MODÉRATION seulement. Pour un lecteur sans accès,
+  // c'est un renseignement sur les AUTRES groupes — lequel a acheté, et à quel
+  // prix. Le chef a désormais l'estimation du barème comme base de
+  // négociation ; il n'a pas besoin de connaître le marché des autres.
+  const lastGrant = viewer.canViewAll
+    ? await prisma.profileAccessGrant.findFirst({
         where: { profileId: profile.id, priceRyos: { not: null } },
         orderBy: { grantedAt: "desc" },
         select: { priceRyos: true },
-      });
+      })
+    : null;
   const lastPrice = lastGrant?.priceRyos ?? null;
 
   // Le barème n'intéresse que ceux qui négocient : la modération qui fixe le
   // prix, et le chef qui s'apprête à le payer. Inutile de le calculer pour un
   // agent qui ne peut rien acheter.
+  // La forme dépend de ce que le lecteur voit déjà : détail complet pour qui
+  // lit le dossier, montant seul pour qui s'apprête à le payer.
   const estimate =
-    viewer.canViewAll || viewer.canRequest ? await estimateProfilePrice(profile.id) : null;
+    viewer.canViewAll || viewer.canRequest
+      ? await estimateProfilePrice(profile.id, canView)
+      : null;
 
   // Chefs : groupes qu'ils dirigent, sans accès actif ni demande en attente
   let requestableGroups: { id: string; name: string }[] = [];
@@ -359,7 +495,13 @@ export async function getDossierDetail(
         select: { id: true, name: true },
       }),
     ]);
-    const blocked = new Set([...grants.map((g) => g.groupId), ...pending.map((p) => p.groupId)]);
+    // Le groupe créateur possède déjà le dossier : on ne lui propose pas de
+    // racheter ce qu'il a ouvert lui-même.
+    const blocked = new Set([
+      ...grants.map((g) => g.groupId),
+      ...pending.map((p) => p.groupId),
+      ...(profile.createdByGroupId ? [profile.createdByGroupId] : []),
+    ]);
     requestableGroups = groups.filter((g) => !blocked.has(g.id));
     myPendingRequest = pending.length > 0;
   }
@@ -407,10 +549,114 @@ export async function getDossierDetail(
         id: grant.id,
         groupName: grant.group.name,
         priceRyos: grant.priceRyos,
+        sourceType: grant.sourceType,
         grantedAt: grant.grantedAt.toISOString(),
         revokedAt: grant.revokedAt?.toISOString() ?? null,
+        revokedReason: grant.revokedReason,
       })),
     };
+  }
+
+  // Contributions et historique : pour qui VOIT le dossier. Un lecteur sans
+  // accès ne doit pas savoir qu'on y travaille — combien, ni sur quels champs.
+  const contributions: DossierDetail["contributions"] = { mine: [], pending: [] };
+  const history: HistoryEntry[] = [];
+  let completion: DossierDetail["completion"] = null;
+  if (canView) {
+    const [rows, revisions] = await Promise.all([
+      prisma.profileIntelContribution.findMany({
+        where: {
+          profileId: profile.id,
+          OR: [
+            { contributorId: viewer.userId },
+            ...(access.canEdit ? [{ status: "PENDING_REVIEW" as const }] : []),
+          ],
+        },
+        include: {
+          group: { select: { name: true } },
+          sourceMission: { select: { code: true } },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      }),
+      prisma.characterProfileRevision.findMany({
+        where: { profileId: profile.id },
+        orderBy: { createdAt: "desc" },
+        take: 40,
+        select: {
+          id: true, fieldKey: true, justification: true, confidence: true, createdAt: true, changedById: true, sourceMissionId: true,
+        },
+      }),
+    ]);
+    const userIds = new Set<string>();
+    for (const r of rows) userIds.add(r.contributorId);
+    for (const r of revisions) if (r.changedById) userIds.add(r.changedById);
+    const missionIds = new Set(revisions.map((r) => r.sourceMissionId).filter((id): id is string => Boolean(id)));
+    const [users, missions] = await Promise.all([
+      userIds.size
+        ? prisma.user.findMany({ where: { id: { in: [...userIds] } }, select: { id: true, displayName: true } })
+        : [],
+      missionIds.size
+        ? prisma.mission.findMany({ where: { id: { in: [...missionIds] } }, select: { id: true, code: true } })
+        : [],
+    ]);
+    const nameOf = new Map(users.map((u) => [u.id, u.displayName]));
+    const missionCode = new Map(missions.map((m) => [m.id, m.code]));
+
+    // Qui propose : la modération le sait ; le groupe créateur (relecteur
+    // non-modérateur) ne doit pas apprendre par là QUEL autre groupe détient
+    // le dossier — il voit « un groupe acquéreur », sans nom ni mission.
+    const revealAuthor = (r: (typeof rows)[number]) =>
+      access.canAdminister || r.contributorId === viewer.userId;
+    const toView = (r: (typeof rows)[number]): ContributionView => ({
+      id: r.id,
+      fieldKey: r.fieldKey,
+      fieldLabel: PROFILE_FIELD_LABELS[r.fieldKey as ProfileFieldKey] ?? r.fieldKey,
+      proposedLabel: r.proposedLabel,
+      knowledgeState: r.knowledgeState,
+      confidence: r.confidence,
+      note: r.note,
+      status: r.status,
+      sourceType: r.sourceType,
+      groupName: revealAuthor(r) ? (r.group?.name ?? null) : null,
+      contributorName: revealAuthor(r) ? (nameOf.get(r.contributorId) ?? "—") : "Un groupe acquéreur",
+      sourceMissionCode: revealAuthor(r) ? (r.sourceMission?.code ?? null) : null,
+      ...(access.canEdit ? { conflictsWithExisting: r.conflictsWithExisting } : {}),
+      reviewNote: r.reviewNote,
+      createdAt: r.createdAt.toISOString(),
+      reviewedAt: r.reviewedAt?.toISOString() ?? null,
+    });
+    for (const r of rows) {
+      if (r.contributorId === viewer.userId) contributions.mine.push(toView(r));
+      if (access.canEdit && r.status === "PENDING_REVIEW" && r.contributorId !== viewer.userId) {
+        contributions.pending.push(toView(r));
+      }
+    }
+    for (const r of revisions) {
+      // Provenance détaillée : modération, ou auteur de cette révision. Un
+      // autre détenteur voit qu'un champ a évolué, jamais quelle mission ou
+      // quelle note libre l'a produit.
+      const revealRevisionSource = access.canAdminister || r.changedById === viewer.userId;
+      history.push({
+        id: r.id,
+        fieldKey: r.fieldKey,
+        fieldLabel: PROFILE_FIELD_LABELS[r.fieldKey as ProfileFieldKey] ?? r.fieldKey,
+        justification: revealRevisionSource ? r.justification : null,
+        confidence: r.confidence,
+        authorName: revealRevisionSource && r.changedById ? (nameOf.get(r.changedById) ?? null) : null,
+        sourceMissionCode:
+          revealRevisionSource && r.sourceMissionId
+            ? (missionCode.get(r.sourceMissionId) ?? null)
+            : null,
+        createdAt: r.createdAt.toISOString(),
+      });
+    }
+    const total = PROFILE_FIELD_KEYS.length;
+    const known = PROFILE_FIELD_KEYS.filter((k) => {
+      const state = dossier.fields[k]?.displayState;
+      return state === "VISIBLE" || state === "NONE";
+    }).length;
+    completion = { known, total };
   }
 
   return {
@@ -423,6 +669,14 @@ export async function getDossierDetail(
     sealedCount,
     lastPrice,
     estimate,
+    access,
+    contributions,
+    history,
+    completion,
+    title: profile.title ?? formatDossierTitle(profile.characterFirstName, profile.characterLastName),
+    // Le nom du groupe propriétaire n'est montré qu'à qui voit le dossier :
+    // savoir QUI a ouvert une fiche est déjà un renseignement.
+    ownerGroupName: canView ? (profile.createdByGroup?.name ?? null) : null,
   };
 }
 

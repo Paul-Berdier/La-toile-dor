@@ -14,6 +14,8 @@ export const EVENT_LABELS: Record<string, EventLabel> = {
   PROFILE_REQUEST_APPROVED: { glyph: "承", text: "Votre groupe possède désormais l'accès à un dossier" },
   PROFILE_REQUEST_REFUSED: { glyph: "断", text: "Votre demande d'accès à un dossier a été refusée" },
   PROFILE_UPDATED: { glyph: "筆", text: "Un dossier détenu par votre groupe a été mis à jour" },
+  PROFILE_CONTRIBUTION_RECEIVED: { glyph: "報", text: "Un renseignement a été proposé sur un dossier — à examiner" },
+  PROFILE_CONTRIBUTION_REVIEWED: { glyph: "裁", text: "La modération a tranché sur un renseignement que vous avez proposé" },
   MEMBER_PROMOTED: { glyph: "昇", text: "Vous avez été promu chef de votre groupe" },
   MISSION_AVAILABLE: { glyph: "🕸", text: "Un nouveau fil a été tendu sur la Toile" },
   CLAIM_ACCEPTED: { glyph: "承", text: "Votre revendication a été acceptée — le dossier vous est ouvert" },
@@ -46,6 +48,7 @@ export const BASE_CONFIGURABLE_EVENTS = [
   "PROFILE_REQUEST_APPROVED",
   "PROFILE_REQUEST_REFUSED",
   "PROFILE_UPDATED",
+  "PROFILE_CONTRIBUTION_REVIEWED",
 ] as const;
 
 /** Événements adressés à la modération — réglables par elle seule. */
@@ -54,6 +57,7 @@ export const MODERATION_CONFIGURABLE_EVENTS = [
   "CLAIM_WITHDRAWN",
   "FINAL_REPORT_SUBMITTED",
   "PROFILE_REQUEST_CREATED",
+  "PROFILE_CONTRIBUTION_RECEIVED",
   "SYNC_ISSUE",
   "ACCESS_DENIED_ALERT",
 ] as const;

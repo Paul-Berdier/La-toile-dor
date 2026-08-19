@@ -5,6 +5,7 @@ import { requireUser } from "@/lib/session";
 import { listProfiles } from "@/server/profiles/queries";
 import { QuickCreateProfile } from "@/components/profils/quick-create";
 import { ProfileFilters } from "@/components/profils/profile-filters";
+import { DossierCard } from "@/components/profils/dossier-card";
 import { buttonClasses } from "@/components/ui/button";
 
 export const dynamic = "force-dynamic";
@@ -97,6 +98,24 @@ export default async function ProfilsPage({
       ? prisma.playerLevel.findMany({ select: { id: true, label: true }, orderBy: { order: "asc" } })
       : [],
   ]);
+  const pendingContributions = viewer.canManage
+    ? await prisma.profileIntelContribution.count({ where: { status: "PENDING_REVIEW" } })
+    : 0;
+  // Résumé pour les groupes : ce qu'ils possèdent, ce qu'ils attendent. Des
+  // COMPTES sur leurs propres dossiers — rien sur ceux des autres.
+  const summary =
+    !viewer.canViewAll && viewer.groupIds.length > 0
+      ? {
+          created: viewer.createdProfileIds.size,
+          acquired: [...viewer.grantedProfileIds].filter((id) => !viewer.createdProfileIds.has(id)).length,
+          pendingRequests: await prisma.profilePurchaseRequest.count({
+            where: { groupId: { in: viewer.groupIds }, status: "PENDING" },
+          }),
+          pendingContributions: await prisma.profileIntelContribution.count({
+            where: { contributorId: viewer.userId, status: "PENDING_REVIEW" },
+          }),
+        }
+      : null;
 
   const asOptions = (rows: { id: string; label: string }[]) =>
     rows.map((row) => ({ value: row.id, label: row.label }));
@@ -118,14 +137,51 @@ export default async function ProfilsPage({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {!viewer.canViewAll && viewer.groupIds.length > 0 && (
+            <Link href="/profils/mes-demandes" className={buttonClasses("ghost", "md")}>
+              Mes demandes et accès
+            </Link>
+          )}
           {viewer.canReview && (
             <Link href="/profils/demandes" className={buttonClasses("outline", "md")}>
               Demandes d&rsquo;accès
             </Link>
           )}
-          {viewer.canManage && <QuickCreateProfile sourceMissionId={attachMission?.id} />}
+          {viewer.canManage && (
+            <Link href="/profils/contributions" className={buttonClasses("outline", "md")}>
+              Renseignements proposés
+              {pendingContributions > 0 && (
+                <span className="ml-2 border border-warning/60 px-1.5 font-mono-toile text-[0.65rem] text-warning">
+                  {pendingContributions}
+                </span>
+              )}
+            </Link>
+          )}
+          {viewer.canCreate && (
+            <QuickCreateProfile
+              sourceMissionId={attachMission?.id}
+              groups={viewer.groupIds.map((id) => ({ id, name: viewer.groupNames.get(id) ?? "Groupe" }))}
+              canCreateWithoutGroup={viewer.canManage}
+            />
+          )}
         </div>
       </div>
+
+      {summary && (
+        <dl className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Résumé de vos dossiers">
+          {[
+            ["Ouverts par vos groupes", summary.created, "/profils?acces=granted"],
+            ["Acquis", summary.acquired, "/profils?acces=granted"],
+            ["Demandes en attente", summary.pendingRequests, "/profils/mes-demandes"],
+            ["Renseignements proposés", summary.pendingContributions, "/profils/mes-demandes"],
+          ].map(([label, value, href]) => (
+            <Link key={String(label)} href={String(href)} className="border border-border-default bg-raised px-3 py-2 hover:border-gold">
+              <dt className="text-[0.6rem] uppercase tracking-wider text-ink-faint">{label}</dt>
+              <dd className="font-mono-toile text-lg text-gold">{value}</dd>
+            </Link>
+          ))}
+        </dl>
+      )}
 
       {attachMission && (
         <p className="mt-4 border border-gold-dim bg-gold-faint/20 px-4 py-2 text-xs text-gold">
@@ -182,75 +238,18 @@ export default async function ProfilsPage({
         </p>
       )}
 
-      <ul className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <ul
+        className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"
+        aria-live="polite"
+        aria-label="Dossiers"
+      >
         {rows.map((row) => (
-          <li key={row.id}>
-            <Link
-              href={withMission(`/profils/${row.id}`)}
-              className="flex h-full items-center gap-3 border border-border-default bg-raised p-3 transition-colors hover:border-border-gold hover:bg-hover-bg"
-            >
-              {row.hasVisiblePortrait ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={`/api/profils/${row.id}/image`}
-                  alt=""
-                  className="h-16 w-12 shrink-0 border border-border-gold object-cover"
-                />
-              ) : (
-                <span
-                  aria-hidden
-                  className="flex h-16 w-12 shrink-0 items-center justify-center border border-border-default bg-[repeating-linear-gradient(45deg,transparent,transparent_4px,rgba(184,150,62,0.08)_4px,rgba(184,150,62,0.08)_8px)] font-display text-gold-dim"
-                >
-                  諜
-                </span>
-              )}
-              <span className="min-w-0 flex-1">
-                <span className="block font-mono-toile text-[0.65rem] tracking-wider text-ink-faint">
-                  {row.code}
-                </span>
-                <span className="block truncate text-sm text-ink">
-                  {row.firstName}
-                  {/* Le nom n'est présent dans la charge utile que si le
-                      lecteur y a droit — rien n'est masqué en CSS.
-                      L'espace est un vrai caractère, non une marge : sinon le
-                      texte lu et copié serait « AkiraKaguya ». */}
-                  {row.lastName && (
-                    <>
-                      {" "}
-                      <span className="text-ink-muted">{row.lastName}</span>
-                    </>
-                  )}
-                </span>
-                <span className="mt-1 flex flex-wrap gap-1">
-                  {row.accessBadge === "granted" && (
-                    <span className="border border-gold-dim bg-gold-faint/30 px-1.5 py-0.5 text-[0.6rem] uppercase text-gold">
-                      Accès obtenu
-                    </span>
-                  )}
-                  {row.accessBadge === "pending" && (
-                    <span className="border border-warning/50 px-1.5 py-0.5 text-[0.6rem] uppercase text-warning">
-                      Demande en attente
-                    </span>
-                  )}
-                  {row.accessBadge === "refused" && (
-                    <span className="border border-blood/50 px-1.5 py-0.5 text-[0.6rem] uppercase text-blood-bright">
-                      Refusée
-                    </span>
-                  )}
-                  {viewer.canViewAll && (row.pendingRequests ?? 0) > 0 && (
-                    <span className="border border-warning/50 px-1.5 py-0.5 text-[0.6rem] uppercase text-warning">
-                      {row.pendingRequests} demande{(row.pendingRequests ?? 0) > 1 ? "s" : ""}
-                    </span>
-                  )}
-                  {viewer.canViewAll && (
-                    <span className="px-1.5 py-0.5 text-[0.6rem] text-ink-faint">
-                      {row.intelCount} renseignement{(row.intelCount ?? 0) > 1 ? "s" : ""}
-                    </span>
-                  )}
-                </span>
-              </span>
-            </Link>
-          </li>
+          <DossierCard
+            key={row.id}
+            row={row}
+            href={withMission(`/profils/${row.id}`)}
+            isModerator={viewer.canViewAll}
+          />
         ))}
       </ul>
 

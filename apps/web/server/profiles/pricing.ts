@@ -25,7 +25,24 @@ export const getProfilePricing = cache(async (): Promise<ProfilePricing> => {
   };
 });
 
-export interface ProfileEstimate extends PricingResult {
+/**
+ * Ce qu'un ACHETEUR potentiel peut voir de l'estimation : le montant, rien
+ * d'autre. Ni le nombre de renseignements, ni le grade, ni les lignes du
+ * calcul — chacun de ces éléments est un oracle sur le contenu d'un dossier
+ * qu'il n'a justement pas acheté. Le montant seul est arrondi au palier du
+ * barème, ce qui brouille l'inférence champ par champ.
+ */
+export interface PublicProfileEstimate {
+  scope: "public";
+  price: number;
+}
+
+/**
+ * L'estimation complète, réservée à ceux qui voient déjà le dossier : ils
+ * n'apprennent rien par le détail qu'ils ne sachent déjà par les valeurs.
+ */
+export interface FullProfileEstimate extends PricingResult {
+  scope: "full";
   /** Renseignements acquis retenus dans le calcul */
   knownCount: number;
   relationCount: number;
@@ -33,13 +50,30 @@ export interface ProfileEstimate extends PricingResult {
 }
 
 /**
- * Estime ce que vaut un dossier.
+ * Le type est DISCRIMINÉ pour que la fuite soit impossible à écrire : un
+ * composant qui reçoit `PublicProfileEstimate` n'a pas de `gradeLabel` à
+ * afficher, le compilateur s'y oppose. C'est la même technique que le
+ * sérialiseur des champs, où la clé `value` n'existe qu'à l'état VISIBLE.
+ */
+export type ProfileEstimate = PublicProfileEstimate | FullProfileEstimate;
+
+/**
+ * Estime ce que vaut un dossier, à la mesure de ce que le lecteur a le droit
+ * de savoir.
  *
  * C'est un CONSEIL, jamais un prélèvement : aucun compte n'est débité, le
  * règlement se fait en jeu. Le prix reste fixé par la modération, qui dispose
  * ici d'une base chiffrée et explicable plutôt que d'une intuition.
+ *
+ * `canViewValues` décide de la forme retournée. Le lecteur qui NE voit PAS le
+ * dossier n'obtient que le montant : la version détaillée révélerait le grade
+ * (« ??? » trois lignes plus haut) et, par arithmétique, quels champs sont
+ * connus.
  */
-export async function estimateProfilePrice(profileId: string): Promise<ProfileEstimate | null> {
+export async function estimateProfilePrice(
+  profileId: string,
+  canViewValues: boolean,
+): Promise<ProfileEstimate | null> {
   const [pricing, profile] = await Promise.all([
     getProfilePricing(),
     prisma.characterProfile.findUnique({
@@ -77,7 +111,13 @@ export async function estimateProfilePrice(profileId: string): Promise<ProfileEs
     pricing,
   );
 
+  // Lecteur sans accès : le montant, et rien qui permette de le décomposer.
+  if (!canViewValues) {
+    return { scope: "public", price: result.price };
+  }
+
   return {
+    scope: "full",
     ...result,
     knownCount: knownFields.length,
     relationCount: relationGradeRanks.length,

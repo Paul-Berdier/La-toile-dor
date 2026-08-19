@@ -70,7 +70,9 @@ export function ReferencePicker({
   // (Kekkei Genkai élémentaires, suffixe « ton » commun) — la liste défile.
   const matches = useMemo(() => {
     const q = normalizeRefLabel(query);
-    const pool = options.filter((o) => !selected.includes(o.id));
+    // Les valeurs désactivées déjà présentes restent visibles dans leurs tags,
+    // mais ne peuvent pas être ajoutées à un autre dossier.
+    const pool = options.filter((o) => o.isActive && !selected.includes(o.id));
     if (!q) return pool;
     return pool.filter((o) => {
       const haystack = [o.label, ...(o.aliases ?? [])].map(normalizeRefLabel);
@@ -109,7 +111,9 @@ export function ReferencePicker({
       setCreateError(null);
       onCreated?.({
         id: res.option.id,
+        code: res.option.code,
         label: res.option.label,
+        isActive: true,
         category: null,
         colorHex: res.option.colorHex,
         sourceScopeLabel: "Serveur",
@@ -170,6 +174,9 @@ export function ReferencePicker({
                     />
                   )}
                   {option.label}
+                  {!option.isActive && (
+                    <span className="text-[0.55rem] text-warning">désactivé</span>
+                  )}
                   <span className="text-[0.55rem] text-ink-faint">{option.sourceScopeLabel}</span>
                   <button
                     type="button"

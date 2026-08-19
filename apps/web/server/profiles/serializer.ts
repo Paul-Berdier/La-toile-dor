@@ -11,6 +11,10 @@ import {
   LIFE_STATUS_LABELS,
   SOURCE_SCOPE_LABELS,
   TRAIT_FIELD_TO_TYPE,
+  isPublicProfileField,
+  PROFILE_IMAGE_TYPE_LABELS,
+  type ProfileGalleryView,
+  type ProfileImageType,
   type ProfileFieldKey,
   type ProfileFieldView,
   type ProfileKnowledge,
@@ -22,11 +26,30 @@ import type { ProfileViewer } from "./access";
 export const dossierInclude = {
   hairColor: true,
   skinTone: true,
+  eyeColor: true,
+  eyeColorSecondary: true,
+  ninjaClass: true,
   faction: { select: { id: true, name: true } },
   rank: { select: { id: true, label: true } },
   fieldIntel: true,
   traits: { include: { option: true } },
   techniques: { include: { jutsuType: true }, orderBy: { createdAt: "asc" } },
+  // Métadonnées seulement — JAMAIS `imageData` ici : les octets passent par
+  // la route gardée, et ne doivent pas être chargés à chaque lecture.
+  images: {
+    where: { deletedAt: null },
+    orderBy: [{ isPrimary: "desc" }, { sortOrder: "asc" }, { createdAt: "asc" }],
+    select: {
+      id: true,
+      type: true,
+      caption: true,
+      isPrimary: true,
+      sortOrder: true,
+      sizeBytes: true,
+      createdAt: true,
+      sourceMission: { select: { code: true } },
+    },
+  },
 } satisfies Prisma.CharacterProfileInclude;
 
 export type DossierRecord = Prisma.CharacterProfileGetPayload<{ include: typeof dossierInclude }>;
@@ -40,6 +63,8 @@ export interface SerializedDossier {
   updatedAt: string;
   /** Portrait : uniquement un indicateur — l'image passe par une route gardée */
   image: ProfileFieldView;
+  /** Galerie : métadonnées seulement, et seulement pour qui peut lire */
+  gallery: ProfileGalleryView;
   fields: Record<ProfileFieldKey, ProfileFieldView>;
 }
 
@@ -122,6 +147,23 @@ export function serializeDossier(
         return profile.skinTone
           ? { value: optionValue(profile.skinTone), label: profile.skinTone.label }
           : null;
+      case "eyeColor": {
+        // Hétérochromie : deux iris, un seul champ. « Bleu / Vert » se lit
+        // d'un coup d'œil ; la structure garde les deux pour l'éditeur.
+        if (!profile.eyeColor) return null;
+        const secondary = profile.eyeColorSecondary;
+        return {
+          value: {
+            primary: optionValue(profile.eyeColor),
+            secondary: secondary ? optionValue(secondary) : null,
+          },
+          label: secondary ? `${profile.eyeColor.label} / ${secondary.label}` : profile.eyeColor.label,
+        };
+      }
+      case "ninjaClass":
+        return profile.ninjaClass
+          ? { value: optionValue(profile.ninjaClass), label: profile.ninjaClass.label }
+          : null;
       case "faction":
         return profile.faction
           ? { value: { id: profile.faction.id, name: profile.faction.name }, label: profile.faction.name }
@@ -159,6 +201,10 @@ export function serializeDossier(
                 shortDescription: technique.shortDescription,
                 typeLabel: technique.jutsuType?.label ?? null,
                 rank: technique.rank,
+                // Une technique « rumeur » ne se lit pas comme une technique
+                // confirmée : la confiance est stockée, elle doit s'afficher.
+                confidence: technique.confidence,
+                knowledgeState: technique.knowledgeState,
               })),
               label: profile.techniques.map((t) => t.name).join(", "),
             }
@@ -170,7 +216,10 @@ export function serializeDossier(
       case "weaknesses":
         return profile.weaknesses ? { value: profile.weaknesses, label: profile.weaknesses } : null;
       case "image":
-        return profile.imageMime ? { value: true, label: "Portrait disponible" } : null;
+        // Galerie OU ancien portrait : l'un comme l'autre vaut « portrait connu »
+        return profile.images.length > 0 || profile.imageMime
+          ? { value: true, label: "Portrait disponible" }
+          : null;
       default:
         return null;
     }
@@ -185,7 +234,9 @@ export function serializeDossier(
     // Donnée déclarée connue mais absente (sécurité) → traiter comme inconnue
     const effective: ProfileKnowledge = knowledge === "KNOWN" && !raw ? "UNKNOWN" : knowledge;
 
-    const resolved = resolveFieldDisplay(effective, canView);
+    // Le nom est PUBLIC (il figure dans le titre) : visible de tous dès qu'il
+    // est connu. Les autres champs suivent la décision d'accès.
+    const resolved = resolveFieldDisplay(effective, canView || isPublicProfileField(key));
     const view: ProfileFieldView = {
       key,
       displayState: resolved.displayState,
@@ -211,6 +262,31 @@ export function serializeDossier(
     image.value = true;
   }
 
+  // Galerie : la FORME du résultat porte la confidentialité. Sans accès, il
+  // n'y a pas de tableau — donc pas de nombre, pas d'identifiant, pas de
+  // légende. « REDACTED » dit seulement que la Toile détient des images.
+  let gallery: ProfileGalleryView;
+  if (profile.images.length === 0) {
+    gallery = { state: "EMPTY" };
+  } else if (!canView) {
+    gallery = { state: "REDACTED" };
+  } else {
+    gallery = {
+      state: "VISIBLE",
+      images: profile.images.map((img) => ({
+        id: img.id,
+        type: img.type as ProfileImageType,
+        typeLabel: PROFILE_IMAGE_TYPE_LABELS[img.type as ProfileImageType] ?? img.type,
+        caption: img.caption,
+        isPrimary: img.isPrimary,
+        sortOrder: img.sortOrder,
+        sizeBytes: img.sizeBytes,
+        createdAt: img.createdAt.toISOString(),
+        sourceMissionCode: img.sourceMission?.code ?? null,
+      })),
+    };
+  }
+
   return {
     id: profile.id,
     code: profile.code || formatProfileCode(profile.codeNumber),
@@ -219,6 +295,7 @@ export function serializeDossier(
     archived: profile.archivedAt != null,
     updatedAt: profile.updatedAt.toISOString(),
     image,
+    gallery,
     fields,
   };
 }

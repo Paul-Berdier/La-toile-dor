@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { loginAs, prisma } from "./helpers";
 
 /**
@@ -9,8 +9,31 @@ import { loginAs, prisma } from "./helpers";
  *  - CONNU pour nom, faction, clan, cheveux, KG… (« ??? » sans accès) ;
  *  - INCONNU pour la couleur de peau et les artefacts marqués « Aucun » ;
  *  - acheté par la Cellule 1 de Kumogakure (groups[0]).
+ *
+ * Le NOM (« Kaguya ») est PUBLIC — il figure dans le titre du dossier — et
+ * n'est donc plus un secret ; le clan Kaguya, lui, l'est, mais porte le même
+ * mot : on vérifie le clan par son état « ??? », pas par le texte.
  */
-const SECRETS = ["Kaguya", "Shikotsumyaku", "Danse des Camélias"];
+const SECRETS = ["Shikotsumyaku", "Danse des Camélias"];
+
+function collectServerBodies(page: Page): () => Promise<string[]> {
+  const pending: Promise<string>[] = [];
+  page.on("response", (response) => {
+    const type = response.headers()["content-type"] ?? "";
+    if (type.includes("html") || type.includes("x-component") || type.includes("json")) {
+      pending.push(response.text().catch(() => ""));
+    }
+  });
+  return async () => {
+    let previousCount = -1;
+    while (previousCount !== pending.length) {
+      previousCount = pending.length;
+      await Promise.all(pending.slice(0, previousCount));
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+    return Promise.all(pending);
+  };
+}
 
 async function akira() {
   return prisma.characterProfile.findFirstOrThrow({
@@ -18,6 +41,53 @@ async function akira() {
     include: { accessGrants: { where: { revokedAt: null } } },
   });
 }
+
+test("un CHEF sans accès ne reçoit pas le grade par le panneau d'estimation", async ({
+  context,
+  page,
+}) => {
+  // Le lecteur le plus exposé : il voit le panneau « valeur estimée » (les
+  // agents ne le voient pas), et c'est là qu'une régression a un jour écrit le
+  // grade en clair — juste sous le même grade affiché « ??? ». Le test
+  // inspecte le DOM ET chaque réponse réseau, parce que la clé peut être
+  // absente de l'écran tout en voyageant dans la charge utile RSC.
+  const profile = await akira();
+  const grantedGroupIds = profile.accessGrants.map((g) => g.groupId);
+  const rank = await prisma.playerLevel.findUniqueOrThrow({
+    where: { id: profile.rankId! },
+    select: { label: true },
+  });
+  // demo-chief-3 dirige des groupes sans accès à ce dossier
+  const chiefGroups = await prisma.groupMember.findMany({
+    where: { userId: "demo-chief-3", isLeader: true },
+    select: { groupId: true },
+  });
+  expect(chiefGroups.some((g) => grantedGroupIds.includes(g.groupId))).toBe(false);
+
+  const readBodies = collectServerBodies(page);
+
+  await loginAs(context, "demo-chief-3");
+  await page.goto(`/profils/${profile.id}`);
+  // Le panneau d'estimation est bien là : c'est lui qu'on surveille
+  await expect(page.getByText(/valeur estimée/i)).toBeVisible();
+
+  // Le chef est lui-même gradé et son grade figure dans la barre latérale :
+  // on ne peut pas bannir le mot « Jonin » de la page. On cible donc la FORME
+  // exacte que produisait la fuite — « Jonin (×1.8) », le grade suivi de son
+  // multiplicateur — et les clés qui ne doivent exister que dans la forme
+  // complète de l'estimation.
+  const leakPattern = new RegExp(`${rank.label}\\s*\\(×`);
+  const html = await page.content();
+  expect(html, "le grade multiplié ne doit pas figurer dans le panneau").not.toMatch(leakPattern);
+  for (const body of await readBodies()) {
+    expect(body).not.toMatch(leakPattern);
+    // Le nombre de renseignements et le détail du calcul sont des oracles :
+    // ces clés n'existent que dans la forme « full », jamais servie ici.
+    expect(body).not.toContain("knownCount");
+    expect(body).not.toContain("gradeLabel");
+    expect(body).not.toContain("gradeMultiplier");
+  }
+});
 
 test("un agent SANS accès voit le prénom, « Inconnu » et « ??? » — jamais les valeurs", async ({
   context,
@@ -31,25 +101,22 @@ test("un agent SANS accès voit le prénom, « Inconnu » et « ??? » — jamai
   });
   expect(outsider).toBeTruthy();
 
-  const responses: string[] = [];
-  page.on("response", async (response) => {
-    const type = response.headers()["content-type"] ?? "";
-    if (type.includes("text") || type.includes("json") || type.includes("javascript")) {
-      responses.push(await response.text().catch(() => ""));
-    }
-  });
+  const readBodies = collectServerBodies(page);
 
   await loginAs(context, "demo-member-2-0-0");
   await page.goto(`/profils/${profile.id}`);
 
-  // Le prénom reste visible — règle du produit
-  await expect(page.getByRole("heading", { name: "Akira" })).toBeVisible();
-  // Les informations acquises mais protégées s'affichent « ??? »
-  await expect(page.getByText("???").first()).toBeVisible();
+  // Titre, prénom et nom restent visibles — règle du produit
+  await expect(page.getByRole("heading", { name: /Akira Kaguya/ })).toBeVisible();
+  // Les informations acquises mais protégées s'affichent « ??? » — dont le
+  // CLAN, qui porte le même mot que le nom : c'est l'état qui fait foi.
+  const clanRow = page.locator("dt", { hasText: /^Clan$/ }).locator("xpath=..");
+  await expect(clanRow.getByRole("img", { name: /confidentiel/i })).toBeVisible();
   // Une information jamais découverte reste « Inconnu » pour tous
   await expect(page.getByText("Inconnu").first()).toBeVisible();
 
   const html = await page.content();
+  const responses = await readBodies();
   for (const secret of SECRETS) {
     expect(html, `« ${secret} » ne doit pas être dans le DOM`).not.toContain(secret);
     for (const body of responses) {
@@ -58,40 +125,27 @@ test("un agent SANS accès voit le prénom, « Inconnu » et « ??? » — jamai
   }
 });
 
-test("la LISTE n'expose le nom de famille qu'aux lecteurs autorisés", async ({
+test("la LISTE montre titre, prénom et nom à tous — et rien d'autre sans accès", async ({
   context,
   page,
 }) => {
-  // La liste affiche « Akira Kaguya » pour la modération. Le nom est un
-  // renseignement comme un autre : la clé ne doit pas exister dans la charge
-  // utile envoyée à un lecteur sans accès — ni dans le DOM, ni dans le RSC.
-  const responses: string[] = [];
-  page.on("response", async (response) => {
-    const type = response.headers()["content-type"] ?? "";
-    if (type.includes("text") || type.includes("json") || type.includes("javascript")) {
-      responses.push(await response.text().catch(() => ""));
-    }
-  });
+  // Le nom est PUBLIC : un lecteur sans accès voit « Akira Kaguya ». En
+  // revanche la charge utile ne doit porter AUCUNE autre valeur du dossier :
+  // ni la faction, ni le KG, ni un indicateur de portrait.
+  const profile = await akira();
+  const readBodies = collectServerBodies(page);
 
   await loginAs(context, "demo-member-2-0-0");
   await page.goto("/profils");
-  await expect(page.getByText("Akira").first()).toBeVisible();
+  await expect(page.getByText(/Akira Kaguya/).first()).toBeVisible();
+  // La carte est SCELLÉE : sceau et « Voir », pas « Ouvrir »
+  const card = page.locator("article, li").filter({ hasText: profile.code }).first();
+  await expect(card.getByText(/Non acquis/)).toBeVisible();
 
-  const html = await page.content();
-  expect(html, "le nom de famille ne doit pas figurer dans la liste").not.toContain("Kaguya");
-  for (const body of responses) {
-    expect(body, "le nom de famille ne doit être dans aucune réponse").not.toContain("Kaguya");
+  for (const body of await readBodies()) {
+    for (const secret of SECRETS) expect(body).not.toContain(secret);
+    expect(body).not.toContain("hasVisiblePortrait\":true");
   }
-
-  // La modération, elle, voit bien le nom complet
-  const ctx2 = await page.context().browser()!.newContext();
-  await loginAs(ctx2, "demo-mod");
-  const page2 = await ctx2.newPage();
-  await page2.goto("/profils");
-  // Dans la CARTE du dossier — « Kaguya » apparaît aussi dans le filtre Clan,
-  // qui n'est pas ce que l'on vérifie ici.
-  await expect(page2.getByRole("link", { name: /Akira Kaguya/ })).toBeVisible();
-  await ctx2.close();
 });
 
 test("le portrait protégé n'est PAS servi (404) à un utilisateur sans accès", async ({
@@ -195,11 +249,11 @@ test("création rapide : prénom seul, code généré, doublons avertis sans blo
   const unique = `Test${suffix}`;
   await loginAs(context, "demo-mod");
   await page.goto("/profils");
-  await page.getByRole("button", { name: "Nouveau profil" }).click();
+  await page.getByRole("button", { name: "Nouveau dossier" }).click();
   await page.getByLabel("Prénom du personnage *").fill(unique);
-  await page.getByRole("button", { name: "Créer le profil minimal" }).click();
+  await page.getByRole("button", { name: "Créer rapidement" }).click();
   // La modale se ferme après succès : c'est le signal de fin de l'action serveur
-  await expect(page.getByRole("dialog", { name: "Nouveau profil" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Ouvrir un dossier" })).toHaveCount(0);
 
   const created = await prisma.characterProfile.findFirstOrThrow({
     where: { characterFirstName: unique },
@@ -209,12 +263,12 @@ test("création rapide : prénom seul, code généré, doublons avertis sans blo
 
   // Second profil au MÊME prénom : averti, puis créé sur confirmation
   await page.reload();
-  await page.getByRole("button", { name: "Nouveau profil" }).click();
+  await page.getByRole("button", { name: "Nouveau dossier" }).click();
   await page.getByLabel("Prénom du personnage *").fill(unique);
-  await page.getByRole("button", { name: "Créer le profil minimal" }).click();
-  await expect(page.getByText(/profils ressemblants existent déjà/)).toBeVisible();
+  await page.getByRole("button", { name: "Créer rapidement" }).click();
+  await expect(page.getByText(/dossiers ressemblants existent déjà/i)).toBeVisible();
   await page.getByRole("button", { name: "Créer quand même" }).click();
-  await expect(page.getByRole("dialog", { name: "Nouveau profil" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Ouvrir un dossier" })).toHaveCount(0);
 
   const both = await prisma.characterProfile.findMany({ where: { characterFirstName: unique } });
   expect(both).toHaveLength(2);

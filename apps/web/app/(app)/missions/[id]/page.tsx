@@ -17,6 +17,9 @@ import { RankSeal } from "@/components/missions/rank-seal";
 import { ClaimPanel } from "@/components/missions/claim-panel";
 import { ClaimDecide } from "@/components/missions/claim-decide";
 import { ReportForm } from "@/components/missions/report-form";
+import { MissionReportWizard } from "@/components/missions/report-wizard";
+import { loadProfileRefs } from "@/server/profiles/edit-data";
+import { missionReportPayloadSchema } from "@toile/shared";
 import { ManageTeamButton } from "@/components/missions/manage-team";
 import { MissionAdminActions } from "@/components/missions/mission-admin-actions";
 import { MissionTargets } from "@/components/missions/mission-targets";
@@ -27,11 +30,14 @@ export const dynamic = "force-dynamic";
 
 export default async function MissionDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ rapportGroupe?: string | string[] }>;
 }) {
   const current = await requireUser();
   const { id } = await params;
+  const query = await searchParams;
   const detail = await getMissionDetail(current, id);
   if (!detail) notFound();
 
@@ -75,7 +81,7 @@ export default async function MissionDetailPage({
       .filter((assignment) => assignment.active)
       .map((assignment) => assignment.groupId),
   );
-  if (mission.assignedGroupId) assignedGroupIds.add(mission.assignedGroupId);
+  if (assignedGroupIds.size === 0 && mission.assignedGroupId) assignedGroupIds.add(mission.assignedGroupId);
   const claimableLedGroups = ctx.ledGroups.filter((group) => !assignedGroupIds.has(group.id));
   const canClaim =
     current.permissions.has(PERMISSIONS.MISSION_CLAIM) &&
@@ -91,6 +97,59 @@ export default async function MissionDetailPage({
       })
     : null;
   const minLevelLabel = minLevel?.label ?? mission.minRecommendedLevel?.label ?? null;
+
+  // ── Rapport de fin de mission (parcours en 3 étapes) ──
+  // Qui rapporte : le chef d'un groupe attribué (au nom de CE groupe), ou la
+  // modération. Le brouillon est celui du groupe : deux chefs le reprennent.
+  const reportOpen = ["ASSIGNED", "IN_PROGRESS"].includes(mission.status);
+  const ledGroupIds = new Set(ctx.ledGroups.map((group) => group.id));
+  const eligibleReporterGroupIds = [...assignedGroupIds].filter(
+    (groupId) => ctx.isModerator || ledGroupIds.has(groupId),
+  );
+  const myParticipantGroupId = mission.participants.find((p) => p.userId === current.session.userId)?.groupId ?? null;
+  const requestedReporterGroupId = Array.isArray(query.rapportGroupe)
+    ? query.rapportGroupe[0]
+    : query.rapportGroupe;
+  let reporterGroupId: string | null = null;
+  if (requestedReporterGroupId && eligibleReporterGroupIds.includes(requestedReporterGroupId)) {
+    reporterGroupId = requestedReporterGroupId;
+  } else if (myParticipantGroupId && eligibleReporterGroupIds.includes(myParticipantGroupId)) {
+    reporterGroupId = myParticipantGroupId;
+  } else if (eligibleReporterGroupIds.length === 1) {
+    reporterGroupId = eligibleReporterGroupIds[0]!;
+  }
+  const reporterChoices = eligibleReporterGroupIds.length > 1
+    ? await prisma.group.findMany({
+        where: { id: { in: eligibleReporterGroupIds }, isActive: true },
+        select: { id: true, name: true },
+        orderBy: { name: "asc" },
+      })
+    : [];
+  // Le rapport nomme les cibles (identité réservée aux CHEFS des groupes
+  // attribués et à la modération) : seul ce niveau de vue le dépose.
+  const showWizard =
+    reportOpen && (level === "leader" || level === "moderator") && reporterGroupId !== null;
+  const [reportRefs, reportDraft, reporterGroup] = showWizard
+    ? await Promise.all([
+        loadProfileRefs(),
+        prisma.missionReportDraft.findUnique({
+          where: { missionId_groupId: { missionId: mission.id, groupId: reporterGroupId! } },
+          select: { payload: true, updatedAt: true },
+        }),
+        prisma.group.findUnique({ where: { id: reporterGroupId! }, select: { name: true } }),
+      ])
+    : [null, null, null];
+  const reportDraftPayload = reportDraft
+    ? (missionReportPayloadSchema.safeParse(reportDraft.payload).data ?? null)
+    : null;
+  const visibleReports = mission.reports.filter((report) => {
+    if (level === "moderator") return true;
+    if (!report.isFinal) return true;
+    return level === "leader" && (
+      report.reportingGroupId === null ||
+      (report.reportingGroupId !== null && ledGroupIds.has(report.reportingGroupId))
+    );
+  });
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-6 lg:px-6">
@@ -414,11 +473,11 @@ export default async function MissionDetailPage({
               <h2 className="mb-3 font-display text-sm tracking-widest text-gold uppercase">
                 Rapports de mission
               </h2>
-              {mission.reports.length === 0 && (
+              {visibleReports.length === 0 && (
                 <p className="mb-3 text-xs text-ink-faint italic">Aucun rapport transmis.</p>
               )}
               <ul className="mb-4 space-y-3">
-                {mission.reports.map((report) => (
+                {visibleReports.map((report) => (
                   <li key={report.id} className="border border-border-default bg-elevated p-3">
                     <p className="mb-1 font-mono-toile text-[0.65rem] text-ink-faint">
                       {new Date(report.submittedAt).toLocaleString("fr-FR")}
@@ -452,8 +511,64 @@ export default async function MissionDetailPage({
                   </li>
                 ))}
               </ul>
-              {["ASSIGNED", "IN_PROGRESS"].includes(mission.status) && (
-                <ReportForm missionId={mission.id} />
+              {reportOpen && (
+                <details className="mb-4">
+                  <summary className="cursor-pointer text-[0.7rem] uppercase tracking-wider text-ink-faint hover:text-gold">
+                    Rapport d&rsquo;étape (facultatif)
+                  </summary>
+                  <div className="mt-2">
+                    <ReportForm missionId={mission.id} />
+                  </div>
+                </details>
+              )}
+              {reportOpen && (level === "leader" || level === "moderator") && reporterChoices.length > 1 && (
+                <form method="get" className="mb-4 flex flex-wrap items-end gap-2 border-t border-border-default pt-4">
+                  <label className="min-w-56 flex-1 text-xs text-ink-muted">
+                    <span className="mb-1 block uppercase tracking-wider text-ink-faint">Rapporter au nom de</span>
+                    <select
+                      name="rapportGroupe"
+                      defaultValue={reporterGroupId ?? ""}
+                      required
+                      className="w-full border border-border-default bg-elevated px-3 py-2 text-sm text-ink"
+                    >
+                      <option value="" disabled>Choisir un groupe…</option>
+                      {reporterChoices.map((group) => (
+                        <option key={group.id} value={group.id}>{group.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <button type="submit" className="border border-gold px-3 py-2 text-xs uppercase tracking-wider text-gold hover:bg-gold-faint/20">
+                    Ouvrir ce brouillon
+                  </button>
+                </form>
+              )}
+              {showWizard && reportRefs && reporterGroupId && (
+                <div className="border-t border-border-gold pt-4">
+                  <h3 className="mb-1 font-display text-sm tracking-widest text-gold uppercase">
+                    Rapport de fin de mission
+                  </h3>
+                  <p className="mb-3 text-[0.7rem] text-ink-faint">
+                    Trois étapes : le résultat, ce que vous avez appris sur chaque dossier, la validation.
+                    Votre brouillon est conservé.
+                  </p>
+                  <MissionReportWizard
+                    missionId={mission.id}
+                    missionCode={mission.code}
+                    groupId={reporterGroupId}
+                    groupName={reporterGroup?.name ?? "votre groupe"}
+                    targets={mission.targets.map((t) => ({
+                      id: t.id,
+                      profileId: t.profileId,
+                      name: t.profile?.characterFirstName ?? t.label ?? "Cible",
+                      code: t.profile?.code ?? null,
+                      outcome: t.outcome,
+                    }))}
+                    refs={reportRefs}
+                    initialDraft={reportDraftPayload}
+                    draftSavedAt={reportDraft?.updatedAt.toISOString() ?? null}
+                    canFinalize={mission.status === "IN_PROGRESS"}
+                  />
+                </div>
               )}
             </section>
           )}

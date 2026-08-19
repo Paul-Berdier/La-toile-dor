@@ -151,10 +151,11 @@ test("le chef reçoit l'écho in-app de l'acceptation (mode sans bot)", async ({
 }) => {
   await loginAs(context, "demo-chief-2");
   await page.goto("/notifications");
-  await expect(
-    page.getByText("Votre revendication a été acceptée", { exact: false }).first(),
-  ).toBeVisible();
-  await expect(page.getByText(TITLE).first()).toBeVisible();
+  const echo = page
+    .getByRole("link", { name: /Votre revendication a été acceptée/ })
+    .first();
+  await expect(echo).toBeVisible();
+  await expect(echo).toContainText(TITLE);
 });
 
 test("chaque étape est consignée au journal d'audit", async () => {

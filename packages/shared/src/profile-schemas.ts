@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { PROFILE_FIELD_KEYS, REFERENCE_TYPES, type ReferenceType } from "./profile-fields";
+import {
+  PROFILE_FIELD_KEYS,
+  REFERENCE_TYPES,
+  canDeclareNoneForField,
+  type ReferenceType,
+} from "./profile-fields";
 
 // ── Validation serveur des dossiers de renseignement ──
 
@@ -13,8 +18,23 @@ const firstNameSchema = z
   .regex(NAME_PATTERN, "Le prénom contient des caractères non autorisés.")
   .refine((v) => v.replace(/\s+/g, "").length > 0, "Le prénom ne peut pas être vide.");
 
+/**
+ * Création rapide : SEUL le prénom est obligatoire. Le nom, le titre et le
+ * groupe sont facultatifs — le titre est généré s'il manque, le groupe est
+ * déduit quand le créateur n'en a qu'un.
+ */
 export const profileQuickCreateSchema = z.object({
   firstName: firstNameSchema,
+  lastName: z
+    .string()
+    .trim()
+    .max(80)
+    .regex(NAME_PATTERN, "Le nom contient des caractères non autorisés.")
+    .optional()
+    .or(z.literal("")),
+  title: z.string().trim().max(120).optional().or(z.literal("")),
+  /** Groupe propriétaire — obligatoire pour un non-modérateur qui en a plusieurs */
+  groupId: z.string().cuid().optional(),
   sourceMissionId: z.string().cuid().optional(),
   /** true = ignorer l'avertissement de doublons et créer quand même */
   confirmDespiteDuplicates: z.boolean().default(false),
@@ -61,6 +81,7 @@ export const profileUpdateSchema = z
       .optional(),
 
     // ── Identité ──
+    title: z.string().trim().min(1, "Le titre public ne peut pas être vide.").max(120).optional(),
     firstName: firstNameSchema.optional(),
     lastName: z.string().trim().max(80).regex(NAME_PATTERN).nullable().optional(),
     sexCode: z.enum(["MALE", "FEMALE", "OTHER"]).nullable().optional(),
@@ -70,10 +91,15 @@ export const profileUpdateSchema = z
     heightMaxCm: z.number().int().min(30).max(400).nullable().optional(),
     hairColorId: z.string().cuid().nullable().optional(),
     skinToneId: z.string().cuid().nullable().optional(),
+    /** Iris (référentiel EYE_COLOR). Le second n'existe qu'en hétérochromie. */
+    eyeColorId: z.string().cuid().nullable().optional(),
+    eyeColorSecondaryId: z.string().cuid().nullable().optional(),
 
     // ── Affiliation ──
     factionId: z.string().cuid().nullable().optional(),
     rankId: z.string().cuid().nullable().optional(),
+    /** Classe de combat (référentiel NINJA_CLASS) — une seule en V1 */
+    ninjaClassId: z.string().cuid().nullable().optional(),
 
     // ── État vital & âge ──
     lifeStatus: z.enum(["ALIVE", "DEAD", "MISSING"]).nullable().optional(),
@@ -103,6 +129,20 @@ export const profileUpdateSchema = z
     weaknesses: z.string().max(10_000).nullable().optional(),
     internalNotes: z.string().max(10_000).nullable().optional(),
   })
+  .superRefine((data, ctx) => {
+    for (const [fieldKey, state] of Object.entries(data.fieldStates ?? {})) {
+      if (
+        state === "NONE_CONFIRMED" &&
+        !canDeclareNoneForField(fieldKey as (typeof PROFILE_FIELD_KEYS)[number])
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["fieldStates", fieldKey],
+          message: "Une absence confirmée n'a pas de sens pour ce champ.",
+        });
+      }
+    }
+  })
   .refine(
     (d) =>
       d.heightMinCm == null || d.heightMaxCm == null || d.heightMinCm <= d.heightMaxCm,
@@ -111,6 +151,11 @@ export const profileUpdateSchema = z
   .refine(
     (d) => d.ageMinNow == null || d.ageMaxNow == null || d.ageMinNow <= d.ageMaxNow,
     { message: "L'âge minimal ne peut pas dépasser le maximal.", path: ["ageMaxNow"] },
+  )
+  .refine(
+    // Deux fois la même couleur n'est pas une hétérochromie.
+    (d) => d.eyeColorSecondaryId == null || d.eyeColorSecondaryId !== d.eyeColorId,
+    { message: "Les deux yeux ont la même couleur : décochez l'hétérochromie.", path: ["eyeColorSecondaryId"] },
   );
 
 export type ProfileUpdateInput = z.infer<typeof profileUpdateSchema>;

@@ -79,15 +79,22 @@ export const DEFAULT_PROFILE_PRICING: ProfilePricing = {
     // L'histoire d'un homme — un passé, une dette, une faute — vaut autant
     // que ses techniques : on peut la retourner contre lui sans combattre.
     details: 1600,
+    // Savoir qu'on affronte un Ravageur ou un Soigneur change le plan
+    // d'attaque : c'est du combat, pas de l'état civil.
+    ninjaClass: 1000,
     clans: 900,
     faction: 800,
     rank: 700,
-    lastName: 500,
+    // Le nom est PUBLIC (il est dans le titre du dossier) : on ne vend pas ce
+    // que tout le monde lit. Présent au barème pour que la grille soit
+    // complète, à zéro pour que le prix soit juste.
+    lastName: 0,
     lifeStatus: 400,
     age: 300,
     image: 900, // un visage vaut cher quand il faut reconnaître quelqu'un
     // ── Ce qui ne fait que compléter ──
     height: 200,
+    eyeColor: 150,
     hairColor: 150,
     skinTone: 150,
     sex: 100,
@@ -117,10 +124,14 @@ export const PRICING_GROUPS: { label: string; fields: ProfileFieldKey[] }[] = [
       "chakraNatures",
       "kenjutsuStyles",
       "artifacts",
+      "ninjaClass",
     ],
   },
   { label: "Affiliation et identité", fields: ["clans", "faction", "rank", "lastName", "details"] },
-  { label: "État et apparence", fields: ["lifeStatus", "age", "image", "height", "hairColor", "skinTone", "sex"] },
+  {
+    label: "État et apparence",
+    fields: ["lifeStatus", "age", "image", "height", "eyeColor", "hairColor", "skinTone", "sex"],
+  },
 ];
 
 export interface PricingInput {

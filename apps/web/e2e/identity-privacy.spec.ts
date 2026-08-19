@@ -149,23 +149,26 @@ test("les identités réelles d'un AUTRE groupe ne quittent jamais le serveur", 
 
   await loginAs(context, "demo-member-0-0-0");
 
-  const responses: string[] = [];
-  page.on("response", async (response) => {
+  const responses: Promise<string>[] = [];
+  page.on("response", (response) => {
     const type = response.headers()["content-type"] ?? "";
-    if (type.includes("text") || type.includes("json") || type.includes("javascript")) {
-      responses.push(await response.text().catch(() => ""));
+    if (type.includes("html") || type.includes("x-component") || type.includes("json")) {
+      responses.push(response.text().catch(() => ""));
     }
   });
 
   await page.goto(`/groupes/${otherGroup.id}`);
-  await expect(page.getByRole("heading", { name: /membres/i })).toBeVisible();
+  // Un groupe étranger peut être entièrement introuvable : c'est plus strict
+  // encore que d'afficher une liste anonymisée.
+  await expect(page.getByRole("heading", { name: "404" })).toBeVisible();
 
   const html = await page.content();
+  const bodies = await Promise.all(responses);
   for (const member of otherMembers) {
     expect(html, `« ${member.firstName} » ne doit pas être dans le DOM`).not.toContain(
       member.firstName!,
     );
-    for (const body of responses) {
+    for (const body of bodies) {
       expect(body).not.toContain(member.firstName!);
     }
   }

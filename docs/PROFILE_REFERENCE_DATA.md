@@ -91,8 +91,18 @@ Kekkei Genkai, Clans et Rangs du wiki francophone.
 - **7** artefacts : les Sept Épées de la Brume (Kubikiribôchô, Samehada,
   Hiramekarei, Kiba, Nuibari, Kabutowari, Shibuki), toutes `isUnique`.
 
+- **13** couleurs des yeux (`EYE_COLOR` : Noir, Brun foncé, Brun, Noisette,
+  Ambre, Vert, Bleu, Gris, Rouge, Violet, Blanc, Doré, Autre) — la couleur de
+  l'**iris**, jamais un dôjutsu ;
+- **4** classes ninja (`NINJA_CLASS` : `HEALER` Soigneur, `TRACKER` Traqueur,
+  `RAVAGER` Ravageur, `DEFENDER` Défenseur) — classification propre au serveur,
+  **pas** un enum SQL : la modération renomme ou ajoute depuis
+  `/admin/referentiels`, qui itère sur `REFERENCE_TYPE_LABELS`.
+
 Le seed est **idempotent** (upsert par `type + code`) : il s'exécute sans
-risque en production et met à jour les libellés sans dupliquer.
+risque en production et met à jour les libellés sans dupliquer. Exception
+voulue : les entrées marquées `preserveLabel` (les classes) gardent le libellé
+que la modération leur a donné — le seed les crée, il ne les renomme plus.
 
 ## Artefacts uniques
 
