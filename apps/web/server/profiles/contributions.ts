@@ -4,8 +4,11 @@ import {
   CONTRIBUTION_VALUE_SCHEMAS,
   LIFE_STATUS_LABELS,
   LIST_FIELD_KEYS,
+  PROFILE_FIELD_LABELS,
   PROFILE_SEX_LABELS,
+  SINGLE_OPTION_FIELD_TYPE,
   TRAIT_FIELD_TO_TYPE,
+  canDeclareNoneForField,
   formatHeight,
   type ProfileFieldKey,
 } from "@toile/shared";
@@ -95,6 +98,8 @@ export async function contributionConflicts(
   profileId: string,
   fieldKey: ProfileFieldKey,
   proposedLabel: string,
+  /** La proposition déclare « vérifié : il n'y en a pas » */
+  proposesNone = false,
 ): Promise<boolean> {
   const intel = await tx.characterFieldIntel.findUnique({
     where: { profileId_fieldKey: { profileId, fieldKey } },
@@ -148,11 +153,66 @@ export async function contributionConflicts(
   const known = (intel?.knowledgeState ?? (currentLabel ? "KNOWN" : "UNKNOWN")) === "KNOWN";
   if (!known || !currentLabel) return false;
 
+  // « Il n'y en a pas » alors que la Toile en connaît : c'est LA contradiction
+  // à signaler — l'accepter effacerait ce qui est en place (listes comprises).
+  if (proposesNone) return true;
+
   // Listes et techniques : jamais de conflit — une contribution AJOUTE, elle
   // ne retire rien, donc deux listes différentes se complètent. Seules les
   // valeurs uniques (un nom, une faction, un texte) peuvent se contredire.
   if (LIST_FIELD_KEYS.includes(fieldKey)) return false;
   return currentLabel.trim() !== proposedLabel.trim();
+}
+
+/**
+ * Les identifiants de référentiel d'une contribution doivent désigner des
+ * options ACTIVES du BON type : sans cela, une contribution pourrait écrire un
+ * clan dans la couleur des cheveux, ou une option inexistante (erreur 500 à
+ * l'écriture). Lance une Error lisible si ce n'est pas le cas.
+ */
+export async function assertContributionOptions(
+  tx: Tx,
+  fieldKey: ProfileFieldKey,
+  value: unknown,
+): Promise<void> {
+  const expectOptions = async (ids: string[], type: string) => {
+    if (ids.length === 0) return;
+    const count = await tx.profileReferenceOption.count({
+      where: { id: { in: ids }, type, isActive: true },
+    });
+    if (count !== new Set(ids).size) {
+      throw new Error(`Option de référentiel invalide pour ${PROFILE_FIELD_LABELS[fieldKey]}.`);
+    }
+  };
+  const single = SINGLE_OPTION_FIELD_TYPE[fieldKey];
+  if (single) {
+    if (fieldKey === "eyeColor") {
+      const e = value as { primaryId: string; secondaryId?: string | null };
+      await expectOptions([e.primaryId, ...(e.secondaryId ? [e.secondaryId] : [])], single);
+    } else {
+      await expectOptions([String(value)], single);
+    }
+    return;
+  }
+  const refType = TRAIT_FIELD_TO_TYPE[fieldKey];
+  if (refType) {
+    await expectOptions(value as string[], refType);
+    return;
+  }
+  if (fieldKey === "faction") {
+    const f = await tx.faction.count({ where: { id: String(value), isActive: true } });
+    if (f !== 1) throw new Error("Faction inconnue.");
+  }
+  if (fieldKey === "rank") {
+    const r = await tx.playerLevel.count({ where: { id: String(value) } });
+    if (r !== 1) throw new Error("Grade inconnu.");
+  }
+  if (fieldKey === "techniques") {
+    const ids = (value as { jutsuTypeId?: string | null }[])
+      .map((t) => t.jutsuTypeId)
+      .filter((id): id is string => Boolean(id));
+    await expectOptions(ids, "JUTSU_TYPE");
+  }
 }
 
 export interface ApplyContext {
@@ -191,25 +251,42 @@ export async function applyContributionValue(
   const now = new Date();
 
   if (mode === "NONE_CONFIRMED") {
+    if (!canDeclareNoneForField(fieldKey)) {
+      throw new Error(`Le champ ${PROFILE_FIELD_LABELS[fieldKey]} ne se déclare pas « absent ».`);
+    }
     const refType = TRAIT_FIELD_TO_TYPE[fieldKey];
     if (refType) {
+      oldValue = profile.traits
+        .filter((trait) => trait.option.type === refType)
+        .map((trait) => trait.optionId);
       await tx.characterProfileTrait.deleteMany({ where: { profileId, option: { type: refType } } });
     } else {
       switch (fieldKey) {
-        case "lastName": data.characterLastName = null; break;
-        case "sex": data.sexCode = null; break;
-        case "height": data.heightMinCm = null; data.heightMaxCm = null; break;
-        case "hairColor": data.hairColorId = null; break;
-        case "skinTone": data.skinToneId = null; break;
-        case "eyeColor": data.eyeColorId = null; data.eyeColorSecondaryId = null; break;
-        case "ninjaClass": data.ninjaClassId = null; break;
-        case "faction": data.factionId = null; break;
-        case "rank": data.rankId = null; break;
-        case "lifeStatus": data.lifeStatus = null; break;
-        case "details": data.details = null; break;
-        case "strengths": data.strengths = null; break;
-        case "weaknesses": data.weaknesses = null; break;
-        default: break; // age, techniques : l'absence n'a pas de sens, on ne touche pas
+        case "lastName": oldValue = profile.characterLastName; data.characterLastName = null; break;
+        case "sex": oldValue = profile.sexCode; data.sexCode = null; break;
+        case "height": {
+          oldValue = { min: profile.heightMinCm, max: profile.heightMaxCm };
+          data.heightMinCm = null;
+          data.heightMaxCm = null;
+          break;
+        }
+        case "hairColor": oldValue = profile.hairColorId; data.hairColorId = null; break;
+        case "skinTone": oldValue = profile.skinToneId; data.skinToneId = null; break;
+        case "eyeColor": {
+          oldValue = { primary: profile.eyeColorId, secondary: profile.eyeColorSecondaryId };
+          data.eyeColorId = null;
+          data.eyeColorSecondaryId = null;
+          break;
+        }
+        case "ninjaClass": oldValue = profile.ninjaClassId; data.ninjaClassId = null; break;
+        case "faction": oldValue = profile.factionId; data.factionId = null; break;
+        case "rank": oldValue = profile.rankId; data.rankId = null; break;
+        case "lifeStatus": oldValue = profile.lifeStatus; data.lifeStatus = null; break;
+        case "details": oldValue = profile.details; data.details = null; break;
+        case "strengths": oldValue = profile.strengths; data.strengths = null; break;
+        case "weaknesses": oldValue = profile.weaknesses; data.weaknesses = null; break;
+        default:
+          throw new Error(`Le champ ${PROFILE_FIELD_LABELS[fieldKey]} ne peut pas être vidé par une contribution.`);
       }
     }
     newValue = { noneConfirmed: true };
@@ -312,8 +389,12 @@ export async function applyContributionValue(
     where: { profileId_fieldKey: { profileId, fieldKey } },
     update: {
       knowledgeState: mode === "NONE_CONFIRMED" ? "NONE_CONFIRMED" : "KNOWN",
-      confidence: ctx.confidence ?? undefined,
-      sourceMissionId: ctx.sourceMissionId ?? undefined,
+      // Une absence vérifiée remplace entièrement l'information précédente :
+      // aucune provenance, confiance ou observation de l'ancienne valeur ne
+      // doit survivre si la nouvelle assertion n'en fournit pas.
+      confidence: mode === "NONE_CONFIRMED" ? (ctx.confidence ?? null) : (ctx.confidence ?? undefined),
+      sourceMissionId: mode === "NONE_CONFIRMED" ? (ctx.sourceMissionId ?? null) : (ctx.sourceMissionId ?? undefined),
+      ...(mode === "NONE_CONFIRMED" ? { sourceNote: null, observedAtRp: null } : {}),
       updatedById: ctx.actorId,
     },
     create: {
@@ -341,5 +422,5 @@ export async function applyContributionValue(
 
 /** Le champ accepte-t-il une contribution ? (image → galerie, etc.) */
 export function isContributableField(fieldKey: string): fieldKey is ProfileFieldKey {
-  return fieldKey in CONTRIBUTION_VALUE_SCHEMAS;
+  return Object.prototype.hasOwnProperty.call(CONTRIBUTION_VALUE_SCHEMAS, fieldKey);
 }

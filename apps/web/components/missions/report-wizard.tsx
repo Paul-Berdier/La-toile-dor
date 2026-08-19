@@ -57,6 +57,7 @@ export function MissionReportWizard({
   refs,
   initialDraft,
   draftSavedAt,
+  canFinalize,
 }: {
   missionId: string;
   missionCode: string;
@@ -66,6 +67,8 @@ export function MissionReportWizard({
   refs: IntelRefs;
   initialDraft: MissionReportPayload | null;
   draftSavedAt: string | null;
+  /** Le brouillon est possible dès l'attribution ; le dépôt exige IN_PROGRESS. */
+  canFinalize: boolean;
 }) {
   const router = useRouter();
   const [payload, setPayload] = useState<MissionReportPayload>(() => {
@@ -84,29 +87,74 @@ export function MissionReportWizard({
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(draftSavedAt);
   const [saving, setSaving] = useState(false);
+  const [draftError, setDraftError] = useState<string | null>(null);
   const [duplicates, setDuplicates] = useState<NonNullable<ReportActionResult["duplicates"]>>([]);
+  const [duplicateConfirmationToken, setDuplicateConfirmationToken] = useState("");
   const [done, setDone] = useState<ReportActionResult["summary"] | null>(null);
   const [isPending, startTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dirty = useRef(false);
+  const saveChain = useRef<Promise<void>>(Promise.resolve());
+  const finalizing = useRef(false);
+  // Une fois finalisé, plus aucune sauvegarde : un timer en retard
+  // ressusciterait le brouillon que le serveur vient d'effacer.
+  const finalized = useRef(false);
+
+  const enqueueDraftSave = useCallback(
+    (snapshot: MissionReportPayload): Promise<boolean> => {
+      setSaving(true);
+      const run = saveChain.current.then(async () => {
+        try {
+          const res = await saveMissionReportDraftAction({ missionId, groupId, payload: snapshot });
+          if (res.ok) {
+            setSaved(new Date().toISOString());
+            setDraftError(null);
+            return true;
+          }
+          setDraftError(res.error ?? "Le brouillon n'a pas pu être enregistré.");
+          return false;
+        } catch {
+          setDraftError("Le brouillon n'a pas pu être enregistré.");
+          return false;
+        }
+      });
+      const tail = run.then(() => undefined);
+      saveChain.current = tail;
+      void tail.then(() => {
+        // Une sauvegarde plus récente a pu être ajoutée entre-temps :
+        // l'indicateur ne s'éteint qu'une fois la file entière terminée.
+        if (saveChain.current === tail) setSaving(false);
+      });
+      return run;
+    },
+    [missionId, groupId],
+  );
 
   // ── Brouillon : sauvegarde 1,5 s après la dernière frappe ──
   useEffect(() => {
-    if (!dirty.current) return;
-    const timer = setTimeout(async () => {
-      setSaving(true);
-      const res = await saveMissionReportDraftAction({ missionId, groupId, payload: { ...payload, step } });
-      setSaving(false);
-      if (res.ok) setSaved(new Date().toISOString());
+    if (!dirty.current || finalizing.current || finalized.current) return;
+    const timer = setTimeout(() => {
+      if (finalizing.current || finalized.current) return;
+      const snapshot = { ...payload, step };
+      // Les sauvegardes restent strictement ordonnées : une ancienne réponse
+      // ne peut plus écraser une saisie plus récente.
+      void enqueueDraftSave(snapshot);
     }, 1500);
     return () => clearTimeout(timer);
-  }, [payload, step, missionId, groupId]);
+  }, [payload, step, enqueueDraftSave]);
 
   const update = useCallback((fn: (p: MissionReportPayload) => MissionReportPayload) => {
     dirty.current = true;
+    setDuplicates([]);
+    setDuplicateConfirmationToken("");
     setPayload(fn);
   }, []);
-  const goTo = (s: number) => { dirty.current = true; setStep(s); };
+  const goTo = (s: number) => {
+    dirty.current = true;
+    setDuplicates([]);
+    setDuplicateConfirmationToken("");
+    setStep(s);
+  };
 
   // ── Étape 1 : sorts et résumé ──
   const setOutcome = (targetId: string, patch: Partial<{ outcome: string; note: string }>) =>
@@ -165,21 +213,38 @@ export function MissionReportWizard({
   const discoveredOk = payload.discovered.every((d) => d.firstName.trim().length > 0);
 
   // ── Étape 3 : finalisation ──
-  const finalize = (confirmDuplicates = false) => {
-    if (isPending) return;
+  const finalize = () => {
+    if (!canFinalize || isPending || finalizing.current) return;
+    // Bloque immédiatement tout timer restant et place l'instantané courant
+    // après les sauvegardes déjà parties. Si le dépôt échoue (ou demande
+    // une confirmation de doublon), le dernier état affiché reste donc durable.
+    finalizing.current = true;
+    const snapshot = { ...payload, step: 2 };
     startTransition(async () => {
+      const draftSaved = await enqueueDraftSave(snapshot);
+      if (!draftSaved) {
+        finalizing.current = false;
+        return;
+      }
       const fd = new FormData();
       fd.set("missionId", missionId);
       fd.set("groupId", groupId);
-      fd.set("payload", JSON.stringify({ ...payload, step: 2 }));
-      fd.set("confirmDuplicates", confirmDuplicates ? "true" : "false");
+      fd.set("payload", JSON.stringify(snapshot));
+      if (duplicateConfirmationToken) fd.set("duplicateConfirmationToken", duplicateConfirmationToken);
       for (const img of images) fd.append("images", img.file);
       const res = await finalizeMissionReportAction(fd);
       if (!res.ok) {
-        if (res.duplicates?.length) { setDuplicates(res.duplicates); setError(null); return; }
+        finalizing.current = false;
+        if (res.duplicates?.length) {
+          setDuplicates(res.duplicates);
+          setDuplicateConfirmationToken(res.duplicateConfirmationToken ?? "");
+          setError(null);
+          return;
+        }
         setError(res.error ?? "La finalisation a échoué.");
         return;
       }
+      finalized.current = true;
       images.forEach((i) => URL.revokeObjectURL(i.url));
       setDone(res.summary ?? null);
       router.refresh();
@@ -393,27 +458,57 @@ export function MissionReportWizard({
         </div>
       )}
 
+      {draftError && <p role="status" className="border border-warning/50 bg-warning/10 px-3 py-2 text-xs text-warning">Brouillon non enregistré : {draftError}</p>}
       {error && <p role="alert" className="border border-blood bg-blood/10 px-3 py-2 text-xs text-blood-bright">{error}</p>}
+      {step === 2 && !canFinalize && (
+        <p role="status" className="border border-warning/50 bg-warning/10 px-3 py-2 text-xs text-warning">
+          Le brouillon est prêt. La mission doit d&rsquo;abord être marquée « en cours » avant le dépôt final.
+        </p>
+      )}
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex gap-2">
-          {step > 0 && <Button variant="ghost" size="sm" onClick={() => goTo(step - 1)}>← Précédent</Button>}
+          {step > 0 && <Button type="button" variant="ghost" size="sm" onClick={() => goTo(step - 1)}>← Précédent</Button>}
           {initialDraft && (
-            <Button variant="ghost" size="sm" onClick={() => {
+            <Button type="button" variant="ghost" size="sm" onClick={() => {
               if (!window.confirm("Effacer le brouillon de ce rapport ?")) return;
-              startTransition(async () => { await discardMissionReportDraftAction({ missionId, groupId }); router.refresh(); });
+              finalizing.current = true;
+              startTransition(async () => {
+                await saveChain.current;
+                const res = await discardMissionReportDraftAction({ missionId, groupId });
+                if (!res.ok) {
+                  finalizing.current = false;
+                  setError(res.error ?? "Le brouillon n'a pas pu être effacé.");
+                  return;
+                }
+                setPayload({
+                  ...EMPTY_REPORT_PAYLOAD,
+                  outcomes: targets.map((target) => ({
+                    targetId: target.id,
+                    outcome: (target.outcome as never) ?? "UNKNOWN",
+                  })),
+                });
+                setStep(0);
+                setSaved(null);
+                setDraftError(null);
+                setDuplicates([]);
+                setDuplicateConfirmationToken("");
+                dirty.current = false;
+                finalizing.current = false;
+                router.refresh();
+              });
             }}>Effacer le brouillon</Button>
           )}
         </div>
         {step < 2 ? (
-          <Button variant="outline" size="sm" onClick={() => goTo(step + 1)}>Suivant →</Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => goTo(step + 1)}>Suivant →</Button>
         ) : duplicates.length > 0 ? (
-          <Button variant="gold" onClick={() => finalize(true)} disabled={isPending || !summaryOk || untreated.length > 0 || !discoveredOk}>
-            {isPending ? "Enregistrement…" : "Confirmer et terminer la mission"}
+          <Button type="button" variant="gold" onClick={() => finalize()} disabled={!canFinalize || isPending || !summaryOk || untreated.length > 0 || !discoveredOk}>
+            {isPending ? "Enregistrement…" : "Confirmer et déposer le rapport final"}
           </Button>
         ) : (
-          <Button variant="gold" onClick={() => finalize(false)} disabled={isPending || !summaryOk || untreated.length > 0 || !discoveredOk}>
-            {isPending ? "Enregistrement…" : "Terminer la mission et enregistrer les renseignements"}
+          <Button type="button" variant="gold" onClick={() => finalize()} disabled={!canFinalize || isPending || !summaryOk || untreated.length > 0 || !discoveredOk}>
+            {isPending ? "Enregistrement…" : "Déposer le rapport final et les renseignements"}
           </Button>
         )}
       </div>
@@ -444,7 +539,12 @@ function DossierBlock({
           {treated && <span aria-hidden className="ml-2 text-gold">✓</span>}
         </p>
         <label className="flex items-center gap-2 text-xs text-ink-muted">
-          <input type="checkbox" checked={dossier.noNewInfo} onChange={(e) => onChange({ noNewInfo: e.target.checked })} />
+          <input
+            type="checkbox"
+            checked={dossier.noNewInfo}
+            // Cocher « rien de neuf » vide les entrées : pas d'ambiguïté à l'envoi
+            onChange={(e) => onChange(e.target.checked ? { noNewInfo: true, entries: [] } : { noNewInfo: false })}
+          />
           Aucune nouvelle information
         </label>
       </div>

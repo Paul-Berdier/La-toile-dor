@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { PROFILE_FIELD_KEYS, REFERENCE_TYPES, type ReferenceType } from "./profile-fields";
+import {
+  PROFILE_FIELD_KEYS,
+  REFERENCE_TYPES,
+  canDeclareNoneForField,
+  type ReferenceType,
+} from "./profile-fields";
 
 // ── Validation serveur des dossiers de renseignement ──
 
@@ -76,6 +81,7 @@ export const profileUpdateSchema = z
       .optional(),
 
     // ── Identité ──
+    title: z.string().trim().min(1, "Le titre public ne peut pas être vide.").max(120).optional(),
     firstName: firstNameSchema.optional(),
     lastName: z.string().trim().max(80).regex(NAME_PATTERN).nullable().optional(),
     sexCode: z.enum(["MALE", "FEMALE", "OTHER"]).nullable().optional(),
@@ -122,6 +128,20 @@ export const profileUpdateSchema = z
     strengths: z.string().max(10_000).nullable().optional(),
     weaknesses: z.string().max(10_000).nullable().optional(),
     internalNotes: z.string().max(10_000).nullable().optional(),
+  })
+  .superRefine((data, ctx) => {
+    for (const [fieldKey, state] of Object.entries(data.fieldStates ?? {})) {
+      if (
+        state === "NONE_CONFIRMED" &&
+        !canDeclareNoneForField(fieldKey as (typeof PROFILE_FIELD_KEYS)[number])
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["fieldStates", fieldKey],
+          message: "Une absence confirmée n'a pas de sens pour ce champ.",
+        });
+      }
+    }
   })
   .refine(
     (d) =>

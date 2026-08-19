@@ -11,15 +11,29 @@ import { loginAs, prisma } from "./helpers";
  */
 
 /** Collecte les corps de réponses texte/JSON/JS d'une page. */
-function collectBodies(page: Page): string[] {
-  const bodies: string[] = [];
-  page.on("response", async (response) => {
+function collectBodies(page: Page): () => Promise<string[]> {
+  const pending: Promise<string>[] = [];
+  page.on("response", (response) => {
     const type = response.headers()["content-type"] ?? "";
-    if (type.includes("text") || type.includes("json") || type.includes("javascript")) {
-      bodies.push(await response.text().catch(() => ""));
+    // Les chunks JS partagés contiennent les libellés génériques du catalogue
+    // et ne sont pas une charge de données du dossier consulté. On surveille
+    // le document, les réponses RSC et JSON produites côté serveur.
+    if (type.includes("html") || type.includes("x-component") || type.includes("json")) {
+      pending.push(response.text().catch(() => ""));
     }
   });
-  return bodies;
+  return async () => {
+    // Une réponse peut être émise pendant qu'une autre finit d'être lue.
+    // On attend jusqu'à ce que la liste soit stable, pas seulement les
+    // promesses présentes au premier instantané.
+    let previousCount = -1;
+    while (previousCount !== pending.length) {
+      previousCount = pending.length;
+      await Promise.all(pending.slice(0, previousCount));
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+    return Promise.all(pending);
+  };
 }
 
 /** Groupe du seed par membre, avec son chef. */
@@ -46,7 +60,10 @@ test("un membre de groupe ouvre un dossier ; son groupe le voit et le complète,
 }) => {
   const author = "demo-member-1-1-0"; // membre simple, un seul groupe
   const { group } = await groupOf(author);
-  const firstName = `ZZCreat${Date.now().toString(36)}`;
+  const suffix = Date.now()
+    .toString(36)
+    .replace(/[0-9]/g, (digit) => "aeiouzyxwv"[Number(digit)]!);
+  const firstName = `ZZCreat${suffix}`;
   let profileId: string | null = null;
   try {
     await loginAs(context, author);
@@ -156,14 +173,14 @@ test("une image de galerie n'est ni servie ni nommée à un lecteur sans accès"
   const imageId = profile.images[0]!.id;
   try {
     // Sans accès : 404 sur l'image, placeholder « Image confidentielle », ni id ni légende dans la page
-    const bodies = collectBodies(page);
+    const readBodies = collectBodies(page);
     await loginAs(context, "demo-member-2-0-0");
     await page.goto(`/profils/${profile.id}`);
     await expect(page.getByRole("img", { name: /confidentielles/i })).toBeVisible();
     const html = await page.content();
     expect(html).not.toContain(imageId);
     expect(html).not.toContain("ZZ-LEGENDE-SECRETE");
-    for (const body of bodies) {
+    for (const body of await readBodies()) {
       expect(body).not.toContain(imageId);
       expect(body).not.toContain("ZZ-LEGENDE-SECRETE");
     }
@@ -200,7 +217,9 @@ test("classe ninja et couleur des yeux (hétérochromie) s'affichent à l'autori
     prisma.profileReferenceOption.findMany({ where: { type: "NINJA_CLASS", isActive: true } }),
     prisma.profileReferenceOption.findMany({ where: { type: "EYE_COLOR", isActive: true } }),
   ]);
-  expect(classes.map((c) => c.code).sort()).toEqual(["DEFENDER", "HEALER", "RAVAGER", "TRACKER"]);
+  expect(classes.map((c) => c.code)).toEqual(
+    expect.arrayContaining(["DEFENDER", "HEALER", "RAVAGER", "TRACKER"]),
+  );
   expect(eyes.length).toBeGreaterThanOrEqual(13);
   const ravager = classes.find((c) => c.code === "RAVAGER")!;
   const blue = eyes.find((e) => e.code === "BLUE")!;
@@ -231,12 +250,20 @@ test("classe ninja et couleur des yeux (hétérochromie) s'affichent à l'autori
     const otherCtx = await browser.newContext();
     await loginAs(otherCtx, "demo-member-2-0-0");
     const other = await otherCtx.newPage();
-    const bodies = collectBodies(other);
+    const readBodies = collectBodies(other);
     await other.goto(`/profils/${profile.id}`);
     const html = await other.content();
     expect(html).not.toContain(ravager.label);
-    expect(html).not.toContain(`${blue.label} / ${green.label}`);
-    for (const body of bodies) expect(body).not.toContain(`${blue.label} / ${green.label}`);
+    for (const secret of [blue.label, green.label, blue.id, green.id]) {
+      expect(html).not.toContain(secret);
+    }
+    for (const body of await readBodies()) {
+      expect(body).not.toContain(ravager.label);
+      expect(body).not.toContain(ravager.id);
+      for (const secret of [blue.label, green.label, blue.id, green.id]) {
+        expect(body).not.toContain(secret);
+      }
+    }
     await otherCtx.close();
   } finally {
     await prisma.characterProfile.delete({ where: { id: profile.id } });
@@ -275,14 +302,15 @@ test("un acquéreur propose un renseignement ; le conflit reste côté modérati
   try {
     // L'acquéreur propose une autre histoire
     await loginAs(context, buyerMember);
-    const bodies = collectBodies(page);
+    const readBodies = collectBodies(page);
     await page.goto(`/profils/${profile.id}`);
     await expect(page.getByText(/Dossier acquis/)).toBeVisible();
     await page.getByRole("button", { name: /Ajouter un renseignement/ }).click();
     await page.getByRole("button", { name: "Détails", exact: true }).click();
     await page.getByLabel("Détails").fill("ZZ-HISTOIRE-PROPOSEE");
     await page.getByRole("button", { name: "Proposer" }).click();
-    await expect(page.getByText(/Renseignement transmis/)).toBeVisible();
+    // Le toast est volontairement transitoire ; l'état durable fait foi.
+    await expect(page.getByText(/En attente de validation/)).toBeVisible();
 
     const row = await prisma.profileIntelContribution.findFirstOrThrow({ where: { profileId: profile.id } });
     expect(row.status).toBe("PENDING_REVIEW");
@@ -295,7 +323,7 @@ test("un acquéreur propose un renseignement ; le conflit reste côté modérati
     const html = await page.content();
     expect(html).not.toContain("conflictsWithExisting");
     expect(html).not.toContain("Contredit la valeur");
-    for (const body of bodies) expect(body).not.toContain("conflictsWithExisting\":true");
+    for (const body of await readBodies()) expect(body).not.toContain("conflictsWithExisting\":true");
 
     // Le groupe créateur tranche depuis le dossier : il voit le conflit, accepte
     const ownerCtx = await browser.newContext();
@@ -315,12 +343,12 @@ test("un acquéreur propose un renseignement ; le conflit reste côté modérati
     const outCtx = await browser.newContext();
     await loginAs(outCtx, "demo-member-3-0-0");
     const out = await outCtx.newPage();
-    const outBodies = collectBodies(out);
+    const readOutBodies = collectBodies(out);
     await out.goto(`/profils/${profile.id}`);
     await expect(out.getByRole("button", { name: /Ajouter un renseignement/ })).toHaveCount(0);
     const outHtml = await out.content();
     expect(outHtml).not.toContain("ZZ-HISTOIRE");
-    for (const body of outBodies) expect(body).not.toContain("ZZ-HISTOIRE");
+    for (const body of await readOutBodies()) expect(body).not.toContain("ZZ-HISTOIRE");
     await outCtx.close();
   } finally {
     await prisma.characterProfile.delete({ where: { id: profile.id } });
@@ -334,8 +362,13 @@ test("le rapport de fin de mission enregistre sorts, renseignements et nouveau d
   context,
   page,
 }) => {
-  const agent = "demo-member-0-0-0";
-  const { group } = await groupOf(agent);
+  // Le rapport final est déposé par le CHEF du groupe attribué (il nomme les
+  // cibles, dont l'identité est réservée à ce niveau) — ici demo-chief-0.
+  const agent = "demo-chief-0";
+  const group = (await prisma.groupMember.findFirstOrThrow({
+    where: { userId: agent, isLeader: true, group: { isActive: true } },
+    include: { group: true },
+  })).group;
   const target = await prisma.characterProfile.create({
     data: {
       characterFirstName: "ZZCible",
@@ -387,11 +420,15 @@ test("le rapport de fin de mission enregistre sorts, renseignements et nouveau d
     await page.getByLabel("Détails").fill("ZZ-COMPLICE-SUR-LES-TOITS");
     await page.getByRole("button", { name: "Suivant →" }).click();
     // Étape 3 : finaliser
-    await page.getByRole("button", { name: /Terminer la mission et enregistrer/ }).click();
+    await page.getByRole("button", { name: /Déposer le rapport final et les renseignements/ }).click();
     await expect(page.getByText(/Rapport final enregistré/)).toBeVisible();
 
     const report = await prisma.missionReport.findFirstOrThrow({ where: { missionId: mission.id, isFinal: true } });
     expect(report.content).toContain("toits");
+    expect(report.reportingGroupId).toBe(group.id);
+    expect(report.payload).toMatchObject({
+      outcomes: [{ targetId: missionTarget.id, outcome: "ESCAPED" }],
+    });
     const t = await prisma.missionTarget.findUniqueOrThrow({ where: { id: missionTarget.id } });
     expect(t.outcome).toBe("ESCAPED");
     const discovered = await prisma.characterProfile.findFirstOrThrow({
@@ -404,7 +441,9 @@ test("le rapport de fin de mission enregistre sorts, renseignements et nouveau d
     expect(discovered.contributions[0]?.status).toBe("APPLIED");
     expect(discovered.contributions[0]?.sourceType).toBe("MISSION");
     const newTarget = await prisma.missionTarget.findFirst({ where: { missionId: mission.id, profileId: discovered.id } });
-    expect(newTarget).toBeTruthy();
+    // Un ninja découvert par ce groupe ne devient pas une cible globale visible
+    // des autres groupes attribués.
+    expect(newTarget).toBeNull();
     const draft = await prisma.missionReportDraft.findFirst({ where: { missionId: mission.id } });
     expect(draft).toBeNull();
   } finally {

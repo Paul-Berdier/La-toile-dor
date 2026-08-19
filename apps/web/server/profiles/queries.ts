@@ -414,8 +414,9 @@ export async function getDossierDetail(
   const rpConfig = await getRpTimeConfig();
   const dossier = serializeDossier(profile, viewer, canView, rpConfig);
 
-  // Relations : prénom du profil lié toujours visible ; le TYPE est voilé
-  // pour un lecteur sans accès au dossier consulté.
+  // Relations = renseignement protégé. Un lecteur sans accès ne reçoit ni
+  // identifiant, ni profil lié, ni topologie (parent/enfant/fratrie) : aucun
+  // masquage CSS ne doit pouvoir reconstituer ces données.
   const relations: RelationView[] = [];
   const push = (
     relationId: string,
@@ -431,15 +432,17 @@ export async function getDossierDetail(
       related: { id: related.id, code: related.code, firstName: related.characterFirstName },
     });
   };
-  for (const rel of profile.relationsFrom) {
-    if (rel.type === "PARENT_OF") push(rel.id, "children", rel.toProfile);
-    else if (rel.type === "CREATOR_OF") push(rel.id, "creations", rel.toProfile);
-    else push(rel.id, "siblings", rel.toProfile);
-  }
-  for (const rel of profile.relationsTo) {
-    if (rel.type === "PARENT_OF") push(rel.id, "parents", rel.fromProfile);
-    else if (rel.type === "CREATOR_OF") push(rel.id, "creators", rel.fromProfile);
-    else push(rel.id, "siblings", rel.fromProfile);
+  if (canView) {
+    for (const rel of profile.relationsFrom) {
+      if (rel.type === "PARENT_OF") push(rel.id, "children", rel.toProfile);
+      else if (rel.type === "CREATOR_OF") push(rel.id, "creations", rel.toProfile);
+      else push(rel.id, "siblings", rel.toProfile);
+    }
+    for (const rel of profile.relationsTo) {
+      if (rel.type === "PARENT_OF") push(rel.id, "parents", rel.fromProfile);
+      else if (rel.type === "CREATOR_OF") push(rel.id, "creators", rel.fromProfile);
+      else push(rel.id, "siblings", rel.fromProfile);
+    }
   }
 
   // Volume de renseignements détenus : un compte, jamais un contenu — il est
@@ -600,6 +603,11 @@ export async function getDossierDetail(
     const nameOf = new Map(users.map((u) => [u.id, u.displayName]));
     const missionCode = new Map(missions.map((m) => [m.id, m.code]));
 
+    // Qui propose : la modération le sait ; le groupe créateur (relecteur
+    // non-modérateur) ne doit pas apprendre par là QUEL autre groupe détient
+    // le dossier — il voit « un groupe acquéreur », sans nom ni mission.
+    const revealAuthor = (r: (typeof rows)[number]) =>
+      access.canAdminister || r.contributorId === viewer.userId;
     const toView = (r: (typeof rows)[number]): ContributionView => ({
       id: r.id,
       fieldKey: r.fieldKey,
@@ -610,9 +618,9 @@ export async function getDossierDetail(
       note: r.note,
       status: r.status,
       sourceType: r.sourceType,
-      groupName: r.group?.name ?? null,
-      contributorName: nameOf.get(r.contributorId) ?? "—",
-      sourceMissionCode: r.sourceMission?.code ?? null,
+      groupName: revealAuthor(r) ? (r.group?.name ?? null) : null,
+      contributorName: revealAuthor(r) ? (nameOf.get(r.contributorId) ?? "—") : "Un groupe acquéreur",
+      sourceMissionCode: revealAuthor(r) ? (r.sourceMission?.code ?? null) : null,
       ...(access.canEdit ? { conflictsWithExisting: r.conflictsWithExisting } : {}),
       reviewNote: r.reviewNote,
       createdAt: r.createdAt.toISOString(),
@@ -625,14 +633,21 @@ export async function getDossierDetail(
       }
     }
     for (const r of revisions) {
+      // Provenance détaillée : modération, ou auteur de cette révision. Un
+      // autre détenteur voit qu'un champ a évolué, jamais quelle mission ou
+      // quelle note libre l'a produit.
+      const revealRevisionSource = access.canAdminister || r.changedById === viewer.userId;
       history.push({
         id: r.id,
         fieldKey: r.fieldKey,
         fieldLabel: PROFILE_FIELD_LABELS[r.fieldKey as ProfileFieldKey] ?? r.fieldKey,
-        justification: r.justification,
+        justification: revealRevisionSource ? r.justification : null,
         confidence: r.confidence,
-        authorName: r.changedById ? (nameOf.get(r.changedById) ?? null) : null,
-        sourceMissionCode: r.sourceMissionId ? (missionCode.get(r.sourceMissionId) ?? null) : null,
+        authorName: revealRevisionSource && r.changedById ? (nameOf.get(r.changedById) ?? null) : null,
+        sourceMissionCode:
+          revealRevisionSource && r.sourceMissionId
+            ? (missionCode.get(r.sourceMissionId) ?? null)
+            : null,
         createdAt: r.createdAt.toISOString(),
       });
     }

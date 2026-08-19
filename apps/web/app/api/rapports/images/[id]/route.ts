@@ -29,6 +29,8 @@ export async function GET(
       imageMime: true,
       report: {
         select: {
+          isFinal: true,
+          reportingGroupId: true,
           mission: {
             select: {
               id: true,
@@ -44,14 +46,23 @@ export async function GET(
 
   const permissions = await getUserPermissions(session.userId);
   const ctx = await getAccessContext({ session, permissions });
-  if (!canViewMissionConfidentialDetails(ctx, image.report.mission)) {
+  const canViewMission = canViewMissionConfidentialDetails(ctx, image.report.mission);
+  const canViewFinal =
+    ctx.isModerator ||
+    (image.report.reportingGroupId
+      ? ctx.ledGroups.some((group) => group.id === image.report.reportingGroupId)
+      : ctx.ledGroups.some((group) =>
+          image.report.mission.assignments.some((assignment) => assignment.groupId === group.id) ||
+          (image.report.mission.assignments.length === 0 && image.report.mission.assignedGroupId === group.id),
+        ));
+  if (!canViewMission || (image.report.isFinal && !canViewFinal)) {
     return new NextResponse(null, { status: 404 });
   }
 
   return new NextResponse(Buffer.from(image.imageData), {
     headers: {
       "Content-Type": image.imageMime,
-      "Cache-Control": "private, max-age=300",
+      "Cache-Control": "private, no-store",
       "X-Content-Type-Options": "nosniff",
       "Content-Disposition": "inline",
     },

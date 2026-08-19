@@ -137,6 +137,7 @@ export default async function ModifierDossierPage({
         sourceMissionId={mission}
         canManageReferences={current.permissions.has(PERMISSIONS.PROFILE_REFERENCE_MANAGE)}
         initialStep={initialStep}
+        canAdminister={current.permissions.has(PERMISSIONS.PROFILE_MANAGE)}
       />
 
       <div className="mt-6 grid gap-5 lg:grid-cols-2">
@@ -146,7 +147,9 @@ export default async function ModifierDossierPage({
           </h2>
           <TechniqueManager
             profileId={id}
-            jutsuTypes={refs.jutsuTypes.map((j) => ({ id: j.id, label: j.label }))}
+            jutsuTypes={refs.jutsuTypes
+              .filter((j) => j.isActive)
+              .map((j) => ({ id: j.id, label: j.label }))}
             techniques={profile.techniques.map((t) => ({
               id: t.id,
               name: t.name,

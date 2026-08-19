@@ -27,7 +27,9 @@ groupe attribué. Mission en `ASSIGNED` ou `IN_PROGRESS` seulement.
    n'est affichée ; l'équipe dit ce qu'elle a vu, la modération compare.
 3. **Validation** — récapitulatif, contrôles (résumé, dossiers non traités,
    ninja sans prénom, doublons), bouton
-   « **Terminer la mission et enregistrer les renseignements** ».
+   « **Déposer le rapport final et les renseignements** ». Le dépôt exige que
+   la mission soit `IN_PROGRESS` ; la résolution et la récompense restent une
+   action de modération distincte.
 
 Chaque dossier cible doit être **traité** (`untreatedDossiers`) : « rien de
 neuf » compte. On ne clôt pas en laissant un dossier dans le vague — c'est ce

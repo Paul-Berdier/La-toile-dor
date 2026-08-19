@@ -26,6 +26,8 @@ import { requireUser, requestMeta } from "@/lib/session";
 import { enqueueNotifications, userIdsWithPermission } from "@/server/notifications";
 import { getProfileViewer, decideAccess, toAccessTarget, accessTargetSelect } from "./access";
 import { findSimilarProfiles } from "./queries";
+import { assertContributionOptions } from "./contributions";
+import { canUseSourceMission } from "./source-mission";
 import { uploadProfileGalleryImageAction } from "./image-actions";
 import { createOwnedProfile, createProfileRecord } from "./create";
 
@@ -50,6 +52,24 @@ async function guardManage() {
   const current = await requireUser();
   if (!current.permissions.has(PERMISSIONS.PROFILE_MANAGE)) return null;
   return current;
+}
+
+/**
+ * Garde d'ÉDITION d'un dossier donné : modération OU groupe créateur — la
+ * même décision que la page de modification. Renvoie null si le dossier
+ * n'existe pas, est archivé, ou si le lecteur ne peut pas le modifier.
+ */
+async function guardEdit(profileId: string) {
+  const current = await requireUser();
+  const profile = await prisma.characterProfile.findUnique({
+    where: { id: profileId },
+    select: accessTargetSelect,
+  });
+  if (!profile || profile.archivedAt) return null;
+  const viewer = await getProfileViewer(current);
+  const access = decideAccess(viewer, toAccessTarget(profile));
+  if (!access.canEdit) return null;
+  return { current, access, profile };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -97,6 +117,9 @@ export async function quickCreateProfileAction(raw: unknown): Promise<ProfileAct
     ownerGroupId = viewer.groupIds[0]!;
   } else if (viewer.groupIds.length > 1 && !viewer.canManage) {
     return { ok: false, error: "Précisez pour quel groupe vous ouvrez ce dossier." };
+  }
+  if (!(await canUseSourceMission(current, parsed.data.sourceMissionId, ownerGroupId))) {
+    return { ok: false, error: "Cette mission ne peut pas être utilisée comme source pour ce groupe." };
   }
 
   // Doublons potentiels : avertir sans bloquer. Pour un lecteur qui n'a pas
@@ -196,9 +219,13 @@ export async function updateProfileAction(raw: unknown): Promise<ProfileActionRe
   if (!access.canEdit) {
     return { ok: false, error: "Seuls la modération et le groupe créateur peuvent modifier ce dossier." };
   }
-  if (input.internalNotes !== undefined && !access.canAdminister) {
-    return { ok: false, error: "Les notes internes sont réservées à la modération." };
+  if (!(await canUseSourceMission(current, input.sourceMissionId, profile.createdByGroupId))) {
+    return { ok: false, error: "Cette mission ne peut pas être utilisée comme source pour ce dossier." };
   }
+  // Notes internes : la modération seule les écrit. Un autre éditeur ne doit ni
+  // les écrire… ni voir son enregistrement refusé pour une clé que son
+  // formulaire n'affiche pas : on les ignore, on n'échoue pas.
+  if (!access.canAdminister) input.internalNotes = undefined;
 
   // Verrouillage optimiste : le formulaire renvoie la version qu'il a chargée.
   // Sans ce contrôle, deux modérateurs complétant le même dossier pendant la
@@ -320,9 +347,15 @@ export async function updateProfileAction(raw: unknown): Promise<ProfileActionRe
         include: { profile: { select: { code: true, characterFirstName: true } } },
       });
       if (holder) {
+        // Le porteur est un AUTRE dossier : on ne le nomme qu'à la modération.
+        // Un éditeur de groupe apprendrait sinon le code, le prénom et l'état
+        // vital d'un personnage qu'il n'a peut-être pas le droit de lire.
         warnings.push(
-          `${artifact.label} est déjà attribué à ${holder.profile.code} — ${holder.profile.characterFirstName}. ` +
-            "Copie, faux ou possession incertaine ? Vous pouvez marquer le champ comme contradictoire.",
+          access.canAdminister
+            ? `${artifact.label} est déjà attribué à ${holder.profile.code} — ${holder.profile.characterFirstName}. ` +
+                "Copie, faux ou possession incertaine ? Vous pouvez marquer le champ comme contradictoire."
+            : `${artifact.label} est déjà attribué à un autre personnage selon la Toile. ` +
+                "Copie, faux ou possession incertaine ? Vous pouvez marquer le champ comme contradictoire.",
         );
       }
     }
@@ -337,6 +370,65 @@ export async function updateProfileAction(raw: unknown): Promise<ProfileActionRe
     updatedById: current.session.userId,
     version: { increment: 1 },
   };
+
+  // Les schémas vérifient la FORME des identifiants ; cette liste vérifie leur
+  // type métier et leur activation dans la même transaction que l'écriture.
+  // Une option historique désactivée déjà portée par le dossier reste valide :
+  // seules les options NOUVELLEMENT introduites doivent encore être actives.
+  const optionChecks: { fieldKey: ProfileFieldKey; value: unknown }[] = [];
+  if (input.hairColorId && input.hairColorId !== profile.hairColorId) {
+    optionChecks.push({ fieldKey: "hairColor", value: input.hairColorId });
+  }
+  if (input.skinToneId && input.skinToneId !== profile.skinToneId) {
+    optionChecks.push({ fieldKey: "skinTone", value: input.skinToneId });
+  }
+  if (input.ninjaClassId && input.ninjaClassId !== profile.ninjaClassId) {
+    optionChecks.push({ fieldKey: "ninjaClass", value: input.ninjaClassId });
+  }
+  if (has("eyeColorId") || has("eyeColorSecondaryId")) {
+    const primaryId = has("eyeColorId") ? input.eyeColorId : profile.eyeColorId;
+    const secondaryId = has("eyeColorSecondaryId")
+      ? input.eyeColorSecondaryId
+      : profile.eyeColorSecondaryId;
+    const existingEyeIds = new Set(
+      [profile.eyeColorId, profile.eyeColorSecondaryId].filter((id): id is string => Boolean(id)),
+    );
+    for (const id of [primaryId, secondaryId].filter((value): value is string => Boolean(value))) {
+      if (existingEyeIds.has(id)) continue;
+      optionChecks.push({
+        fieldKey: "eyeColor",
+        // La validation porte ici sur l'ID ajouté ; les deux iris utilisent le
+        // même type de référentiel EYE_COLOR.
+        value: { primaryId: id, secondaryId: null },
+      });
+    }
+  }
+  if (input.factionId && input.factionId !== profile.factionId) {
+    optionChecks.push({ fieldKey: "faction", value: input.factionId });
+  }
+  if (input.rankId && input.rankId !== profile.rankId) {
+    optionChecks.push({ fieldKey: "rank", value: input.rankId });
+  }
+  for (const [fieldKey, ids] of [
+    ["clans", input.clanIds],
+    ["chakraNatures", input.chakraNatureIds],
+    ["kekkeiGenkai", input.kekkeiGenkaiIds],
+    ["clanTechniques", input.clanTechniqueIds],
+    ["signatureTechniques", input.signatureTechniqueIds],
+    ["combatStyles", input.combatStyleIds],
+    ["kenjutsuStyles", input.kenjutsuStyleIds],
+    ["artifacts", input.artifactIds],
+  ] as const) {
+    if (!ids || ids.length === 0) continue;
+    const refType = TRAIT_FIELD_TO_TYPE[fieldKey];
+    const existingIds = new Set(
+      profile.traits
+        .filter((trait) => trait.option.type === refType)
+        .map((trait) => trait.optionId),
+    );
+    const introducedIds = ids.filter((id) => !existingIds.has(id));
+    if (introducedIds.length > 0) optionChecks.push({ fieldKey, value: introducedIds });
+  }
 
   const applyScalar = (
     key: ProfileFieldKey,
@@ -428,6 +520,22 @@ export async function updateProfileAction(raw: unknown): Promise<ProfileActionRe
       oldValue: profile.characterFirstName,
       newValue: input.firstName,
       changedById: current.session.userId,
+      sourceMissionId: input.sourceMissionId ?? null,
+      confidence: input.confidence ?? null,
+      justification: input.justification ?? null,
+    });
+  }
+
+  if (has("title") && input.title && input.title !== profile.title) {
+    data.title = input.title;
+    revisions.push({
+      profileId: profile.id,
+      fieldKey: "title",
+      oldValue: profile.title ?? undefined,
+      newValue: input.title,
+      changedById: current.session.userId,
+      sourceMissionId: input.sourceMissionId ?? null,
+      confidence: input.confidence ?? null,
       justification: input.justification ?? null,
     });
   }
@@ -554,6 +662,9 @@ export async function updateProfileAction(raw: unknown): Promise<ProfileActionRe
 
   try {
   await prisma.$transaction(async (tx) => {
+    for (const check of optionChecks) {
+      await assertContributionOptions(tx, check.fieldKey, check.value);
+    }
     // Garde atomique du verrouillage optimiste : l'écriture n'a lieu que si la
     // version n'a pas bougé entre la lecture plus haut et cet instant. Le test
     // précoce ne suffit pas — un autre enregistrement peut tomber entre les
@@ -561,6 +672,8 @@ export async function updateProfileAction(raw: unknown): Promise<ProfileActionRe
     const applied = await tx.characterProfile.updateMany({
       where: {
         id: profile.id,
+        archivedAt: null,
+        mergedIntoId: null,
         ...(input.version !== undefined ? { version: input.version } : {}),
       },
       data,
@@ -620,6 +733,14 @@ export async function updateProfileAction(raw: unknown): Promise<ProfileActionRe
           "Rechargez pour repartir de la version à jour — votre saisie n'a pas été appliquée.",
       };
     }
+    if (
+      error instanceof Error &&
+      (error.message.startsWith("Option de référentiel invalide") ||
+        error.message === "Faction inconnue." ||
+        error.message === "Grade inconnu.")
+    ) {
+      return { ok: false, error: error.message };
+    }
     throw error;
   }
 
@@ -650,28 +771,47 @@ function dedupeIntel(rows: { fieldKey: string; state: ProfileKnowledgeState }[])
 // ─────────────────────────────────────────────────────────────
 
 export async function addTechniqueAction(raw: unknown): Promise<ProfileActionResult> {
-  const current = await guardManage();
-  if (!current) return { ok: false, error: "Permission refusée." };
   const parsed = techniqueCreateSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, error: parsed.error.errors[0]?.message ?? "Données invalides." };
+  const guard = await guardEdit(parsed.data.profileId);
+  if (!guard) return { ok: false, error: "Vous ne pouvez pas modifier ce dossier." };
+  const { current, profile } = guard;
+  if (!(await canUseSourceMission(current, parsed.data.sourceMissionId, profile.createdByGroupId))) {
+    return { ok: false, error: "Cette mission ne peut pas être utilisée comme source pour ce dossier." };
+  }
 
-  const technique = await prisma.characterSignatureTechnique.create({
-    data: {
-      profileId: parsed.data.profileId,
-      name: parsed.data.name,
-      shortDescription: parsed.data.shortDescription ?? null,
-      jutsuTypeId: parsed.data.jutsuTypeId ?? null,
-      rank: parsed.data.rank ?? null,
-      confidence: parsed.data.confidence ?? null,
-      sourceMissionId: parsed.data.sourceMissionId ?? null,
-      createdById: current.session.userId,
-    },
-  });
-  await prisma.characterFieldIntel.upsert({
-    where: { profileId_fieldKey: { profileId: parsed.data.profileId, fieldKey: "techniques" } },
-    update: { knowledgeState: "KNOWN", updatedById: current.session.userId },
-    create: { profileId: parsed.data.profileId, fieldKey: "techniques", knowledgeState: "KNOWN", updatedById: current.session.userId },
-  });
+  let technique: { id: string };
+  try {
+    technique = await prisma.$transaction(async (tx) => {
+      await assertContributionOptions(tx, "techniques", [
+        { jutsuTypeId: parsed.data.jutsuTypeId ?? null },
+      ]);
+      const created = await tx.characterSignatureTechnique.create({
+        data: {
+          profileId: parsed.data.profileId,
+          name: parsed.data.name,
+          shortDescription: parsed.data.shortDescription ?? null,
+          jutsuTypeId: parsed.data.jutsuTypeId ?? null,
+          rank: parsed.data.rank ?? null,
+          confidence: parsed.data.confidence ?? null,
+          sourceMissionId: parsed.data.sourceMissionId ?? null,
+          createdById: current.session.userId,
+        },
+        select: { id: true },
+      });
+      await tx.characterFieldIntel.upsert({
+        where: { profileId_fieldKey: { profileId: parsed.data.profileId, fieldKey: "techniques" } },
+        update: { knowledgeState: "KNOWN", updatedById: current.session.userId },
+        create: { profileId: parsed.data.profileId, fieldKey: "techniques", knowledgeState: "KNOWN", updatedById: current.session.userId },
+      });
+      return created;
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Option de référentiel invalide")) {
+      return { ok: false, error: error.message };
+    }
+    throw error;
+  }
   const meta = await requestMeta();
   await audit({
     actorId: current.session.userId,
@@ -686,8 +826,14 @@ export async function addTechniqueAction(raw: unknown): Promise<ProfileActionRes
 }
 
 export async function deleteTechniqueAction(techniqueId: string): Promise<ProfileActionResult> {
-  const current = await guardManage();
-  if (!current) return { ok: false, error: "Permission refusée." };
+  const existing = await prisma.characterSignatureTechnique.findUnique({
+    where: { id: techniqueId },
+    select: { profileId: true },
+  });
+  if (!existing) return { ok: false, error: "Technique introuvable." };
+  const guard = await guardEdit(existing.profileId);
+  if (!guard) return { ok: false, error: "Vous ne pouvez pas modifier ce dossier." };
+  const { current } = guard;
   const technique = await prisma.characterSignatureTechnique.delete({ where: { id: techniqueId } });
   const meta = await requestMeta();
   await audit({
@@ -707,11 +853,12 @@ export async function deleteTechniqueAction(techniqueId: string): Promise<Profil
 // ─────────────────────────────────────────────────────────────
 
 export async function addRelationAction(raw: unknown): Promise<ProfileActionResult> {
-  const current = await guardManage();
-  if (!current) return { ok: false, error: "Permission refusée." };
   const parsed = relationCreateSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, error: parsed.error.errors[0]?.message ?? "Données invalides." };
   const input = parsed.data;
+  const guard = await guardEdit(input.profileId);
+  if (!guard) return { ok: false, error: "Vous ne pouvez pas modifier ce dossier." };
+  const { current } = guard;
 
   let relatedId = input.relatedProfileId ?? null;
   try {
@@ -806,8 +953,15 @@ export async function addRelationAction(raw: unknown): Promise<ProfileActionResu
 }
 
 export async function deleteRelationAction(relationId: string): Promise<ProfileActionResult> {
-  const current = await guardManage();
-  if (!current) return { ok: false, error: "Permission refusée." };
+  const existing = await prisma.characterRelationship.findUnique({
+    where: { id: relationId },
+    select: { fromProfileId: true, toProfileId: true },
+  });
+  if (!existing) return { ok: false, error: "Relation introuvable." };
+  // Peut retirer le lien qui peut modifier l'un OU l'autre dossier
+  const guard = (await guardEdit(existing.fromProfileId)) ?? (await guardEdit(existing.toProfileId));
+  if (!guard) return { ok: false, error: "Vous ne pouvez pas modifier ce dossier." };
+  const { current } = guard;
   const relation = await prisma.characterRelationship.delete({ where: { id: relationId } });
   const meta = await requestMeta();
   await audit({
@@ -1351,7 +1505,7 @@ export async function deleteProfileAction(profileId: string): Promise<ProfileAct
  */
 export async function createInlineReferenceOptionAction(
   raw: unknown,
-): Promise<ProfileActionResult & { option?: { id: string; label: string; colorHex: string | null } }> {
+): Promise<ProfileActionResult & { option?: { id: string; code: string; label: string; colorHex: string | null } }> {
   const current = await requireUser();
   if (!current.permissions.has(PERMISSIONS.PROFILE_REFERENCE_MANAGE)) {
     return { ok: false, error: "Proposez cette entrée : sa validation revient à un super-modérateur." };
@@ -1365,7 +1519,7 @@ export async function createInlineReferenceOptionAction(
 
   const existing = await prisma.profileReferenceOption.findUnique({
     where: { type_normalizedLabel: { type, normalizedLabel } },
-    select: { id: true, label: true, colorHex: true, isActive: true },
+    select: { id: true, code: true, label: true, colorHex: true, isActive: true },
   });
   if (existing) {
     // Une entrée désactivée est réactivée plutôt que dupliquée
@@ -1375,7 +1529,15 @@ export async function createInlineReferenceOptionAction(
         data: { isActive: true },
       });
     }
-    return { ok: true, option: { id: existing.id, label: existing.label, colorHex: existing.colorHex } };
+    return {
+      ok: true,
+      option: {
+        id: existing.id,
+        code: existing.code,
+        label: existing.label,
+        colorHex: existing.colorHex,
+      },
+    };
   }
 
   // `code` est unique par type : dérivé du libellé, suffixé si déjà pris
@@ -1398,7 +1560,7 @@ export async function createInlineReferenceOptionAction(
       // Après les entrées vérifiées, qui gardent leur ordre d'origine
       sortOrder: 500,
     },
-    select: { id: true, label: true, colorHex: true },
+    select: { id: true, code: true, label: true, colorHex: true },
   });
 
   const meta = await requestMeta();
@@ -1435,7 +1597,34 @@ export async function mergeProfilesAction(input: {
   ]);
   if (!source || !target || target.archivedAt) return { ok: false, error: "Dossier introuvable." };
 
+  try {
   await prisma.$transaction(async (tx) => {
+    // La revue d'une contribution verrouille le même dossier. Les deux
+    // profils sont pris dans un ordre stable avant tout déplacement d'enfant,
+    // ce qui évite qu'une revue s'applique à l'ancien dossier en pleine fusion.
+    for (const profileId of [input.sourceId, input.targetId].sort()) {
+      const locked = await tx.$queryRaw<{ id: string }[]>`
+        SELECT "id" FROM "CharacterProfile" WHERE "id" = ${profileId} FOR UPDATE
+      `;
+      if (locked.length !== 1) throw new Error("PROFILE_CHANGED");
+    }
+    const [lockedSource, lockedTarget] = await Promise.all([
+      tx.characterProfile.findUnique({
+        where: { id: input.sourceId },
+        include: { traits: true, fieldIntel: true },
+      }),
+      tx.characterProfile.findUnique({ where: { id: input.targetId } }),
+    ]);
+    if (
+      !lockedSource ||
+      !lockedTarget ||
+      lockedSource.archivedAt ||
+      lockedTarget.archivedAt
+    ) {
+      throw new Error("PROFILE_CHANGED");
+    }
+    const source = lockedSource;
+    const target = lockedTarget;
     // Traits absents de la cible
     for (const trait of source.traits) {
       await tx.characterProfileTrait.upsert({
@@ -1500,7 +1689,10 @@ export async function mergeProfilesAction(input: {
         });
       }
     }
-    // Achats et demandes suivent le dossier fusionné (doublons neutralisés)
+    // Achats et demandes suivent le dossier fusionné (doublons neutralisés).
+    // Un octroi CREATED_BY_GROUP du doublon devient MODERATOR_GRANTED sur le
+    // survivant : le groupe n'a pas créé CE dossier, son accès reste (il
+    // avait ouvert une fiche sur la même personne) mais redevient révocable.
     const sourceGrants = await tx.profileAccessGrant.findMany({ where: { profileId: source.id, revokedAt: null } });
     for (const grant of sourceGrants) {
       const dup = await tx.profileAccessGrant.findFirst({
@@ -1509,12 +1701,23 @@ export async function mergeProfilesAction(input: {
       if (dup) {
         await tx.profileAccessGrant.update({
           where: { id: grant.id },
-          data: { revokedAt: new Date(), revokedById: current.session.userId },
+          data: { revokedAt: new Date(), revokedById: current.session.userId, revokedReason: "Fusion de doublons" },
         });
       } else {
-        await tx.profileAccessGrant.update({ where: { id: grant.id }, data: { profileId: target.id } });
+        await tx.profileAccessGrant.update({
+          where: { id: grant.id },
+          data: {
+            profileId: target.id,
+            ...(grant.sourceType === "CREATED_BY_GROUP" && target.createdByGroupId !== grant.groupId
+              ? { sourceType: "MODERATOR_GRANTED", sourceId: source.id }
+              : {}),
+          },
+        });
       }
     }
+    // Les contributions suivent aussi — sinon celles en attente du doublon
+    // deviendraient intranchables (dossier archivé) et invisibles.
+    await tx.profileIntelContribution.updateMany({ where: { profileId: source.id }, data: { profileId: target.id } });
     await tx.profileAccessGrant.updateMany({ where: { profileId: source.id }, data: { profileId: target.id } });
     await tx.profilePurchaseRequest.updateMany({
       where: { profileId: source.id, status: { not: "PENDING" } },
@@ -1601,10 +1804,23 @@ export async function mergeProfilesAction(input: {
       });
     }
 
+    // Le contenu de la cible vient de changer même si ses scalaires sont
+    // identiques. Une revue préchargée doit le détecter après avoir attendu le
+    // verrou, puis demander un rechargement au lieu de s'appliquer en aveugle.
+    await tx.characterProfile.update({
+      where: { id: target.id },
+      data: { version: { increment: 1 }, updatedById: current.session.userId },
+    });
+
     // Le dossier source devient une redirection archivée
     await tx.characterProfile.update({
       where: { id: source.id },
-      data: { mergedIntoId: target.id, archivedAt: new Date(), updatedById: current.session.userId },
+      data: {
+        mergedIntoId: target.id,
+        archivedAt: new Date(),
+        updatedById: current.session.userId,
+        version: { increment: 1 },
+      },
     });
     await tx.characterProfileRevision.create({
       data: {
@@ -1616,6 +1832,15 @@ export async function mergeProfilesAction(input: {
       },
     });
   });
+  } catch (error) {
+    if (error instanceof Error && error.message === "PROFILE_CHANGED") {
+      return {
+        ok: false,
+        error: "Un des dossiers a changé pendant la fusion. Rechargez avant de réessayer.",
+      };
+    }
+    throw error;
+  }
 
   const meta = await requestMeta();
   await audit({

@@ -1,17 +1,28 @@
 import "server-only";
 import { prisma } from "@toile/database";
-import { REFERENCE_TYPES, SOURCE_SCOPE_LABELS } from "@toile/shared";
+import {
+  computeCharacterAge,
+  formatDossierTitle,
+  REFERENCE_TYPES,
+  SOURCE_SCOPE_LABELS,
+} from "@toile/shared";
 import type { RefOption, EditFormData } from "@/components/profils/edit-form";
+import { getRpTimeConfig } from "@/server/rp-config";
 import { accessTargetSelect, decideAccess, toAccessTarget, type ProfileViewer } from "./access";
 
 async function loadRef(type: string): Promise<RefOption[]> {
   const rows = await prisma.profileReferenceOption.findMany({
-    where: { type, isActive: true },
+    // Une option désactivée reste nécessaire pour afficher et conserver les
+    // dossiers historiques qui l'utilisent déjà. Le sélecteur la montre comme
+    // telle, mais ne permet pas de l'ajouter à un nouveau dossier.
+    where: { type },
     orderBy: { sortOrder: "asc" },
   });
   return rows.map((r) => ({
     id: r.id,
+    code: r.code,
     label: r.label,
+    isActive: r.isActive,
     category: r.category,
     colorHex: r.colorHex,
     sourceScopeLabel: SOURCE_SCOPE_LABELS[r.sourceScope] ?? r.sourceScope,
@@ -39,7 +50,7 @@ export async function loadProfileRefs() {
     loadRef(REFERENCE_TYPES.LEGENDARY_ARTIFACT),
     loadRef(REFERENCE_TYPES.JUTSU_TYPE),
     loadRef(REFERENCE_TYPES.SIGNATURE_TECHNIQUE),
-    prisma.faction.findMany({ where: { isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    prisma.faction.findMany({ select: { id: true, name: true, isActive: true }, orderBy: { name: "asc" } }),
     prisma.playerLevel.findMany({ select: { id: true, label: true }, orderBy: { order: "asc" } }),
   ]);
   return { hairColors, skinTones, eyeColors, ninjaClasses, clans, chakraNatures, kekkeiGenkai, clanTechniques, combatStyles, kenjutsuStyles, artifacts, jutsuTypes, signatureTechniques, factions, ranks };
@@ -68,6 +79,7 @@ export async function loadEditData(profileId: string, viewer: ProfileViewer): Pr
   if (!access.canEdit) return null;
   const traitIds = (type: string) =>
     profile.traits.filter((t) => t.option.type === type).map((t) => t.optionId);
+  const age = computeCharacterAge(profile, new Date(), await getRpTimeConfig());
 
   // État de connaissance courant de chaque champ ; l'absence de ligne vaut
   // UNKNOWN, sauf si une valeur existe déjà (dossiers antérieurs au suivi).
@@ -106,6 +118,9 @@ export async function loadEditData(profileId: string, viewer: ProfileViewer): Pr
     profileId: profile.id,
     // Sert au verrouillage optimiste lors de l'enregistrement
     version: profile.version,
+    title:
+      profile.title ??
+      formatDossierTitle(profile.characterFirstName, profile.characterLastName),
     firstName: profile.characterFirstName,
     lastName: profile.characterLastName ?? "",
     sexCode: profile.sexCode ?? "",
@@ -119,10 +134,17 @@ export async function loadEditData(profileId: string, viewer: ProfileViewer): Pr
     factionId: profile.factionId ?? "",
     rankId: profile.rankId ?? "",
     lifeStatus: profile.lifeStatus ?? "",
-    ageMode: profile.ageMode,
-    ageYearsNow: profile.ageYearsAtRef,
-    ageMinNow: profile.ageMinAtRef,
-    ageMaxNow: profile.ageMaxAtRef,
+    // Le formulaire parle d'âge ACTUEL. Lui renvoyer la valeur historique de
+    // référence ferait rajeunir le personnage au prochain enregistrement.
+    ageMode:
+      age.kind === "exact"
+        ? "AGE_AT_REFERENCE"
+        : age.kind === "range"
+          ? "AGE_RANGE_AT_REFERENCE"
+          : "UNKNOWN",
+    ageYearsNow: age.kind === "exact" ? age.years : null,
+    ageMinNow: age.kind === "range" ? age.minYears : null,
+    ageMaxNow: age.kind === "range" ? age.maxYears : null,
     clanIds: traitIds(REFERENCE_TYPES.CLAN_FAMILY),
     chakraNatureIds: traitIds(REFERENCE_TYPES.CHAKRA_NATURE),
     kekkeiGenkaiIds: traitIds(REFERENCE_TYPES.KEKKEI_GENKAI),
@@ -134,7 +156,9 @@ export async function loadEditData(profileId: string, viewer: ProfileViewer): Pr
     details: profile.details ?? "",
     strengths: profile.strengths ?? "",
     weaknesses: profile.weaknesses ?? "",
-    internalNotes: profile.internalNotes ?? "",
+    // Réservées à la modération : un éditeur « groupe créateur » ne les reçoit
+    // jamais — pas même vides dans le HTML du formulaire.
+    internalNotes: access.canAdminister ? (profile.internalNotes ?? "") : "",
     fieldStates,
   };
 }

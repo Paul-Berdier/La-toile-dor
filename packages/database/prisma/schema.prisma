@@ -287,6 +287,7 @@ model Group {
   createdProfiles CharacterProfile[]       @relation("GroupCreatedProfiles")
   intelContributions ProfileIntelContribution[] @relation("GroupIntelContributions")
   reportDrafts       MissionReportDraft[]       @relation("GroupReportDrafts")
+  missionReports     MissionReport[]            @relation("GroupMissionReports")
 
   @@unique([factionId, name])
 }
@@ -670,17 +671,27 @@ model MissionStatusHistory {
 }
 
 model MissionReport {
-  id          String    @id @default(cuid())
-  missionId   String
-  authorId    String
-  content     String
-  submittedAt DateTime  @default(now())
-  isFinal     Boolean   @default(false)
+  id               String    @id @default(cuid())
+  missionId        String
+  authorId         String
+  // Groupe au nom duquel le rapport final est déposé. Null pour les rapports
+  // d'étape et les données historiques antérieures à cette notion.
+  reportingGroupId String?
+  // Charge structurée immuable du rapport final. Null pour les rapports
+  // d'étape et les rapports historiques créés avant ce parcours.
+  payload          Json?
+  content          String
+  submittedAt      DateTime  @default(now())
+  isFinal          Boolean   @default(false)
 
-  mission Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
-  images  MissionReportImage[]
+  mission        Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  reportingGroup Group?  @relation("GroupMissionReports", fields: [reportingGroupId], references: [id], onDelete: SetNull)
+  images         MissionReportImage[]
 
   @@index([missionId])
+  // PostgreSQL autorise plusieurs NULL : les rapports d'étape restent
+  // multiples, mais un groupe ne finalise qu'une fois une mission.
+  @@unique([missionId, reportingGroupId])
 }
 
 // Brouillon du rapport de fin de mission d'un groupe : sauvegardé au fil de

@@ -1,7 +1,8 @@
 "use server";
 
+import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@toile/database";
+import { prisma, type Prisma } from "@toile/database";
 import { audit } from "@toile/auth";
 import {
   PERMISSIONS,
@@ -10,6 +11,8 @@ import {
   REPORT_IMAGE_MAX_BYTES,
   missionReportFinalizeSchema,
   missionReportPayloadSchema,
+  parseContributionValue,
+  sanitizeMissionReportPayload,
   untreatedDossiers,
   type ProfileFieldKey,
   type ReportIntelEntry,
@@ -18,10 +21,21 @@ import { requireUser, requestMeta } from "@/lib/session";
 import { enqueueNotifications, userIdsWithPermission } from "@/server/notifications";
 import { sniffImageMime, isFileLike } from "@/server/image-validation";
 import { getAccessContext } from "@/server/missions";
-import { getProfileViewer, decideAccess, toAccessTarget, accessTargetSelect } from "@/server/profiles/access";
+import {
+  getProfileViewer,
+  decideAccessForGroup,
+  toAccessTarget,
+  accessTargetSelect,
+} from "@/server/profiles/access";
 import { createOwnedProfile } from "@/server/profiles/create";
-import { applyContributionValue, contributionConflicts, describeContributionValue } from "@/server/profiles/contributions";
+import {
+  applyContributionValue,
+  assertContributionOptions,
+  contributionConflicts,
+  describeContributionValue,
+} from "@/server/profiles/contributions";
 import { findSimilarProfiles } from "@/server/profiles/queries";
+import { toStoredMissionReportPayload } from "@/server/missions/report-payload";
 
 export interface ReportActionResult {
   ok: boolean;
@@ -35,12 +49,92 @@ export interface ReportActionResult {
   };
   /** Doublons potentiels pour les ninjas découverts (non bloquant : confirmer) */
   duplicates?: { localId: string; matches: { id: string; code: string; name: string }[] }[];
+  /** Empreinte du payload exact ayant produit l'avertissement. */
+  duplicateConfirmationToken?: string;
+}
+
+type ReportTx = Prisma.TransactionClient;
+
+/** Toutes les écritures draft/final prennent le même verrou de mission. */
+async function lockMission(tx: ReportTx, missionId: string) {
+  await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT "id" FROM "Mission" WHERE "id" = ${missionId} FOR UPDATE
+  `;
+}
+
+async function assertLiveReporter(
+  tx: ReportTx,
+  input: {
+    missionId: string;
+    groupId: string;
+    actorId: string;
+    isModerator: boolean;
+    requireInProgress?: boolean;
+  },
+) {
+  await lockMission(tx, input.missionId);
+  const mission = await tx.mission.findUnique({
+    where: { id: input.missionId },
+    select: {
+      status: true,
+      assignedGroupId: true,
+      assignments: { where: { active: true }, select: { groupId: true } },
+      targets: { select: { id: true, profileId: true } },
+    },
+  });
+  if (!mission || !["ASSIGNED", "IN_PROGRESS"].includes(mission.status)) {
+    throw new Error("MISSION_CLOSED");
+  }
+  if (input.requireInProgress && mission.status !== "IN_PROGRESS") {
+    throw new Error("REPORT_NOT_READY");
+  }
+  const assigned = new Set(mission.assignments.map((a) => a.groupId));
+  // Colonne de compatibilité : elle ne complète les assignments que pour une
+  // mission historique qui n'en possède aucun.
+  if (assigned.size === 0 && mission.assignedGroupId) assigned.add(mission.assignedGroupId);
+  if (!assigned.has(input.groupId)) throw new Error("REPORTER_CHANGED");
+
+  if (!input.isModerator) {
+    const membership = await tx.groupMember.findUnique({
+      where: { groupId_userId: { groupId: input.groupId, userId: input.actorId } },
+      select: { isLeader: true, group: { select: { isActive: true } } },
+    });
+    if (!membership?.isLeader || !membership.group.isActive) throw new Error("REPORTER_CHANGED");
+  }
+  return mission;
+}
+
+/** Compatibilité historique : les anciens finals n'avaient pas de groupe. */
+async function hasFinalReportForGroup(
+  tx: ReportTx,
+  missionId: string,
+  groupId: string,
+  actorId: string,
+): Promise<boolean> {
+  const exact = await tx.missionReport.findFirst({
+    where: { missionId, reportingGroupId: groupId, isFinal: true },
+    select: { id: true },
+  });
+  if (exact) return true;
+  const legacy = await tx.missionReport.findMany({
+    where: { missionId, reportingGroupId: null, isFinal: true },
+    select: { authorId: true },
+  });
+  if (legacy.some((report) => report.authorId === actorId)) return true;
+  if (legacy.length === 0) return false;
+  return (await tx.groupMember.count({
+    where: { groupId, userId: { in: legacy.map((report) => report.authorId) } },
+  })) > 0;
+}
+
+function duplicateToken(payload: unknown): string {
+  return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
 /**
- * Le rapporteur : un membre d'un groupe ATTRIBUÉ (actif) à la mission, ou
- * un participant nommément engagé, ou la modération. Renvoie le groupe au nom
- * duquel il rapporte — un membre de deux groupes engagés doit choisir.
+ * Le rapporteur : le CHEF d'un groupe attribué (actif), ou la modération.
+ * Renvoie le groupe au nom duquel il rapporte — plusieurs groupes possibles
+ * impliquent un choix explicite dans l'interface.
  */
 async function resolveReporter(missionId: string, preferredGroupId?: string) {
   const current = await requireUser();
@@ -63,12 +157,18 @@ async function resolveReporter(missionId: string, preferredGroupId?: string) {
   if (!mission) return { current, ctx, mission: null, groupId: null, error: "Mission introuvable." };
 
   const assigned = new Set(mission.assignments.map((a) => a.groupId));
-  if (mission.assignedGroupId) assigned.add(mission.assignedGroupId);
-  const myAssigned = [...assigned].filter((g) => ctx.groupIds.has(g));
+  if (assigned.size === 0 && mission.assignedGroupId) assigned.add(mission.assignedGroupId);
+  // Seuls les CHEFS des groupes attribués rapportent (le rapport nomme les
+  // cibles, dont l'identité est réservée à ce niveau) — et la modération.
+  const ledIds = new Set(ctx.ledGroups.map((g) => g.id));
+  const myAssigned = [...assigned].filter((g) => ledIds.has(g));
   const participantGroup = mission.participants[0]?.groupId ?? null;
 
   let groupId: string | null = null;
   if (preferredGroupId) {
+    if (!assigned.has(preferredGroupId)) {
+      return { current, ctx, mission, groupId: null, error: "Ce groupe n'est pas attribué à cette mission." };
+    }
     if (!myAssigned.includes(preferredGroupId) && !ctx.isModerator) {
       return { current, ctx, mission, groupId: null, error: "Vous ne rapportez pas pour ce groupe." };
     }
@@ -84,7 +184,10 @@ async function resolveReporter(missionId: string, preferredGroupId?: string) {
     groupId = assigned.size === 1 ? [...assigned][0]! : null;
     if (!groupId) return { current, ctx, mission, groupId: null, error: "Précisez pour quel groupe vous rapportez." };
   } else {
-    return { current, ctx, mission, groupId: null, error: "Vous n'êtes pas engagé sur cette mission." };
+    return {
+      current, ctx, mission, groupId: null,
+      error: "Le rapport de fin de mission est déposé par le chef d'un groupe attribué (ou la modération).",
+    };
   }
   return { current, ctx, mission, groupId, error: null };
 }
@@ -102,16 +205,44 @@ export async function saveMissionReportDraftAction(input: {
   if (!["ASSIGNED", "IN_PROGRESS"].includes(r.mission.status)) {
     return { ok: false, error: "La mission n'est plus en cours." };
   }
-  await prisma.missionReportDraft.upsert({
-    where: { missionId_groupId: { missionId: r.mission.id, groupId: r.groupId } },
-    update: { payload: parsed.data as never, authorId: r.current.session.userId },
-    create: {
-      missionId: r.mission.id,
-      groupId: r.groupId,
-      authorId: r.current.session.userId,
-      payload: parsed.data as never,
-    },
-  });
+  const payload = sanitizeMissionReportPayload(parsed.data);
+  try {
+    await prisma.$transaction(async (tx) => {
+      await assertLiveReporter(tx, {
+        missionId: r.mission!.id,
+        groupId: r.groupId!,
+        actorId: r.current.session.userId,
+        isModerator: r.ctx.isModerator,
+      });
+      if (await hasFinalReportForGroup(tx, r.mission!.id, r.groupId!, r.current.session.userId)) {
+        throw new Error("ALREADY_FINAL");
+      }
+      await tx.missionReportDraft.upsert({
+        where: { missionId_groupId: { missionId: r.mission!.id, groupId: r.groupId! } },
+        update: { payload: payload as never, authorId: r.current.session.userId },
+        create: {
+          missionId: r.mission!.id,
+          groupId: r.groupId!,
+          authorId: r.current.session.userId,
+          payload: payload as never,
+        },
+      });
+    }, { isolationLevel: "Serializable", maxWait: 5_000, timeout: 10_000 });
+  } catch (error) {
+    if (error instanceof Error && error.message === "ALREADY_FINAL") {
+      return { ok: false, error: "Votre groupe a déjà déposé son rapport final." };
+    }
+    if (error instanceof Error && error.message === "MISSION_CLOSED") {
+      return { ok: false, error: "La mission n'est plus en cours." };
+    }
+    if (error instanceof Error && error.message === "REPORTER_CHANGED") {
+      return { ok: false, error: "L'attribution ou votre rôle de chef vient de changer." };
+    }
+    if ((error as { code?: string }).code === "P2034") {
+      return { ok: false, error: "Une autre sauvegarde a eu lieu ; réessayez." };
+    }
+    throw error;
+  }
   return { ok: true };
 }
 
@@ -121,13 +252,31 @@ export async function discardMissionReportDraftAction(input: {
 }): Promise<ReportActionResult> {
   const r = await resolveReporter(input.missionId, input.groupId);
   if (!r.mission || !r.groupId) return { ok: false, error: r.error ?? "Refusé." };
-  await prisma.missionReportDraft.deleteMany({ where: { missionId: r.mission.id, groupId: r.groupId } });
+  try {
+    await prisma.$transaction(async (tx) => {
+      await assertLiveReporter(tx, {
+        missionId: r.mission!.id,
+        groupId: r.groupId!,
+        actorId: r.current.session.userId,
+        isModerator: r.ctx.isModerator,
+      });
+      await tx.missionReportDraft.deleteMany({ where: { missionId: r.mission!.id, groupId: r.groupId! } });
+    }, { isolationLevel: "Serializable", maxWait: 5_000, timeout: 10_000 });
+  } catch (error) {
+    if (error instanceof Error && ["MISSION_CLOSED", "REPORTER_CHANGED"].includes(error.message)) {
+      return { ok: false, error: "Le brouillon ne peut plus être modifié : la mission ou votre attribution a changé." };
+    }
+    if ((error as { code?: string }).code === "P2034") {
+      return { ok: false, error: "Une sauvegarde simultanée a eu lieu ; réessayez." };
+    }
+    throw error;
+  }
   revalidatePath(`/missions/${r.mission.id}`);
   return { ok: true };
 }
 
 /**
- * « Terminer la mission et enregistrer les renseignements » — TOUT ou RIEN :
+ * « Déposer le rapport final et enregistrer les renseignements » — TOUT ou RIEN :
  * rapport final + preuves, sort des cibles, contributions par dossier,
  * nouveaux dossiers pour les ninjas découverts, brouillon effacé. Si une
  * étape échoue, rien n'est écrit et l'équipe garde son brouillon.
@@ -139,7 +288,7 @@ export async function discardMissionReportDraftAction(input: {
 export async function finalizeMissionReportAction(formData: FormData): Promise<ReportActionResult> {
   const missionId = String(formData.get("missionId") ?? "");
   const preferredGroupId = String(formData.get("groupId") ?? "") || undefined;
-  const confirmDuplicates = formData.get("confirmDuplicates") === "true";
+  const suppliedDuplicateToken = String(formData.get("duplicateConfirmationToken") ?? "");
   let payloadRaw: unknown;
   try {
     payloadRaw = JSON.parse(String(formData.get("payload") ?? "{}"));
@@ -151,12 +300,22 @@ export async function finalizeMissionReportAction(formData: FormData): Promise<R
     return { ok: false, error: parsed.error.errors[0]?.message ?? "Rapport incomplet." };
   }
   const payload = parsed.data;
+  // Le rapport conserve l'observation propre à ce groupe, indépendamment de
+  // l'outcome canonique de MissionTarget que la modération pourra consolider.
+  // `missionId` n'est pas dupliqué dans le JSON : la FK du rapport fait foi.
+  const structuredPayload = toStoredMissionReportPayload(payload);
 
   const r = await resolveReporter(missionId, preferredGroupId);
   if (!r.mission || !r.groupId) return { ok: false, error: r.error ?? "Refusé." };
   const { current, mission, groupId } = r;
-  if (!["ASSIGNED", "IN_PROGRESS"].includes(mission.status)) {
-    return { ok: false, error: "La mission n'est plus en cours : le rapport final ne peut plus être déposé." };
+  if (mission.status !== "IN_PROGRESS") {
+    return {
+      ok: false,
+      error:
+        mission.status === "ASSIGNED"
+          ? "La mission doit avoir commencé avant le dépôt du rapport final."
+          : "La mission n'est plus en cours : le rapport final ne peut plus être déposé.",
+    };
   }
 
   // Chaque dossier cible doit avoir été traité (« rien de neuf » compte)
@@ -170,8 +329,13 @@ export async function finalizeMissionReportAction(formData: FormData): Promise<R
   }
   // Les sorts ne visent que des cibles de CETTE mission
   const targetIds = new Set(mission.targets.map((t) => t.id));
-  if (payload.outcomes.some((o) => !targetIds.has(o.targetId))) {
-    return { ok: false, error: "Une cible du rapport n'appartient pas à cette mission." };
+  const outcomeIds = new Set(payload.outcomes.map((o) => o.targetId));
+  if (
+    payload.outcomes.some((o) => !targetIds.has(o.targetId)) ||
+    outcomeIds.size !== targetIds.size ||
+    [...targetIds].some((id) => !outcomeIds.has(id))
+  ) {
+    return { ok: false, error: "Le sort de chaque cible de la mission doit être renseigné une seule fois." };
   }
   if (payload.dossiers.some((d) => !targetProfileIds.includes(d.profileId))) {
     return { ok: false, error: "Un dossier du rapport n'est pas une cible de cette mission." };
@@ -190,7 +354,7 @@ export async function finalizeMissionReportAction(formData: FormData): Promise<R
   }
 
   // Ninjas découverts : doublons signalés une fois, puis confirmés
-  if (payload.discovered.length > 0 && !confirmDuplicates) {
+  if (payload.discovered.length > 0) {
     const duplicates: NonNullable<ReportActionResult["duplicates"]> = [];
     for (const d of payload.discovered) {
       const similar = await findSimilarProfiles(d.firstName);
@@ -205,7 +369,12 @@ export async function finalizeMissionReportAction(formData: FormData): Promise<R
         });
       }
     }
-    if (duplicates.length > 0) return { ok: false, duplicates };
+    if (duplicates.length > 0) {
+      const expectedToken = duplicateToken(payload.discovered);
+      if (suppliedDuplicateToken !== expectedToken) {
+        return { ok: false, duplicates, duplicateConfirmationToken: expectedToken };
+      }
+    }
   }
 
   const viewer = await getProfileViewer(current);
@@ -219,16 +388,34 @@ export async function finalizeMissionReportAction(formData: FormData): Promise<R
 
   try {
     await prisma.$transaction(async (tx) => {
-      // Statut relu DANS la transaction : une clôture concurrente ne doit pas
-      // laisser un rapport final orphelin.
-      const live = await tx.mission.findUnique({ where: { id: mission.id }, select: { status: true } });
-      if (!live || !["ASSIGNED", "IN_PROGRESS"].includes(live.status)) throw new Error("MISSION_CLOSED");
+      // Même verrou que l'autosave et protocole Serializable commun avec la
+      // clôture : statut, assignment, rôle de chef et cibles sont relus ici.
+      const live = await assertLiveReporter(tx, {
+        missionId: mission.id,
+        groupId,
+        actorId,
+        isModerator: r.ctx.isModerator,
+        requireInProgress: true,
+      });
+      const liveTargetIds = new Set(live.targets.map((target) => target.id));
+      const liveProfileIds = new Set(live.targets.map((target) => target.profileId).filter((id): id is string => Boolean(id)));
+      if (
+        liveTargetIds.size !== targetIds.size ||
+        [...liveTargetIds].some((id) => !targetIds.has(id)) ||
+        liveProfileIds.size !== new Set(targetProfileIds).size ||
+        [...liveProfileIds].some((id) => !targetProfileIds.includes(id))
+      ) {
+        throw new Error("TARGETS_CHANGED");
+      }
+      if (await hasFinalReportForGroup(tx, mission.id, groupId, actorId)) throw new Error("ALREADY_FINAL");
 
       // 1) Rapport final + preuves
       await tx.missionReport.create({
         data: {
           missionId: mission.id,
           authorId: actorId,
+          reportingGroupId: groupId,
+          payload: structuredPayload as never,
           content: payload.summary,
           isFinal: true,
           images: { create: images },
@@ -238,10 +425,22 @@ export async function finalizeMissionReportAction(formData: FormData): Promise<R
       // 2) Sort des cibles
       const now = new Date();
       for (const o of payload.outcomes) {
-        await tx.missionTarget.update({
-          where: { id: o.targetId },
-          data: { outcome: o.outcome, note: o.note || null, recordedAt: now, recordedById: actorId },
-        });
+        // En mission multi-groupes, chaque rapport reste une observation
+        // indépendante dans MissionReport.payload. Écraser ici l'outcome
+        // global ferait gagner silencieusement le dernier groupe à cliquer ;
+        // la modération consolide donc le sort canonique depuis le panneau des
+        // cibles. Pour une mission mono-groupe, l'observation est canonique.
+        if (live.assignments.length <= 1) {
+          await tx.missionTarget.update({
+            where: { id: o.targetId },
+            data: {
+              outcome: o.outcome,
+              note: o.note || null,
+              recordedAt: now,
+              recordedById: actorId,
+            },
+          });
+        }
         summary.outcomesRecorded += 1;
       }
 
@@ -249,9 +448,11 @@ export async function finalizeMissionReportAction(formData: FormData): Promise<R
       const contribute = async (profileId: string, entry: ReportIntelEntry, profileCanEdit: boolean) => {
         const fieldKey = entry.fieldKey as ProfileFieldKey;
         const none = entry.knowledgeState === "NONE_CONFIRMED";
-        const value = none ? null : entry.value;
+        // Valeur validée ET nettoyée ; options de référentiel du bon type
+        const value = none ? null : parseContributionValue(fieldKey, entry.value);
+        if (!none) await assertContributionOptions(tx, fieldKey, value);
         const proposedLabel = none ? "Aucun (vérifié)" : await describeContributionValue(tx, fieldKey, value);
-        const conflicts = profileCanEdit ? false : await contributionConflicts(tx, profileId, fieldKey, proposedLabel);
+        const conflicts = profileCanEdit ? false : await contributionConflicts(tx, profileId, fieldKey, proposedLabel, none);
         await tx.profileIntelContribution.create({
           data: {
             profileId,
@@ -283,14 +484,15 @@ export async function finalizeMissionReportAction(formData: FormData): Promise<R
       };
 
       for (const d of payload.dossiers) {
-        if (d.entries.length === 0) continue;
+        // « Aucune nouvelle information » l'emporte sur des entrées oubliées
+        if (d.noNewInfo || d.entries.length === 0) continue;
         const profile = await tx.characterProfile.findUnique({
           where: { id: d.profileId },
           select: accessTargetSelect,
         });
         if (!profile || profile.archivedAt) continue;
         // Le groupe créateur (ou la modération) écrit directement dans SON dossier
-        const canEdit = decideAccess(viewer, toAccessTarget(profile)).canEdit;
+        const canEdit = decideAccessForGroup(viewer, toAccessTarget(profile), groupId).canEdit;
         for (const entry of d.entries) await contribute(d.profileId, entry, canEdit);
       }
 
@@ -310,31 +512,47 @@ export async function finalizeMissionReportAction(formData: FormData): Promise<R
           data: {
             profileId: created.id,
             fieldKey: "profile",
-            newValue: { created: true, discoveredInMission: mission.code, groupId },
+            newValue: { created: true, discoveredInMission: mission.code, groupId, outcome: d.outcome },
             changedById: actorId,
             sourceMissionId: mission.id,
           },
         });
-        await tx.missionTarget.create({
-          data: {
-            missionId: mission.id,
-            profileId: created.id,
-            outcome: d.outcome,
-            recordedAt: now,
-            recordedById: actorId,
-          },
-        });
-        summary.outcomesRecorded += 1;
+        // Ne devient PAS une MissionTarget globale : en multi-groupes, cela
+        // révélerait immédiatement le nouveau dossier aux autres équipes. Le
+        // lien mission reste porté par l'octroi, la révision et les sources.
         for (const entry of d.entries) await contribute(created.id, entry, true);
         summary.discoveredProfiles.push({ id: created.id, code: created.code, firstName: created.characterFirstName });
       }
 
       // 5) Le brouillon a servi
       await tx.missionReportDraft.deleteMany({ where: { missionId: mission.id, groupId } });
-    });
+    }, { isolationLevel: "Serializable", timeout: 30_000, maxWait: 10_000 });
   } catch (error) {
     if (error instanceof Error && error.message === "MISSION_CLOSED") {
       return { ok: false, error: "La mission vient d'être close : le rapport n'a pas été enregistré." };
+    }
+    if (error instanceof Error && error.message === "ALREADY_FINAL") {
+      return { ok: false, error: "Votre groupe a déjà déposé son rapport final pour cette mission." };
+    }
+    if (error instanceof Error && error.message === "REPORTER_CHANGED") {
+      return { ok: false, error: "L'attribution ou votre rôle de chef vient de changer." };
+    }
+    if (error instanceof Error && error.message === "REPORT_NOT_READY") {
+      return { ok: false, error: "La mission doit être en cours avant le dépôt du rapport final." };
+    }
+    if (error instanceof Error && error.message === "TARGETS_CHANGED") {
+      return { ok: false, error: "Les cibles de la mission viennent de changer : rechargez le rapport." };
+    }
+    if ((error as { code?: string }).code === "P2002") {
+      return { ok: false, error: "Votre groupe a déjà déposé son rapport final pour cette mission." };
+    }
+    if ((error as { code?: string }).code === "P2034") {
+      return { ok: false, error: "La mission a changé pendant la finalisation : rechargez puis réessayez." };
+    }
+    // Seules les validations de référentiel explicitement produites par notre
+    // service sont montrées ; aucune erreur interne brute ne quitte le serveur.
+    if (error instanceof Error && /^(Option de référentiel invalide|Faction inconnue|Grade inconnu)/.test(error.message)) {
+      return { ok: false, error: error.message };
     }
     throw error;
   }

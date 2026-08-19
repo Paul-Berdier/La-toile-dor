@@ -74,7 +74,7 @@ export async function applyMissionOutcomeToProfiles(
     if (!target.profileId) continue;
     const profile = await tx.characterProfile.findUnique({
       where: { id: target.profileId },
-      select: { id: true, code: true, lifeStatus: true, archivedAt: true, mergedIntoId: true },
+      select: { id: true, code: true, lifeStatus: true, archivedAt: true, mergedIntoId: true, createdByGroupId: true },
     });
     // Un dossier archivé ou fusionné ne se met pas à jour au passage : la
     // fusion a ses propres règles, et l'archivage est une décision assumée.
@@ -133,7 +133,14 @@ export async function applyMissionOutcomeToProfiles(
 
     // Les groupes engagés obtiennent le dossier de la cible : ils l'ont payé
     // de leur peine. L'accès n'est pas un achat — priceRyos reste nul.
+    //
+    // Le groupe qui a ouvert le dossier y accède déjà par propriété : créer un
+    // grant supplémentaire serait redondant. En revanche, cette propriété ne
+    // doit pas priver les AUTRES groupes engagés de l'accès gagné sur une cible
+    // officielle de la mission. Les ninjas découverts dans un rapport ne sont
+    // plus des MissionTarget et ne passent donc pas par cette boucle.
     for (const groupId of input.groupIds) {
+      if (profile.createdByGroupId === groupId) continue;
       const existing = await tx.profileAccessGrant.findFirst({
         where: { profileId: profile.id, groupId, revokedAt: null },
         select: { id: true },

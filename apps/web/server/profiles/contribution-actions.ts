@@ -6,16 +6,36 @@ import { audit } from "@toile/auth";
 import {
   PERMISSIONS,
   PROFILE_FIELD_LABELS,
+  canDeclareNoneForField,
   canMergeField,
   contributionDecisionSchema,
   intelContributionSchema,
+  parseContributionValue,
   type ContributionDecision,
   type ProfileFieldKey,
 } from "@toile/shared";
 import { requireUser, requestMeta } from "@/lib/session";
 import { enqueueNotifications, userIdsWithPermission } from "@/server/notifications";
-import { getProfileViewer, decideAccess, toAccessTarget, accessTargetSelect } from "./access";
-import { applyContributionValue, contributionConflicts, describeContributionValue } from "./contributions";
+import {
+  getProfileViewer,
+  decideAccess,
+  decideAccessForGroup,
+  toAccessTarget,
+  accessTargetSelect,
+} from "./access";
+import {
+  applyContributionValue,
+  assertContributionOptions,
+  contributionConflicts,
+  describeContributionValue,
+  isContributableField,
+} from "./contributions";
+import {
+  claimPendingContribution,
+  isRetryableContributionTransactionError,
+  lockContributionProfile,
+  runContributionTransaction,
+} from "./contribution-transactions";
 
 export interface ContributionActionResult {
   ok: boolean;
@@ -70,59 +90,111 @@ export async function submitIntelContributionAction(raw: unknown): Promise<Contr
   } else if (viewer.groupIds.length > 1 && !access.canAdminister) {
     return { ok: false, error: "Précisez au nom de quel groupe vous contribuez." };
   }
+  const groupAccess = groupId
+    ? decideAccessForGroup(viewer, toAccessTarget(profile), groupId)
+    : access;
+
+  // La mission source doit viser CE dossier et concerner le contributeur
+  // (engagé dessus AU NOM DU GROUPE CHOISI) ou la modération. Vérifier la
+  // seule attribution laisserait n'importe quel dossier lisible être faussement
+  // sourcé par une mission sans rapport. La colonne legacy ne compte que si
+  // la mission ne possède aucune attribution active.
+  if (input.sourceMissionId) {
+    const mission = await prisma.mission.findUnique({
+      where: { id: input.sourceMissionId },
+      select: {
+        assignedGroupId: true,
+        assignments: { where: { active: true }, select: { groupId: true } },
+        targets: {
+          where: { profileId: profile.id },
+          take: 1,
+          select: { id: true },
+        },
+      },
+    });
+    const activeAssignmentGroups = new Set(mission?.assignments.map((a) => a.groupId) ?? []);
+    const assignedToSelectedGroup =
+      groupId !== null &&
+      (activeAssignmentGroups.size > 0
+        ? activeAssignmentGroups.has(groupId)
+        : mission?.assignedGroupId === groupId);
+    const validSource =
+      !!mission &&
+      mission.targets.length > 0 &&
+      (access.canAdminister || assignedToSelectedGroup);
+    if (!validSource) return { ok: false, error: "Mission source inconnue ou sans rapport avec vous." };
+  } else if (!groupAccess.canContribute) {
+    return { ok: false, error: "Ce groupe ne possède pas ce dossier." };
+  }
   const sourceType = input.sourceMissionId ? "MISSION" : groupId ? "GROUP" : "USER";
 
-  const value = input.knowledgeState === "NONE_CONFIRMED" ? null : input.value;
-  const directWrite = access.canEdit;
+  const none = input.knowledgeState === "NONE_CONFIRMED";
+  // Valeur VALIDÉE et NETTOYÉE par le schéma du champ (pas la forme brute)
+  const value = none ? null : parseContributionValue(fieldKey, input.value);
+  // Le droit d'écrire est celui du GROUPE auquel on attribue la contribution,
+  // pas celui d'un autre groupe dont la même personne est aussi membre.
+  const directWrite = groupAccess.canEdit;
 
-  const result = await prisma.$transaction(async (tx) => {
-    const proposedLabel =
-      input.knowledgeState === "NONE_CONFIRMED"
-        ? "Aucun (vérifié)"
-        : await describeContributionValue(tx, fieldKey, value);
-    const conflicts = directWrite
-      ? false
-      : await contributionConflicts(tx, profile.id, fieldKey, proposedLabel);
+  let result: { id: string; conflicts: boolean };
+  try {
+    result = await runContributionTransaction(async (tx) => {
+      await lockContributionProfile(tx, profile.id);
+      if (!none) await assertContributionOptions(tx, fieldKey, value);
+      const proposedLabel = none ? "Aucun (vérifié)" : await describeContributionValue(tx, fieldKey, value);
+      const conflicts = directWrite
+        ? false
+        : await contributionConflicts(tx, profile.id, fieldKey, proposedLabel, none);
 
-    const row = await tx.profileIntelContribution.create({
-      data: {
-        profileId: profile.id,
-        fieldKey,
-        proposedValue: (value ?? { noneConfirmed: true }) as never,
-        proposedLabel,
-        knowledgeState: input.knowledgeState,
-        confidence: input.confidence ?? null,
-        note: input.note || null,
-        sourceType,
-        groupId,
-        contributorId: current.session.userId,
-        sourceMissionId: input.sourceMissionId ?? null,
-        status: directWrite ? "APPLIED" : "PENDING_REVIEW",
-        conflictsWithExisting: conflicts,
-        ...(directWrite
-          ? { reviewedById: current.session.userId, reviewedAt: new Date() }
-          : {}),
-      },
-      select: { id: true },
-    });
-
-    if (directWrite) {
-      await applyContributionValue(
-        tx,
-        profile.id,
-        fieldKey,
-        value,
-        input.knowledgeState === "NONE_CONFIRMED" ? "NONE_CONFIRMED" : "REPLACE",
-        {
-          actorId: current.session.userId,
-          sourceMissionId: input.sourceMissionId ?? null,
+      const row = await tx.profileIntelContribution.create({
+        data: {
+          profileId: profile.id,
+          fieldKey,
+          proposedValue: (value ?? { noneConfirmed: true }) as never,
+          proposedLabel,
+          knowledgeState: input.knowledgeState,
           confidence: input.confidence ?? null,
-          justification: input.note || `Renseignement ajouté (${PROFILE_FIELD_LABELS[fieldKey]})`,
+          note: input.note || null,
+          sourceType,
+          groupId,
+          contributorId: current.session.userId,
+          sourceMissionId: input.sourceMissionId ?? null,
+          status: directWrite ? "APPLIED" : "PENDING_REVIEW",
+          conflictsWithExisting: conflicts,
+          ...(directWrite
+            ? { reviewedById: current.session.userId, reviewedAt: new Date() }
+            : {}),
         },
-      );
+        select: { id: true },
+      });
+
+      if (directWrite) {
+        await applyContributionValue(
+          tx,
+          profile.id,
+          fieldKey,
+          value,
+          none ? "NONE_CONFIRMED" : "REPLACE",
+          {
+            actorId: current.session.userId,
+            sourceMissionId: input.sourceMissionId ?? null,
+            confidence: input.confidence ?? null,
+            justification: input.note || `Renseignement ajouté (${PROFILE_FIELD_LABELS[fieldKey]})`,
+          },
+        );
+      }
+      return { id: row.id, conflicts };
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === "PROFILE_UNAVAILABLE") {
+      return { ok: false, error: "Ce dossier vient d'être archivé ou fusionné." };
     }
-    return { id: row.id, conflicts };
-  });
+    if (isRetryableContributionTransactionError(error)) {
+      return { ok: false, error: "Le dossier a été modifié en même temps ; réessayez." };
+    }
+    // Erreurs lisibles (option de référentiel invalide…) : au formulaire, pas en 500
+    if (error instanceof Error && !("code" in error)) return { ok: false, error: error.message };
+    throw error;
+  }
 
   const meta = await requestMeta();
   await audit({
@@ -164,7 +236,7 @@ export async function reviewIntelContributionAction(raw: unknown): Promise<Contr
 
   const contribution = await prisma.profileIntelContribution.findUnique({
     where: { id: contributionId },
-    include: { profile: { select: { ...accessTargetSelect, code: true } } },
+    include: { profile: { select: { ...accessTargetSelect, code: true, version: true } } },
   });
   if (!contribution) return { ok: false, error: "Contribution introuvable." };
   if (contribution.status !== "PENDING_REVIEW") {
@@ -176,9 +248,21 @@ export async function reviewIntelContributionAction(raw: unknown): Promise<Contr
   const access = decideAccess(viewer, toAccessTarget(contribution.profile));
   if (!access.canEdit) return { ok: false, error: "Vous ne pouvez pas trancher sur ce dossier." };
 
-  const fieldKey = contribution.fieldKey as ProfileFieldKey;
-  if (decision === "MERGE" && !canMergeField(fieldKey)) {
-    return { ok: false, error: "Ce champ ne se fusionne pas : acceptez ou refusez." };
+  if (!isContributableField(contribution.fieldKey)) {
+    return { ok: false, error: "Cette contribution vise un champ qui n'est plus pris en charge." };
+  }
+  const fieldKey = contribution.fieldKey;
+  const noneConfirmed = contribution.knowledgeState === "NONE_CONFIRMED";
+  if (noneConfirmed && !canDeclareNoneForField(fieldKey)) {
+    return { ok: false, error: "Ce champ ne peut pas être déclaré « absent »." };
+  }
+  if (decision === "MERGE" && (!canMergeField(fieldKey) || noneConfirmed)) {
+    return {
+      ok: false,
+      error: noneConfirmed
+        ? "Une absence ne se fusionne pas : acceptez (le champ devient « Aucun ») ou refusez."
+        : "Ce champ ne se fusionne pas : acceptez ou refusez.",
+    };
   }
 
   const nextStatus = (
@@ -190,50 +274,104 @@ export async function reviewIntelContributionAction(raw: unknown): Promise<Contr
     } as const satisfies Record<ContributionDecision, string>
   )[decision];
 
-  const noneConfirmed = contribution.knowledgeState === "NONE_CONFIRMED";
-  const value = noneConfirmed ? null : (contribution.proposedValue as unknown);
+  try {
+    await runContributionTransaction(async (tx) => {
+      // Ordre partagé avec la fusion : dossier d'abord, contribution ensuite.
+      // Cela sérialise aussi deux contributions différentes au même dossier.
+      const lockedProfile = await lockContributionProfile(tx, contribution.profileId);
 
-  await prisma.$transaction(async (tx) => {
-    await tx.profileIntelContribution.update({
-      where: { id: contribution.id },
-      data: {
+      const claimed = await claimPendingContribution(tx, {
+        contributionId: contribution.id,
+        profileId: contribution.profileId,
         status: nextStatus,
-        reviewedById: current.session.userId,
-        reviewedAt: new Date(),
+        reviewerId: current.session.userId,
         reviewNote: reviewNote || null,
-      },
-    });
-    const ctx = {
-      actorId: current.session.userId,
-      sourceMissionId: contribution.sourceMissionId,
-      confidence: contribution.confidence,
-      justification:
-        `${reviewNote ?? ""} [contribution ${contribution.id.slice(-6)} — ${decision.toLowerCase()}]`.trim(),
-    };
-    if (decision === "ACCEPT") {
-      await applyContributionValue(tx, contribution.profileId, fieldKey, value, noneConfirmed ? "NONE_CONFIRMED" : "REPLACE", ctx);
-    } else if (decision === "MERGE") {
-      await applyContributionValue(tx, contribution.profileId, fieldKey, value, "MERGE", ctx);
-    } else if (decision === "MARK_CONTRADICTORY") {
-      // Les deux versions sont gardées (l'existante en place, la proposée dans
-      // la contribution) ; le champ s'affiche « contradictoire » pour tous.
-      await tx.characterFieldIntel.upsert({
-        where: { profileId_fieldKey: { profileId: contribution.profileId, fieldKey } },
-        update: { knowledgeState: "CONFLICTING", updatedById: current.session.userId },
-        create: { profileId: contribution.profileId, fieldKey, knowledgeState: "CONFLICTING", updatedById: current.session.userId },
+        reviewedAt: new Date(),
       });
-      await tx.characterProfileRevision.create({
-        data: {
-          profileId: contribution.profileId,
+      if (!claimed) throw new Error("ALREADY_REVIEWED");
+
+      if (decision !== "REJECT" && lockedProfile.version !== contribution.profile.version) {
+        throw new Error("PROFILE_CHANGED");
+      }
+
+      // `proposedValue` est du JSON stocké, donc une frontière non fiable : il
+      // est reparsé et renettoyé au moment exact où la décision va s'appliquer.
+      let value: unknown = null;
+      if (!noneConfirmed && decision !== "REJECT") {
+        try {
+          value = parseContributionValue(fieldKey, contribution.proposedValue);
+        } catch {
+          throw new Error("INVALID_CONTRIBUTION_VALUE");
+        }
+        await assertContributionOptions(tx, fieldKey, value);
+      }
+
+      const ctx = {
+        actorId: current.session.userId,
+        sourceMissionId: contribution.sourceMissionId,
+        confidence: contribution.confidence,
+        justification:
+          `${reviewNote ?? ""} [contribution ${contribution.id.slice(-6)} — ${decision.toLowerCase()}]`.trim(),
+      };
+      if (decision === "ACCEPT") {
+        await applyContributionValue(
+          tx,
+          contribution.profileId,
           fieldKey,
-          newValue: { contradictoryProposal: contribution.proposedLabel },
-          changedById: current.session.userId,
-          sourceMissionId: contribution.sourceMissionId,
-          justification: `${reviewNote ?? ""} [marqué contradictoire]`.trim(),
-        },
-      });
+          value,
+          noneConfirmed ? "NONE_CONFIRMED" : "REPLACE",
+          ctx,
+        );
+      } else if (decision === "MERGE") {
+        await applyContributionValue(tx, contribution.profileId, fieldKey, value, "MERGE", ctx);
+      } else if (decision === "MARK_CONTRADICTORY") {
+        // Les deux versions sont gardées (l'existante en place, la proposée dans
+        // la contribution) ; le champ s'affiche « contradictoire » pour tous.
+        await tx.characterFieldIntel.upsert({
+          where: { profileId_fieldKey: { profileId: contribution.profileId, fieldKey } },
+          update: { knowledgeState: "CONFLICTING", updatedById: current.session.userId },
+          create: {
+            profileId: contribution.profileId,
+            fieldKey,
+            knowledgeState: "CONFLICTING",
+            updatedById: current.session.userId,
+          },
+        });
+        await tx.characterProfile.update({
+          where: { id: contribution.profileId },
+          data: { version: { increment: 1 }, updatedById: current.session.userId },
+        });
+        await tx.characterProfileRevision.create({
+          data: {
+            profileId: contribution.profileId,
+            fieldKey,
+            newValue: { contradictoryProposal: contribution.proposedLabel },
+            changedById: current.session.userId,
+            sourceMissionId: contribution.sourceMissionId,
+            justification: `${reviewNote ?? ""} [marqué contradictoire]`.trim(),
+          },
+        });
+      }
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === "ALREADY_REVIEWED") {
+      return { ok: false, error: "Cette contribution vient d'être tranchée par quelqu'un d'autre." };
     }
-  });
+    if (error instanceof Error && error.message === "PROFILE_CHANGED") {
+      return { ok: false, error: "Le dossier a changé depuis l'ouverture de la revue ; rechargez-le avant de trancher." };
+    }
+    if (error instanceof Error && error.message === "PROFILE_UNAVAILABLE") {
+      return { ok: false, error: "Ce dossier vient d'être archivé ou fusionné." };
+    }
+    if (error instanceof Error && error.message === "INVALID_CONTRIBUTION_VALUE") {
+      return { ok: false, error: "La valeur enregistrée n'est plus valide pour ce champ." };
+    }
+    if (isRetryableContributionTransactionError(error)) {
+      return { ok: false, error: "Une autre décision a modifié ce dossier ; rechargez puis réessayez." };
+    }
+    if (error instanceof Error && !("code" in error)) return { ok: false, error: error.message };
+    throw error;
+  }
 
   const meta = await requestMeta();
   await audit({

@@ -117,6 +117,31 @@ export const PROFILE_FIELD_KEYS = [
 
 export type ProfileFieldKey = (typeof PROFILE_FIELD_KEYS)[number];
 
+const NONE_CAPABLE_FIELDS = new Set<ProfileFieldKey>([
+  "lastName",
+  "hairColor",
+  "ninjaClass",
+  "faction",
+  "rank",
+  "clans",
+  "chakraNatures",
+  "kekkeiGenkai",
+  "clanTechniques",
+  "signatureTechniques",
+  "combatStyles",
+  "kenjutsuStyles",
+  "artifacts",
+]);
+
+/**
+ * « Vérifié : il n'y en a pas » n'est proposé que lorsqu'une absence a un
+ * sens métier. Une personne n'a pas « aucune taille », « aucun âge », « aucun
+ * sexe » ou « aucun état vital » : dans ces cas, l'information est inconnue.
+ */
+export function canDeclareNoneForField(key: ProfileFieldKey): boolean {
+  return NONE_CAPABLE_FIELDS.has(key);
+}
+
 /** Le champ est-il lisible par tous (sans accès au dossier) ? */
 export function isPublicProfileField(key: ProfileFieldKey): boolean {
   return (PUBLIC_FIELD_KEYS as readonly string[]).includes(key);

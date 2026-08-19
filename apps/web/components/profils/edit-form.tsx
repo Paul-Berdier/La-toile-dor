@@ -1,15 +1,22 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { PROFILE_FIELD_LABELS, type ProfileFieldKey } from "@toile/shared";
+import {
+  PROFILE_FIELD_LABELS,
+  canDeclareNoneForField,
+  type ProfileFieldKey,
+} from "@toile/shared";
 import { updateProfileAction, suggestReferenceAction } from "@/server/profiles/profile-actions";
 import { Button } from "@/components/ui/button";
 import { ReferencePicker } from "./reference-picker";
 
 export interface RefOption {
   id: string;
+  /** Code métier stable : le libellé peut être renommé par l'administration. */
+  code: string;
   label: string;
+  isActive: boolean;
   category: string | null;
   colorHex: string | null;
   sourceScopeLabel: string;
@@ -24,6 +31,7 @@ export interface EditFormData {
   profileId: string;
   /** Version du dossier à son ouverture — verrouillage optimiste */
   version: number;
+  title: string;
   firstName: string;
   lastName: string;
   sexCode: string;
@@ -70,7 +78,7 @@ interface Refs {
   combatStyles: RefOption[];
   kenjutsuStyles: RefOption[];
   artifacts: RefOption[];
-  factions: { id: string; name: string }[];
+  factions: { id: string; name: string; isActive: boolean }[];
   ranks: { id: string; label: string }[];
   jutsuTypes: RefOption[];
   /** Catalogue des subjutsu répertoriés, proposé par le TechniqueManager */
@@ -121,6 +129,12 @@ function KnowledgeField({
   children: React.ReactNode;
 }) {
   const selectId = `state-${fieldKey}`;
+  const choices = KNOWLEDGE_CHOICES.filter(
+    (choice) =>
+      choice.value !== "NONE_CONFIRMED" ||
+      canDeclareNoneForField(fieldKey) ||
+      state === "NONE_CONFIRMED",
+  );
   return (
     <div className="border border-border-default/70 bg-elevated/40 p-3">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -145,7 +159,7 @@ function KnowledgeField({
                   : "border-border-strong text-ink-muted"
           }`}
         >
-          {KNOWLEDGE_CHOICES.map((choice) => (
+          {choices.map((choice) => (
             <option key={choice.value} value={choice.value}>
               {choice.label}
             </option>
@@ -187,6 +201,7 @@ export function ProfileEditForm({
   sourceMissionId,
   canManageReferences = false,
   initialStep = 0,
+  canAdminister = false,
 }: {
   initial: EditFormData;
   refs: Refs;
@@ -195,6 +210,8 @@ export function ProfileEditForm({
   canManageReferences?: boolean;
   /** Section ouverte à l'arrivée (« Modifier » depuis une section du dossier) */
   initialStep?: number;
+  /** Modération : notes internes visibles et modifiables */
+  canAdminister?: boolean;
 }) {
   const router = useRouter();
   const [step, setStep] = useState(Math.min(Math.max(0, initialStep), SECTIONS.length - 1));
@@ -202,6 +219,15 @@ export function ProfileEditForm({
   // Les référentiels vivent côté client : une entrée créée depuis un
   // sélecteur doit apparaître sans recharger la page.
   const [refs, setRefs] = useState<Refs>(initialRefs);
+  const [touchedFields, setTouchedFields] = useState<Set<ProfileFieldKey>>(
+    () => new Set(),
+  );
+  const [touchedIdentity, setTouchedIdentity] = useState({
+    title: false,
+    firstName: false,
+    internalNotes: false,
+  });
+  const editSequence = useRef(0);
 
   type RefListKey = {
     [K in keyof Refs]: Refs[K] extends RefOption[] ? K : never;
@@ -228,9 +254,17 @@ export function ProfileEditForm({
   const set = <K extends keyof EditFormData>(key: K, value: EditFormData[K]) =>
     setData((d) => ({ ...d, [key]: value }));
 
+  const touchField = (key: ProfileFieldKey) => {
+    editSequence.current += 1;
+    setTouchedFields((current) => new Set(current).add(key));
+  };
+
   const stateOf = (key: ProfileFieldKey): KnowledgeChoice => data.fieldStates[key] ?? "UNKNOWN";
-  const setState = (key: ProfileFieldKey, state: KnowledgeChoice) =>
+  const setState = (key: ProfileFieldKey, state: KnowledgeChoice) => {
+    touchField(key);
+    setSaved(false);
     setData((d) => ({ ...d, fieldStates: { ...d.fieldStates, [key]: state } }));
+  };
 
   const isFilled = (value: unknown) =>
     Array.isArray(value) ? value.length > 0 : value !== "" && value != null;
@@ -244,7 +278,9 @@ export function ProfileEditForm({
     fieldKey: ProfileFieldKey,
     key: K,
     value: EditFormData[K],
-  ) =>
+  ) => {
+    touchField(fieldKey);
+    setSaved(false);
     setData((d) => ({
       ...d,
       [key]: value,
@@ -253,55 +289,76 @@ export function ProfileEditForm({
           ? { ...d.fieldStates, [fieldKey]: "KNOWN" as KnowledgeChoice }
           : d.fieldStates,
     }));
+  };
 
   const showKenjutsu =
     stateOf("combatStyles") === "KNOWN" &&
-    data.combatStyleIds.some((id) => refs.combatStyles.find((c) => c.id === id)?.label === "Kenjutsu");
+    data.combatStyleIds.some(
+      (id) => refs.combatStyles.find((c) => c.id === id)?.code === "KENJUTSU",
+    );
+
+  const hasChanges =
+    touchedFields.size > 0 || Object.values(touchedIdentity).some(Boolean);
 
   const save = (conflictStrategy?: string) => {
-    if (isPending) return;
+    if (isPending || !hasChanges) return;
+    const savingSequence = editSequence.current;
     startTransition(async () => {
-      // Un champ dont l'état n'est pas « connu » n'envoie aucune valeur :
-      // le serveur nettoie alors la donnée correspondante.
       const known = (key: ProfileFieldKey) => stateOf(key) === "KNOWN";
+      const include = (key: ProfileFieldKey, values: Record<string, unknown>) =>
+        touchedFields.has(key) ? values : {};
+      const fieldStates = Object.fromEntries(
+        [...touchedFields].map((key) => [key, stateOf(key)]),
+      );
+      const hasIntelChanges = touchedFields.size > 0;
       const res = await updateProfileAction({
         profileId: data.profileId,
         version: data.version,
-        sourceMissionId: sourceMissionId ?? null,
-        confidence,
-        justification: justification || undefined,
-        observedAtRp: observedAtRp || undefined,
+        ...(hasIntelChanges && sourceMissionId ? { sourceMissionId } : {}),
+        ...(hasIntelChanges ? { confidence } : {}),
+        ...(hasIntelChanges && justification ? { justification } : {}),
+        ...(hasIntelChanges && observedAtRp ? { observedAtRp } : {}),
         conflictStrategy,
-        fieldStates: data.fieldStates,
-        firstName: data.firstName,
-        lastName: known("lastName") ? data.lastName || null : null,
-        sexCode: known("sex") ? data.sexCode || null : null,
-        heightMinCm: known("height") ? data.heightMinCm : null,
-        heightMaxCm: known("height") ? data.heightMaxCm : null,
-        hairColorId: known("hairColor") ? data.hairColorId || null : null,
-        skinToneId: known("skinTone") ? data.skinToneId || null : null,
-        eyeColorId: known("eyeColor") ? data.eyeColorId || null : null,
-        eyeColorSecondaryId: known("eyeColor") && data.eyeColorId ? data.eyeColorSecondaryId || null : null,
-        ninjaClassId: known("ninjaClass") ? data.ninjaClassId || null : null,
-        factionId: known("faction") ? data.factionId || null : null,
-        rankId: known("rank") ? data.rankId || null : null,
-        lifeStatus: known("lifeStatus") ? data.lifeStatus || null : null,
-        ageMode: known("age") ? (data.ageMode as never) : "UNKNOWN",
-        ageYearsNow: known("age") ? data.ageYearsNow : null,
-        ageMinNow: known("age") ? data.ageMinNow : null,
-        ageMaxNow: known("age") ? data.ageMaxNow : null,
-        clanIds: known("clans") ? data.clanIds : [],
-        chakraNatureIds: known("chakraNatures") ? data.chakraNatureIds : [],
-        kekkeiGenkaiIds: known("kekkeiGenkai") ? data.kekkeiGenkaiIds : [],
-        clanTechniqueIds: known("clanTechniques") ? data.clanTechniqueIds : [],
-        signatureTechniqueIds: known("signatureTechniques") ? data.signatureTechniqueIds : [],
-        combatStyleIds: known("combatStyles") ? data.combatStyleIds : [],
-        kenjutsuStyleIds: showKenjutsu ? data.kenjutsuStyleIds : [],
-        artifactIds: known("artifacts") ? data.artifactIds : [],
-        details: known("details") ? data.details || null : null,
-        strengths: known("strengths") ? data.strengths || null : null,
-        weaknesses: known("weaknesses") ? data.weaknesses || null : null,
-        internalNotes: data.internalNotes || null,
+        ...(hasIntelChanges ? { fieldStates } : {}),
+        ...(touchedIdentity.title ? { title: data.title } : {}),
+        ...(touchedIdentity.firstName ? { firstName: data.firstName } : {}),
+        ...include("lastName", { lastName: known("lastName") ? data.lastName || null : null }),
+        ...include("sex", { sexCode: known("sex") ? data.sexCode || null : null }),
+        ...include("height", {
+          heightMinCm: known("height") ? data.heightMinCm : null,
+          heightMaxCm: known("height") ? data.heightMaxCm : null,
+        }),
+        ...include("hairColor", { hairColorId: known("hairColor") ? data.hairColorId || null : null }),
+        ...include("skinTone", { skinToneId: known("skinTone") ? data.skinToneId || null : null }),
+        ...include("eyeColor", {
+          eyeColorId: known("eyeColor") ? data.eyeColorId || null : null,
+          eyeColorSecondaryId:
+            known("eyeColor") && data.eyeColorId ? data.eyeColorSecondaryId || null : null,
+        }),
+        ...include("ninjaClass", { ninjaClassId: known("ninjaClass") ? data.ninjaClassId || null : null }),
+        ...include("faction", { factionId: known("faction") ? data.factionId || null : null }),
+        ...include("rank", { rankId: known("rank") ? data.rankId || null : null }),
+        ...include("lifeStatus", { lifeStatus: known("lifeStatus") ? data.lifeStatus || null : null }),
+        ...include("age", {
+          ageMode: known("age") ? data.ageMode : "UNKNOWN",
+          ageYearsNow: known("age") ? data.ageYearsNow : null,
+          ageMinNow: known("age") ? data.ageMinNow : null,
+          ageMaxNow: known("age") ? data.ageMaxNow : null,
+        }),
+        ...include("clans", { clanIds: known("clans") ? data.clanIds : [] }),
+        ...include("chakraNatures", { chakraNatureIds: known("chakraNatures") ? data.chakraNatureIds : [] }),
+        ...include("kekkeiGenkai", { kekkeiGenkaiIds: known("kekkeiGenkai") ? data.kekkeiGenkaiIds : [] }),
+        ...include("clanTechniques", { clanTechniqueIds: known("clanTechniques") ? data.clanTechniqueIds : [] }),
+        ...include("signatureTechniques", { signatureTechniqueIds: known("signatureTechniques") ? data.signatureTechniqueIds : [] }),
+        ...include("combatStyles", { combatStyleIds: known("combatStyles") ? data.combatStyleIds : [] }),
+        ...include("kenjutsuStyles", { kenjutsuStyleIds: known("kenjutsuStyles") ? data.kenjutsuStyleIds : [] }),
+        ...include("artifacts", { artifactIds: known("artifacts") ? data.artifactIds : [] }),
+        ...include("details", { details: known("details") ? data.details || null : null }),
+        ...include("strengths", { strengths: known("strengths") ? data.strengths || null : null }),
+        ...include("weaknesses", { weaknesses: known("weaknesses") ? data.weaknesses || null : null }),
+        ...(canAdminister && touchedIdentity.internalNotes
+          ? { internalNotes: data.internalNotes || null }
+          : {}),
       });
       if (!res.ok) {
         if (res.conflicts) {
@@ -319,7 +376,15 @@ export function ProfileEditForm({
       setConflicts([]);
       setWarnings(res.warnings ?? []);
       setError(null);
-      setSaved(true);
+      // Une saisie effectuée pendant la requête reste sale et sera proposée au
+      // prochain enregistrement, au lieu d'être effacée par le retour réseau.
+      if (editSequence.current === savingSequence) {
+        setSaved(true);
+        setTouchedFields(new Set());
+        setTouchedIdentity({ title: false, firstName: false, internalNotes: false });
+      } else {
+        setSaved(false);
+      }
       // La version vient d'être incrémentée côté serveur : sans cette mise à
       // jour, un second enregistrement dans la foulée serait refusé à tort.
       setData((d) => ({ ...d, version: d.version + 1 }));
@@ -361,8 +426,37 @@ export function ProfileEditForm({
         {step === 0 && (
           <div className="space-y-3">
             <div>
+              <label htmlFor="ef-title" className={labelCls}>Titre public du dossier *</label>
+              <input
+                id="ef-title"
+                value={data.title}
+                onChange={(e) => {
+                  set("title", e.target.value);
+                  editSequence.current += 1;
+                  setTouchedIdentity((current) => ({ ...current, title: true }));
+                  setSaved(false);
+                }}
+                className={input}
+                maxLength={120}
+              />
+              <p className="mt-1 text-[0.65rem] text-ink-faint">
+                Ce titre reste public. Il n&rsquo;est pas régénéré quand le nom change.
+              </p>
+            </div>
+            <div>
               <label htmlFor="ef-first" className={labelCls}>Prénom * (toujours visible)</label>
-              <input id="ef-first" value={data.firstName} onChange={(e) => set("firstName", e.target.value)} className={input} maxLength={80} />
+              <input
+                id="ef-first"
+                value={data.firstName}
+                onChange={(e) => {
+                  set("firstName", e.target.value);
+                  editSequence.current += 1;
+                  setTouchedIdentity((current) => ({ ...current, firstName: true }));
+                  setSaved(false);
+                }}
+                className={input}
+                maxLength={80}
+              />
             </div>
 
             <KnowledgeField fieldKey="lastName" state={stateOf("lastName")} onStateChange={(s) => setState("lastName", s)}>
@@ -385,7 +479,7 @@ export function ProfileEditForm({
 
             <KnowledgeField fieldKey="age" state={stateOf("age")} onStateChange={(s) => setState("age", s)}>
               <div className="space-y-2">
-                <select aria-label="Mode de calcul de l'âge" value={data.ageMode} onChange={(e) => set("ageMode", e.target.value)} className={input}>
+                <select aria-label="Mode de calcul de l'âge" value={data.ageMode} onChange={(e) => setValue("age", "ageMode", e.target.value)} className={input}>
                   <option value="UNKNOWN">— choisir —</option>
                   <option value="AGE_AT_REFERENCE">Âge connu aujourd&rsquo;hui</option>
                   <option value="AGE_RANGE_AT_REFERENCE">Fourchette d&rsquo;âge</option>
@@ -460,7 +554,7 @@ export function ProfileEditForm({
                     setValue("eyeColor", "eyeColorId", next);
                     // Sans premier œil, pas de second : on évite d'envoyer un
                     // état que la contrainte en base refuserait.
-                    if (!next) set("eyeColorSecondaryId", "");
+                    if (!next) setValue("eyeColor", "eyeColorSecondaryId", "");
                   }}
                   onSuggest={(label) => setSuggestion({ type: "EYE_COLOR", label })}
                   referenceType="EYE_COLOR"
@@ -474,7 +568,7 @@ export function ProfileEditForm({
                     disabled={!data.eyeColorId}
                     onChange={(e) => {
                       setHeterochromia(e.target.checked);
-                      if (!e.target.checked) set("eyeColorSecondaryId", "");
+                      if (!e.target.checked) setValue("eyeColor", "eyeColorSecondaryId", "");
                     }}
                   />
                   Couleurs différentes (hétérochromie)
@@ -484,7 +578,7 @@ export function ProfileEditForm({
                     legend="Œil 2"
                     options={refs.eyeColors.filter((o) => o.id !== data.eyeColorId)}
                     selected={data.eyeColorSecondaryId ? [data.eyeColorSecondaryId] : []}
-                    onChange={(ids) => set("eyeColorSecondaryId", ids[ids.length - 1] ?? "")}
+                    onChange={(ids) => setValue("eyeColor", "eyeColorSecondaryId", ids[ids.length - 1] ?? "")}
                     onSuggest={(label) => setSuggestion({ type: "EYE_COLOR", label })}
                     referenceType="EYE_COLOR"
                     canCreate={canManageReferences}
@@ -508,7 +602,11 @@ export function ProfileEditForm({
             <KnowledgeField fieldKey="faction" state={stateOf("faction")} onStateChange={(s) => setState("faction", s)}>
               <select aria-label="Faction" value={data.factionId} onChange={(e) => setValue("faction", "factionId", e.target.value)} className={input}>
                 <option value="">— choisir —</option>
-                {refs.factions.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                {refs.factions.map((f) => (
+                  <option key={f.id} value={f.id} disabled={!f.isActive && f.id !== data.factionId}>
+                    {f.name}{!f.isActive ? " (désactivée)" : ""}
+                  </option>
+                ))}
               </select>
             </KnowledgeField>
 
@@ -522,7 +620,11 @@ export function ProfileEditForm({
             <KnowledgeField fieldKey="ninjaClass" state={stateOf("ninjaClass")} onStateChange={(s) => setState("ninjaClass", s)}>
               <select aria-label="Classe" value={data.ninjaClassId} onChange={(e) => setValue("ninjaClass", "ninjaClassId", e.target.value)} className={input}>
                 <option value="">— choisir —</option>
-                {refs.ninjaClasses.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                {refs.ninjaClasses.map((c) => (
+                  <option key={c.id} value={c.id} disabled={!c.isActive && c.id !== data.ninjaClassId}>
+                    {c.label}{!c.isActive ? " (désactivée)" : ""}
+                  </option>
+                ))}
               </select>
             </KnowledgeField>
 
@@ -630,12 +732,27 @@ export function ProfileEditForm({
                 </>
               </KnowledgeField>
             ))}
-            <div className="border border-copper/40 bg-elevated/40 p-3">
-              <label htmlFor="ef-notes" className={labelCls}>
-                Notes internes (jamais vendues avec le dossier)
-              </label>
-              <textarea id="ef-notes" value={data.internalNotes} onChange={(e) => set("internalNotes", e.target.value)} rows={3} maxLength={10_000} className={input} />
-            </div>
+            {/* Notes internes : modération seule — ni affichées, ni envoyées sinon */}
+            {canAdminister && (
+              <div className="border border-copper/40 bg-elevated/40 p-3">
+                <label htmlFor="ef-notes" className={labelCls}>
+                  Notes internes (jamais vendues avec le dossier)
+                </label>
+                <textarea
+                  id="ef-notes"
+                  value={data.internalNotes}
+                  onChange={(e) => {
+                    set("internalNotes", e.target.value);
+                    editSequence.current += 1;
+                    setTouchedIdentity((current) => ({ ...current, internalNotes: true }));
+                    setSaved(false);
+                  }}
+                  rows={3}
+                  maxLength={10_000}
+                  className={input}
+                />
+              </div>
+            )}
           </div>
         )}
 
@@ -682,10 +799,10 @@ export function ProfileEditForm({
               ))}
             </ul>
             <div className="mt-3 flex flex-wrap gap-2">
-              <Button size="sm" variant="gold" onClick={() => save("REPLACE")} disabled={isPending}>Remplacer</Button>
-              <Button size="sm" variant="outline" onClick={() => save("KEEP")} disabled={isPending}>Conserver l&rsquo;ancienne</Button>
-              <Button size="sm" variant="seal" onClick={() => save("MARK_CONFLICTING")} disabled={isPending}>Marquer contradictoire</Button>
-              <Button size="sm" variant="ghost" onClick={() => setConflicts([])} disabled={isPending}>Annuler</Button>
+              <Button type="button" size="sm" variant="gold" onClick={() => save("REPLACE")} disabled={isPending}>Remplacer</Button>
+              <Button type="button" size="sm" variant="outline" onClick={() => save("KEEP")} disabled={isPending}>Conserver l&rsquo;ancienne</Button>
+              <Button type="button" size="sm" variant="seal" onClick={() => save("MARK_CONFLICTING")} disabled={isPending}>Marquer contradictoire</Button>
+              <Button type="button" size="sm" variant="ghost" onClick={() => setConflicts([])} disabled={isPending}>Annuler</Button>
             </div>
           </div>
         )}
@@ -706,10 +823,10 @@ export function ProfileEditForm({
               {/* Rechargement COMPLET : `router.refresh()` renouvelle les
                   props serveur, mais l'état du formulaire est initialisé une
                   seule fois et resterait sur les anciennes valeurs. */}
-              <Button size="sm" variant="gold" onClick={() => window.location.reload()}>
+              <Button type="button" size="sm" variant="gold" onClick={() => window.location.reload()}>
                 Recharger le dossier
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => setStale(false)}>
+              <Button type="button" size="sm" variant="ghost" onClick={() => setStale(false)}>
                 Garder ma saisie à l&rsquo;écran
               </Button>
             </div>
@@ -730,13 +847,23 @@ export function ProfileEditForm({
 
         <div className="mt-6 flex items-center justify-between border-t border-border-default pt-4">
           <div className="flex gap-2">
-            <Button variant="ghost" onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0}>← Précédent</Button>
+            <Button type="button" variant="ghost" onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0}>← Précédent</Button>
             {step < SECTIONS.length - 1 && (
-              <Button variant="outline" onClick={() => setStep((s) => Math.min(SECTIONS.length - 1, s + 1))}>Suivant →</Button>
+              <Button type="button" variant="outline" onClick={() => setStep((s) => Math.min(SECTIONS.length - 1, s + 1))}>Suivant →</Button>
             )}
           </div>
           {conflicts.length === 0 && (
-            <Button variant="gold" onClick={() => save()} disabled={isPending || data.firstName.trim().length === 0}>
+            <Button
+              type="button"
+              variant="gold"
+              onClick={() => save()}
+              disabled={
+                isPending ||
+                !hasChanges ||
+                data.firstName.trim().length === 0 ||
+                data.title.trim().length === 0
+              }
+            >
               {isPending ? "Enregistrement…" : "Enregistrer le dossier"}
             </Button>
           )}

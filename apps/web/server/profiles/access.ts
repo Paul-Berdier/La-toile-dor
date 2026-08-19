@@ -120,6 +120,30 @@ export function decideAccess(viewer: ProfileViewer, target: ProfileAccessTarget)
 }
 
 /**
+ * Même décision, mais au nom d'UN groupe précis du lecteur.
+ *
+ * Indispensable aux actions multi-groupes : le fait que Paul voie ou modifie
+ * un dossier grâce au groupe A ne permet pas d'attribuer la même action au
+ * groupe B. Les permissions de modération restent, elles, applicables.
+ */
+export function decideAccessForGroup(
+  viewer: ProfileViewer,
+  target: ProfileAccessTarget,
+  groupId: string,
+): AccessDecision {
+  return decideAccess(
+    {
+      ...viewer,
+      accessViewer: {
+        ...viewer.accessViewer,
+        groupIds: new Set([groupId]),
+      },
+    },
+    target,
+  );
+}
+
+/**
  * Le lecteur peut-il voir les valeurs de CE dossier — version LISTE, à partir
  * des ensembles préchargés, quand on n'a pas les octrois sous la main.
  * Cohérente avec `canViewCharacterProfile` : modération, groupe créateur, ou

@@ -12,6 +12,7 @@ import {
 import { requireUser, requestMeta } from "@/lib/session";
 import { sniffImageMime, isFileLike } from "@/server/image-validation";
 import { getProfileViewer, decideAccess, toAccessTarget, accessTargetSelect } from "./access";
+import { canUseSourceMission } from "./source-mission";
 
 /**
  * Galerie d'images d'un dossier : portrait principal + pièces (apparence,
@@ -58,6 +59,9 @@ export async function uploadProfileGalleryImageAction(formData: FormData): Promi
   const caption = String(formData.get("caption") ?? "").trim().slice(0, 200) || null;
   const makePrimary = formData.get("primary") === "true";
   const sourceMissionId = String(formData.get("sourceMissionId") ?? "") || null;
+  if (!(await canUseSourceMission(current, sourceMissionId, profile.createdByGroupId))) {
+    return { ok: false, error: "Cette mission ne peut pas être utilisée comme source pour ce dossier." };
+  }
 
   const file = formData.get("image");
   if (!isFileLike(file) || file.size === 0) return { ok: false, error: "Aucun fichier reçu." };

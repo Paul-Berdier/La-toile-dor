@@ -11,7 +11,12 @@
  * puis son sort (acceptée, refusée…). Le conflit reste côté modération.
  */
 import { z } from "zod";
-import { PROFILE_FIELD_KEYS, type ProfileFieldKey } from "./profile-fields";
+import {
+  PROFILE_FIELD_KEYS,
+  canDeclareNoneForField,
+  type ProfileFieldKey,
+} from "./profile-fields";
+export { canDeclareNoneForField } from "./profile-fields";
 import { confidenceSchema } from "./profile-schemas";
 
 export const CONTRIBUTION_STATUSES = [
@@ -133,6 +138,25 @@ export function canMergeField(key: ProfileFieldKey): boolean {
   return LIST_FIELD_KEYS.includes(key) || TEXT_FIELD_KEYS.includes(key);
 }
 
+/** Référentiel attendu pour un champ à option unique. */
+export const SINGLE_OPTION_FIELD_TYPE: Partial<Record<ProfileFieldKey, string>> = {
+  hairColor: "HAIR_COLOR",
+  skinTone: "SKIN_TONE",
+  eyeColor: "EYE_COLOR",
+  ninjaClass: "NINJA_CLASS",
+};
+
+/**
+ * Valide ET nettoie la valeur d'une contribution pour son champ (chaînes
+ * rognées, champs inconnus retirés). Lance si la valeur est invalide — à
+ * appeler côté serveur avant toute écriture.
+ */
+export function parseContributionValue(fieldKey: ProfileFieldKey, value: unknown): unknown {
+  const schema = CONTRIBUTION_VALUE_SCHEMAS[fieldKey];
+  if (!schema) throw new Error(`Champ non contribuable : ${fieldKey}`);
+  return schema.parse(value);
+}
+
 export const intelContributionSchema = z
   .object({
     profileId: cuid,
@@ -152,7 +176,12 @@ export const intelContributionSchema = z
       ctx.addIssue({ code: "custom", path: ["fieldKey"], message: "Ce champ ne reçoit pas de contribution." });
       return;
     }
-    if (input.knowledgeState === "NONE_CONFIRMED") return; // pas de valeur à valider
+    if (input.knowledgeState === "NONE_CONFIRMED") {
+      if (!canDeclareNoneForField(input.fieldKey)) {
+        ctx.addIssue({ code: "custom", path: ["knowledgeState"], message: "Ce champ ne se déclare pas « absent »." });
+      }
+      return; // pas de valeur à valider
+    }
     const result = schema.safeParse(input.value);
     if (!result.success) {
       ctx.addIssue({

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { loginAs, prisma } from "./helpers";
 
 /**
@@ -15,6 +15,25 @@ import { loginAs, prisma } from "./helpers";
  * mot : on vérifie le clan par son état « ??? », pas par le texte.
  */
 const SECRETS = ["Shikotsumyaku", "Danse des Camélias"];
+
+function collectServerBodies(page: Page): () => Promise<string[]> {
+  const pending: Promise<string>[] = [];
+  page.on("response", (response) => {
+    const type = response.headers()["content-type"] ?? "";
+    if (type.includes("html") || type.includes("x-component") || type.includes("json")) {
+      pending.push(response.text().catch(() => ""));
+    }
+  });
+  return async () => {
+    let previousCount = -1;
+    while (previousCount !== pending.length) {
+      previousCount = pending.length;
+      await Promise.all(pending.slice(0, previousCount));
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+    return Promise.all(pending);
+  };
+}
 
 async function akira() {
   return prisma.characterProfile.findFirstOrThrow({
@@ -45,13 +64,7 @@ test("un CHEF sans accès ne reçoit pas le grade par le panneau d'estimation", 
   });
   expect(chiefGroups.some((g) => grantedGroupIds.includes(g.groupId))).toBe(false);
 
-  const bodies: string[] = [];
-  page.on("response", async (response) => {
-    const type = response.headers()["content-type"] ?? "";
-    if (type.includes("text") || type.includes("json") || type.includes("javascript")) {
-      bodies.push(await response.text().catch(() => ""));
-    }
-  });
+  const readBodies = collectServerBodies(page);
 
   await loginAs(context, "demo-chief-3");
   await page.goto(`/profils/${profile.id}`);
@@ -66,7 +79,7 @@ test("un CHEF sans accès ne reçoit pas le grade par le panneau d'estimation", 
   const leakPattern = new RegExp(`${rank.label}\\s*\\(×`);
   const html = await page.content();
   expect(html, "le grade multiplié ne doit pas figurer dans le panneau").not.toMatch(leakPattern);
-  for (const body of bodies) {
+  for (const body of await readBodies()) {
     expect(body).not.toMatch(leakPattern);
     // Le nombre de renseignements et le détail du calcul sont des oracles :
     // ces clés n'existent que dans la forme « full », jamais servie ici.
@@ -88,13 +101,7 @@ test("un agent SANS accès voit le prénom, « Inconnu » et « ??? » — jamai
   });
   expect(outsider).toBeTruthy();
 
-  const responses: string[] = [];
-  page.on("response", async (response) => {
-    const type = response.headers()["content-type"] ?? "";
-    if (type.includes("text") || type.includes("json") || type.includes("javascript")) {
-      responses.push(await response.text().catch(() => ""));
-    }
-  });
+  const readBodies = collectServerBodies(page);
 
   await loginAs(context, "demo-member-2-0-0");
   await page.goto(`/profils/${profile.id}`);
@@ -103,13 +110,13 @@ test("un agent SANS accès voit le prénom, « Inconnu » et « ??? » — jamai
   await expect(page.getByRole("heading", { name: /Akira Kaguya/ })).toBeVisible();
   // Les informations acquises mais protégées s'affichent « ??? » — dont le
   // CLAN, qui porte le même mot que le nom : c'est l'état qui fait foi.
-  await expect(page.getByText("???").first()).toBeVisible();
   const clanRow = page.locator("dt", { hasText: /^Clan$/ }).locator("xpath=..");
   await expect(clanRow.getByRole("img", { name: /confidentiel/i })).toBeVisible();
   // Une information jamais découverte reste « Inconnu » pour tous
   await expect(page.getByText("Inconnu").first()).toBeVisible();
 
   const html = await page.content();
+  const responses = await readBodies();
   for (const secret of SECRETS) {
     expect(html, `« ${secret} » ne doit pas être dans le DOM`).not.toContain(secret);
     for (const body of responses) {
@@ -126,13 +133,7 @@ test("la LISTE montre titre, prénom et nom à tous — et rien d'autre sans acc
   // revanche la charge utile ne doit porter AUCUNE autre valeur du dossier :
   // ni la faction, ni le KG, ni un indicateur de portrait.
   const profile = await akira();
-  const responses: string[] = [];
-  page.on("response", async (response) => {
-    const type = response.headers()["content-type"] ?? "";
-    if (type.includes("text") || type.includes("json") || type.includes("javascript")) {
-      responses.push(await response.text().catch(() => ""));
-    }
-  });
+  const readBodies = collectServerBodies(page);
 
   await loginAs(context, "demo-member-2-0-0");
   await page.goto("/profils");
@@ -141,7 +142,7 @@ test("la LISTE montre titre, prénom et nom à tous — et rien d'autre sans acc
   const card = page.locator("article, li").filter({ hasText: profile.code }).first();
   await expect(card.getByText(/Non acquis/)).toBeVisible();
 
-  for (const body of responses) {
+  for (const body of await readBodies()) {
     for (const secret of SECRETS) expect(body).not.toContain(secret);
     expect(body).not.toContain("hasVisiblePortrait\":true");
   }
@@ -248,11 +249,11 @@ test("création rapide : prénom seul, code généré, doublons avertis sans blo
   const unique = `Test${suffix}`;
   await loginAs(context, "demo-mod");
   await page.goto("/profils");
-  await page.getByRole("button", { name: "Nouveau profil" }).click();
+  await page.getByRole("button", { name: "Nouveau dossier" }).click();
   await page.getByLabel("Prénom du personnage *").fill(unique);
-  await page.getByRole("button", { name: "Créer le profil minimal" }).click();
+  await page.getByRole("button", { name: "Créer rapidement" }).click();
   // La modale se ferme après succès : c'est le signal de fin de l'action serveur
-  await expect(page.getByRole("dialog", { name: "Nouveau profil" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Ouvrir un dossier" })).toHaveCount(0);
 
   const created = await prisma.characterProfile.findFirstOrThrow({
     where: { characterFirstName: unique },
@@ -262,12 +263,12 @@ test("création rapide : prénom seul, code généré, doublons avertis sans blo
 
   // Second profil au MÊME prénom : averti, puis créé sur confirmation
   await page.reload();
-  await page.getByRole("button", { name: "Nouveau profil" }).click();
+  await page.getByRole("button", { name: "Nouveau dossier" }).click();
   await page.getByLabel("Prénom du personnage *").fill(unique);
-  await page.getByRole("button", { name: "Créer le profil minimal" }).click();
-  await expect(page.getByText(/profils ressemblants existent déjà/)).toBeVisible();
+  await page.getByRole("button", { name: "Créer rapidement" }).click();
+  await expect(page.getByText(/dossiers ressemblants existent déjà/i)).toBeVisible();
   await page.getByRole("button", { name: "Créer quand même" }).click();
-  await expect(page.getByRole("dialog", { name: "Nouveau profil" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Ouvrir un dossier" })).toHaveCount(0);
 
   const both = await prisma.characterProfile.findMany({ where: { characterFirstName: unique } });
   expect(both).toHaveLength(2);

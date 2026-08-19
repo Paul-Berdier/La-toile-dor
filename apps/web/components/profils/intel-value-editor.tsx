@@ -1,6 +1,6 @@
 "use client";
 
-import { PROFILE_FIELD_LABELS, TRAIT_FIELD_TO_TYPE, type ProfileFieldKey } from "@toile/shared";
+import { PROFILE_FIELD_LABELS, TRAIT_FIELD_TO_TYPE, canDeclareNoneForField, type ProfileFieldKey } from "@toile/shared";
 import { ReferencePicker } from "./reference-picker";
 import type { RefOption } from "./edit-form";
 
@@ -203,6 +203,4 @@ export function IntelValueEditor({
 }
 
 /** Un champ dont l'absence peut être « vérifiée » (pas l'âge ni les techniques). */
-export function canDeclareNone(fieldKey: ProfileFieldKey): boolean {
-  return fieldKey !== "age" && fieldKey !== "techniques";
-}
+export const canDeclareNone = canDeclareNoneForField;
