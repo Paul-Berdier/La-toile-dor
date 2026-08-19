@@ -301,8 +301,10 @@ export interface DossierDetail {
       id: string;
       groupName: string;
       priceRyos: number | null;
+      sourceType: string;
       grantedAt: string;
       revokedAt: string | null;
+      revokedReason: string | null;
     }[];
   };
   /** Chefs : leurs groupes sans accès (pour demander l'achat) */
@@ -544,8 +546,10 @@ export async function getDossierDetail(
         id: grant.id,
         groupName: grant.group.name,
         priceRyos: grant.priceRyos,
+        sourceType: grant.sourceType,
         grantedAt: grant.grantedAt.toISOString(),
         revokedAt: grant.revokedAt?.toISOString() ?? null,
+        revokedReason: grant.revokedReason,
       })),
     };
   }

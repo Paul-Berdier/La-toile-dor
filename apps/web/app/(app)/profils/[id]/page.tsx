@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import {
   PROFILE_FIELD_LABELS,
   CONFIDENCE_LABELS,
+  GRANT_SOURCE_LABELS,
+  type GrantSource,
   type IntelConfidenceCode,
 } from "@toile/shared";
 import { requireUser } from "@/lib/session";
@@ -54,6 +56,13 @@ export default async function DossierPage({
   const headingCls = open
     ? "mb-2 border-b border-parchment-deep pb-1.5 font-display text-sm tracking-widest text-blood uppercase"
     : "mb-2 font-display text-sm tracking-widest text-gold uppercase";
+
+  // « Modifier » par section : ouvre le formulaire sur la bonne rubrique —
+  // seulement pour qui peut modifier (modération, groupe créateur).
+  const editHref = (section: string) =>
+    detail.access.canEdit
+      ? `/profils/${dossier.id}/modifier?section=${section}${mission ? `&mission=${mission}` : ""}`
+      : null;
 
   const relationGroups: { key: RelationView["group"]; position: string }[] = [
     { key: "parents", position: "haut" },
@@ -164,9 +173,18 @@ export default async function DossierPage({
         }`}
       >
         <div className="space-y-5">
+          {/* Navigation entre sections : ancres (accessibles, sans JS), collante sur grand écran */}
+          <nav aria-label="Sections du dossier" className="sticky top-0 z-10 -mx-1 flex gap-1 overflow-x-auto bg-base/95 px-1 py-2 backdrop-blur">
+            {SECTION_NAV.filter((s) => s.id !== "renseignement" || detail.access.canContribute).map((s) => (
+              <a key={s.id} href={`#${s.id}`} className="whitespace-nowrap border border-border-default px-2 py-1 text-[0.7rem] uppercase tracking-wider text-ink-faint hover:border-gold hover:text-gold">
+                {s.label}
+              </a>
+            ))}
+          </nav>
+
           {/* Identité */}
-          <section className={sectionCls}>
-            <h2 className={headingCls}>Identité</h2>
+          <section className={sectionCls} id="identite">
+            <SectionHeading cls={headingCls} title="Identité" editHref={editHref("identite")} />
             <dl>
               <div
                 className={`flex items-baseline justify-between gap-3 border-b py-1.5 ${
@@ -194,8 +212,8 @@ export default async function DossierPage({
           </section>
 
           {/* Signalement */}
-          <section className={sectionCls}>
-            <h2 className={headingCls}>Signalement</h2>
+          <section className={sectionCls} id="signalement">
+            <SectionHeading cls={headingCls} title="Signalement" editHref={editHref("signalement")} />
             <dl>
               <DossierRow label={PROFILE_FIELD_LABELS.image} field={dossier.image} tone={tone} />
               <DossierRow label={PROFILE_FIELD_LABELS.height} field={f.height} tone={tone} />
@@ -220,8 +238,8 @@ export default async function DossierPage({
           </section>
 
           {/* Capacités */}
-          <section className={sectionCls}>
-            <h2 className={headingCls}>Capacités</h2>
+          <section className={sectionCls} id="capacites">
+            <SectionHeading cls={headingCls} title="Capacités" editHref={editHref("capacites")} />
             <dl>
               <DossierRow label={PROFILE_FIELD_LABELS.chakraNatures} field={f.chakraNatures} tone={tone} />
               <DossierRow label={PROFILE_FIELD_LABELS.kekkeiGenkai} field={f.kekkeiGenkai} tone={tone} />
@@ -243,6 +261,7 @@ export default async function DossierPage({
                   {(f.techniques.value as {
                     id: string; name: string; shortDescription: string | null;
                     typeLabel: string | null; rank: string | null;
+                    confidence: string | null; knowledgeState: string;
                   }[]).map((technique) => (
                     <li key={technique.id} className={`border p-2.5 ${open ? "border-parchment-deep bg-parchment-deep/30" : "border-border-default bg-elevated"}`}>
                       <p className={`text-sm ${open ? "text-parchment-text" : "text-ink"}`}>
@@ -252,6 +271,14 @@ export default async function DossierPage({
                         )}
                         {technique.typeLabel && (
                           <span className={`ml-2 text-xs ${open ? "text-parchment-text/60" : "text-ink-faint"}`}>{technique.typeLabel}</span>
+                        )}
+                        {technique.confidence && technique.confidence !== "CONFIRMED" && (
+                          <span className={`ml-2 border px-1 text-[0.6rem] uppercase tracking-wider ${open ? "border-parchment-deep text-parchment-text/70" : "border-border-default text-ink-faint"}`}>
+                            {CONFIDENCE_LABELS[technique.confidence as IntelConfidenceCode] ?? technique.confidence}
+                          </span>
+                        )}
+                        {technique.knowledgeState === "CONFLICTING" && (
+                          <span className="ml-2 border border-blood/60 px-1 text-[0.6rem] uppercase tracking-wider text-blood-bright">contradictoire</span>
                         )}
                       </p>
                       {technique.shortDescription && (
@@ -270,10 +297,8 @@ export default async function DossierPage({
           </section>
 
           {/* Réseau relationnel : fils dorés + vue liste accessible */}
-          <section className={sectionCls}>
-            <h2 className={headingCls}>
-              Réseau relationnel
-            </h2>
+          <section className={sectionCls} id="relations">
+            <SectionHeading cls={headingCls} title="Réseau relationnel" editHref={detail.access.canEdit ? `/profils/${dossier.id}/modifier#relations` : null} />
             {relations.length === 0 ? (
               <p className={`text-xs italic ${open ? "text-parchment-text/50" : "text-ink-faint"}`}>
                 Aucun lien répertorié.
@@ -337,8 +362,8 @@ export default async function DossierPage({
           </section>
 
           {/* Analyse */}
-          <section className={sectionCls}>
-            <h2 className={headingCls}>Analyse</h2>
+          <section className={sectionCls} id="analyse">
+            <SectionHeading cls={headingCls} title="Analyse" editHref={editHref("analyse")} />
             {(["details", "strengths", "weaknesses"] as const).map((key) => (
               <div key={key} className="mb-3 last:mb-0">
                 <h3 className={`text-[0.7rem] uppercase tracking-wider ${open ? "text-parchment-text/60" : "text-ink-faint"}`}>
@@ -553,16 +578,29 @@ export default async function DossierPage({
               )}
               <ul className="space-y-2">
                 {internal.grants.map((grant) => (
-                  <li key={grant.id} className="flex items-center justify-between gap-2 text-xs">
+                  <li key={grant.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
                     <span className={grant.revokedAt ? "text-ink-faint line-through" : "text-ink-muted"}>
                       {grant.groupName}
+                      <span className="ml-1 font-mono-toile text-[0.6rem] uppercase tracking-wider text-ink-faint">
+                        {GRANT_SOURCE_LABELS[grant.sourceType as GrantSource] ?? grant.sourceType}
+                      </span>
                       {grant.priceRyos != null && (
                         <span className="ml-1 font-mono-toile text-gold">
                           {grant.priceRyos.toLocaleString("fr-FR")} ryōs
                         </span>
                       )}
+                      {grant.revokedReason && (
+                        <span className="ml-1 text-[0.65rem] text-ink-faint no-underline">— {grant.revokedReason}</span>
+                      )}
                     </span>
-                    {!grant.revokedAt && <RevokeGrantButton grantId={grant.id} />}
+                    {!grant.revokedAt && (
+                      <RevokeGrantButton
+                        grantId={grant.id}
+                        groupName={grant.groupName}
+                        disabled={grant.sourceType === "CREATED_BY_GROUP"}
+                        disabledReason="Groupe créateur"
+                      />
+                    )}
                   </li>
                 ))}
               </ul>
@@ -571,6 +609,29 @@ export default async function DossierPage({
         </aside>
       </div>
     </main>
+  );
+}
+
+const SECTION_NAV = [
+  { id: "identite", label: "Identité" },
+  { id: "signalement", label: "Signalement" },
+  { id: "capacites", label: "Capacités" },
+  { id: "relations", label: "Relations" },
+  { id: "analyse", label: "Analyse" },
+  { id: "renseignement", label: "Renseignement" },
+] as const;
+
+/** Titre de section avec, pour qui le peut, le lien « Modifier » vers la bonne rubrique. */
+function SectionHeading({ cls, title, editHref }: { cls: string; title: string; editHref: string | null }) {
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <h2 className={cls}>{title}</h2>
+      {editHref && (
+        <Link href={editHref} className="shrink-0 text-[0.65rem] uppercase tracking-wider text-ink-faint hover:text-gold">
+          Modifier
+        </Link>
+      )}
+    </div>
   );
 }
 

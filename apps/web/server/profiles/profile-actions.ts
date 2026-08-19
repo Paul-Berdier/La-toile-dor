@@ -982,14 +982,40 @@ export async function decidePurchaseAction(raw: unknown): Promise<ProfileActionR
   return { ok: true };
 }
 
-export async function revokeGrantAction(grantId: string): Promise<ProfileActionResult> {
+/**
+ * Révocation d'un accès — toujours MOTIVÉE. Un accès CREATED_BY_GROUP ne se
+ * révoque pas : le groupe a ouvert le dossier, il le possède ; retirer ce
+ * lien reviendrait à lui voler son travail. Un accès payé se révoque avec un
+ * motif écrit, que le groupe pourra lire.
+ */
+export async function revokeGrantAction(
+  grantId: string,
+  reason?: string,
+): Promise<ProfileActionResult> {
   const current = await requireUser();
   if (!current.permissions.has(PERMISSIONS.PROFILE_PURCHASE_REVIEW)) {
     return { ok: false, error: "Permission refusée." };
   }
+  const trimmed = reason?.trim() ?? "";
+  if (trimmed.length < 3) return { ok: false, error: "Indiquez le motif de la révocation." };
+  if (trimmed.length > 1000) return { ok: false, error: "Le motif ne doit pas dépasser 1 000 caractères." };
+
+  const existing = await prisma.profileAccessGrant.findUnique({
+    where: { id: grantId },
+    select: { id: true, profileId: true, groupId: true, sourceType: true, revokedAt: true, priceRyos: true },
+  });
+  if (!existing) return { ok: false, error: "Accès introuvable." };
+  if (existing.revokedAt) return { ok: false, error: "Cet accès est déjà révoqué." };
+  if (existing.sourceType === "CREATED_BY_GROUP") {
+    return {
+      ok: false,
+      error: "Ce groupe a ouvert le dossier : on ne lui retire pas. Archivez le dossier si besoin.",
+    };
+  }
+
   const grant = await prisma.profileAccessGrant.update({
     where: { id: grantId },
-    data: { revokedAt: new Date(), revokedById: current.session.userId },
+    data: { revokedAt: new Date(), revokedById: current.session.userId, revokedReason: trimmed },
   });
   const meta = await requestMeta();
   await audit({
@@ -997,8 +1023,23 @@ export async function revokeGrantAction(grantId: string): Promise<ProfileActionR
     action: "profile.access_revoked",
     resourceType: "characterProfile",
     resourceId: grant.profileId,
-    oldValues: { groupId: grant.groupId },
+    oldValues: { groupId: grant.groupId, sourceType: grant.sourceType, priceRyos: grant.priceRyos },
+    newValues: { reason: trimmed },
     ...meta,
+  });
+  // Le groupe apprend qu'il perd l'accès, et pourquoi — jamais en silence.
+  const members = await prisma.groupMember.findMany({
+    where: { groupId: grant.groupId },
+    select: { userId: true },
+  });
+  const profile = await prisma.characterProfile.findUnique({
+    where: { id: grant.profileId },
+    select: { code: true, characterFirstName: true },
+  });
+  await enqueueNotifications({
+    userIds: members.map((m) => m.userId),
+    event: "PROFILE_REQUEST_REFUSED",
+    payload: { code: profile?.code ?? "", title: profile?.characterFirstName ?? "", reason: trimmed, revoked: 1 },
   });
   revalidatePath(`/profils/${grant.profileId}`);
   revalidatePath("/profils");

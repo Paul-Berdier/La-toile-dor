@@ -186,15 +186,18 @@ export function ProfileEditForm({
   refs: initialRefs,
   sourceMissionId,
   canManageReferences = false,
+  initialStep = 0,
 }: {
   initial: EditFormData;
   refs: Refs;
   sourceMissionId?: string;
   /** Autorise l'ajout d'entrées de référentiel sans passer par une validation */
   canManageReferences?: boolean;
+  /** Section ouverte à l'arrivée (« Modifier » depuis une section du dossier) */
+  initialStep?: number;
 }) {
   const router = useRouter();
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(Math.min(Math.max(0, initialStep), SECTIONS.length - 1));
   const [data, setData] = useState<EditFormData>(initial);
   // Les référentiels vivent côté client : une entrée créée depuis un
   // sélecteur doit apparaître sans recharger la page.

@@ -101,6 +101,21 @@ export default async function ProfilsPage({
   const pendingContributions = viewer.canManage
     ? await prisma.profileIntelContribution.count({ where: { status: "PENDING_REVIEW" } })
     : 0;
+  // Résumé pour les groupes : ce qu'ils possèdent, ce qu'ils attendent. Des
+  // COMPTES sur leurs propres dossiers — rien sur ceux des autres.
+  const summary =
+    !viewer.canViewAll && viewer.groupIds.length > 0
+      ? {
+          created: viewer.createdProfileIds.size,
+          acquired: [...viewer.grantedProfileIds].filter((id) => !viewer.createdProfileIds.has(id)).length,
+          pendingRequests: await prisma.profilePurchaseRequest.count({
+            where: { groupId: { in: viewer.groupIds }, status: "PENDING" },
+          }),
+          pendingContributions: await prisma.profileIntelContribution.count({
+            where: { contributorId: viewer.userId, status: "PENDING_REVIEW" },
+          }),
+        }
+      : null;
 
   const asOptions = (rows: { id: string; label: string }[]) =>
     rows.map((row) => ({ value: row.id, label: row.label }));
@@ -122,6 +137,11 @@ export default async function ProfilsPage({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {!viewer.canViewAll && viewer.groupIds.length > 0 && (
+            <Link href="/profils/mes-demandes" className={buttonClasses("ghost", "md")}>
+              Mes demandes et accès
+            </Link>
+          )}
           {viewer.canReview && (
             <Link href="/profils/demandes" className={buttonClasses("outline", "md")}>
               Demandes d&rsquo;accès
@@ -146,6 +166,22 @@ export default async function ProfilsPage({
           )}
         </div>
       </div>
+
+      {summary && (
+        <dl className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Résumé de vos dossiers">
+          {[
+            ["Ouverts par vos groupes", summary.created, "/profils?acces=granted"],
+            ["Acquis", summary.acquired, "/profils?acces=granted"],
+            ["Demandes en attente", summary.pendingRequests, "/profils/mes-demandes"],
+            ["Renseignements proposés", summary.pendingContributions, "/profils/mes-demandes"],
+          ].map(([label, value, href]) => (
+            <Link key={String(label)} href={String(href)} className="border border-border-default bg-raised px-3 py-2 hover:border-gold">
+              <dt className="text-[0.6rem] uppercase tracking-wider text-ink-faint">{label}</dt>
+              <dd className="font-mono-toile text-lg text-gold">{value}</dd>
+            </Link>
+          ))}
+        </dl>
+      )}
 
       {attachMission && (
         <p className="mt-4 border border-gold-dim bg-gold-faint/20 px-4 py-2 text-xs text-gold">

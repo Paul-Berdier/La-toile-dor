@@ -40,7 +40,7 @@ export default async function ModifierDossierPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ mission?: string }>;
+  searchParams: Promise<{ mission?: string; section?: string }>;
 }) {
   const current = await requireUser();
   const viewer = await getProfileViewer(current);
@@ -48,7 +48,12 @@ export default async function ModifierDossierPage({
   // qui renvoie null à quiconque ne peut pas modifier CE dossier. Un
   // acquéreur atterrit sur le dossier en lecture, pas sur un 404 sec.
   const { id } = await params;
-  const { mission } = await searchParams;
+  const { mission, section } = await searchParams;
+  // « Modifier » depuis une section du dossier ouvre la section correspondante
+  const SECTION_STEPS: Record<string, number> = {
+    identite: 0, signalement: 1, affiliation: 2, capacites: 3, combat: 4, analyse: 5,
+  };
+  const initialStep = section ? (SECTION_STEPS[section] ?? 0) : 0;
   const [editData, refs, profile] = await Promise.all([
     loadEditData(id, viewer),
     loadProfileRefs(),
@@ -131,6 +136,7 @@ export default async function ModifierDossierPage({
         refs={refs}
         sourceMissionId={mission}
         canManageReferences={current.permissions.has(PERMISSIONS.PROFILE_REFERENCE_MANAGE)}
+        initialStep={initialStep}
       />
 
       <div className="mt-6 grid gap-5 lg:grid-cols-2">

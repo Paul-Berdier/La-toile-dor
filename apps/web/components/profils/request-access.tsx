@@ -95,24 +95,76 @@ export function RequestAccessPanel({
   );
 }
 
-/** Modération : révoquer un accès actif. */
-export function RevokeGrantButton({ grantId }: { grantId: string }) {
+/**
+ * Modération : révoquer un accès actif — avec MOTIF et confirmation. Un accès
+ * payé est une dette de la Toile : on ne le retire pas d'un clic distrait.
+ */
+export function RevokeGrantButton({
+  grantId,
+  groupName,
+  disabled,
+  disabledReason,
+}: {
+  grantId: string;
+  groupName?: string;
+  /** Accès non révocable (groupe créateur) */
+  disabled?: boolean;
+  disabledReason?: string;
+}) {
   const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+
+  if (disabled) {
+    return (
+      <span className="text-[0.65rem] text-ink-faint" title={disabledReason}>
+        {disabledReason ?? "Non révocable"}
+      </span>
+    );
+  }
+  if (!open) {
+    return (
+      <Button size="sm" variant="danger" onClick={() => setOpen(true)}>
+        Révoquer
+      </Button>
+    );
+  }
   return (
-    <Button
-      size="sm"
-      variant="danger"
-      disabled={isPending}
-      onClick={() =>
-        startTransition(async () => {
-          await revokeGrantAction(grantId);
-          router.refresh();
-        })
-      }
-    >
-      Révoquer
-    </Button>
+    <div className="w-full space-y-1.5 border border-blood/50 bg-blood/5 p-2">
+      <p className="text-[0.7rem] text-ink-muted">
+        Retirer l&rsquo;accès{groupName ? ` de ${groupName}` : ""} ? Le groupe sera prévenu, avec le motif.
+      </p>
+      <input
+        aria-label="Motif de la révocation"
+        placeholder="Motif (obligatoire)"
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        maxLength={1000}
+        className="w-full border border-border-default bg-elevated px-2 py-1 text-xs text-ink"
+      />
+      {error && <p role="alert" className="text-[0.7rem] text-blood-bright">{error}</p>}
+      <div className="flex gap-1.5">
+        <Button
+          size="sm"
+          variant="danger"
+          disabled={isPending || reason.trim().length < 3}
+          onClick={() =>
+            startTransition(async () => {
+              const res = await revokeGrantAction(grantId, reason);
+              if (!res.ok) setError(res.error ?? "Échec.");
+              else { setOpen(false); router.refresh(); }
+            })
+          }
+        >
+          Confirmer la révocation
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => { setOpen(false); setReason(""); setError(null); }} disabled={isPending}>
+          Annuler
+        </Button>
+      </div>
+    </div>
   );
 }
 

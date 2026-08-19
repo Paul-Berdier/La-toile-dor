@@ -200,6 +200,10 @@ export function serializeDossier(
                 shortDescription: technique.shortDescription,
                 typeLabel: technique.jutsuType?.label ?? null,
                 rank: technique.rank,
+                // Une technique « rumeur » ne se lit pas comme une technique
+                // confirmée : la confiance est stockée, elle doit s'afficher.
+                confidence: technique.confidence,
+                knowledgeState: technique.knowledgeState,
               })),
               label: profile.techniques.map((t) => t.name).join(", "),
             }
