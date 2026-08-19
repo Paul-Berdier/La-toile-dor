@@ -1,13 +1,16 @@
 import Link from "next/link";
-import { GRANT_SOURCE_LABELS, type GrantSource } from "@toile/shared";
+import { ACCESS_ORIGIN_HINTS, ACCESS_ORIGIN_LABELS, type AccessOrigin } from "@toile/shared";
 import type { ProfileListRow } from "@/server/profiles/queries";
+import { FieldValue } from "@/components/profils/field-value";
 
 /**
  * Carte d'un dossier dans la liste.
  *
  * Deux états qui ne doivent pas se ressembler : un dossier ACQUIS montre son
- * portrait et dit pourquoi on le voit ; un dossier SCELLÉ montre un sceau et
- * l'action qui l'ouvrirait. Titre, prénom et nom sont les seules vraies
+ * portrait, « Grade · Classe », la faction, et dit pourquoi on le voit ; un
+ * dossier SCELLÉ montre une silhouette, les mêmes rubriques en « ??? » ou
+ * « Inconnu » (des ÉTATS, jamais des valeurs), le sceau « Dossier non acquis »
+ * et l'action qui l'ouvrirait. Titre, prénom et nom sont les seules vraies
  * valeurs sur une carte scellée — c'est la règle du produit, et le serveur
  * n'en envoie pas davantage.
  *
@@ -25,6 +28,7 @@ export function DossierCard({
 }) {
   const sealed = !row.canViewValues;
   const fullName = [row.firstName, row.lastName].filter(Boolean).join(" ");
+  const p = row.preview;
 
   return (
     <li>
@@ -42,7 +46,7 @@ export function DossierCard({
               src={`/api/profils/${row.id}/image`}
               alt=""
               loading="lazy"
-              className="h-20 w-14 shrink-0 border border-border-gold object-cover"
+              className="h-24 w-[4.25rem] shrink-0 border border-border-gold object-cover"
             />
           ) : (
             <Silhouette sealed={sealed} />
@@ -57,14 +61,47 @@ export function DossierCard({
             </span>
             <span className="block truncate text-sm text-ink">{fullName}</span>
 
-            <span className="mt-1.5 flex flex-wrap gap-1">
+            {sealed ? (
+              /* Carte scellée : les rubriques clés, en états seulement. On voit
+                 d'un coup d'œil ce que la Toile SAIT (???) et ce qu'elle
+                 IGNORE (Inconnu) — sans jamais lire une valeur. */
+              <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[0.7rem]">
+                {([
+                  ["Classe", p.ninjaClass],
+                  ["Grade", p.rank],
+                  ["Faction", p.faction],
+                  ["Yeux", p.eyeColor],
+                ] as const).map(([label, field]) => (
+                  <div key={label} className="contents">
+                    <dt className="text-ink-faint">{label}</dt>
+                    <dd className="min-w-0 pr-0.5 text-right">
+                      <FieldValue field={field} compact />
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            ) : (
+              /* Carte acquise : « Grade · Classe », puis la faction */
+              <span className="mt-1.5 block text-xs text-ink-muted">
+                <span className="flex flex-wrap items-center gap-x-1.5">
+                  <FieldValue field={p.rank} compact />
+                  <span aria-hidden className="text-ink-faint">·</span>
+                  <FieldValue field={p.ninjaClass} compact />
+                </span>
+                <span className="mt-0.5 block truncate">
+                  <FieldValue field={p.faction} compact />
+                </span>
+              </span>
+            )}
+
+            <span className="mt-2 flex flex-wrap gap-1">
               {sealed ? (
                 <span
                   className="inline-flex items-center gap-1 border border-border-default px-1.5 py-0.5 text-[0.6rem] uppercase tracking-wider text-ink-faint"
                   aria-label="Dossier non acquis"
                 >
                   <span aria-hidden className="font-display text-gold-dim">封</span>
-                  Non acquis
+                  Dossier non acquis
                 </span>
               ) : (
                 <OriginBadge origin={row.accessOrigin} isModerator={isModerator} />
@@ -116,21 +153,24 @@ export function DossierCard({
   );
 }
 
-/** Pourquoi le lecteur voit ce dossier — il ne doit pas se le demander. */
 /** « ✓ Créé par votre groupe », « ✓ Dossier acquis »… — pourquoi on voit. */
-export function OriginBadge({ origin, isModerator }: { origin: GrantSource | null; isModerator: boolean }) {
+export function OriginBadge({ origin, isModerator }: { origin: AccessOrigin | null; isModerator: boolean }) {
   if (origin) {
     const owned = origin === "CREATED_BY_GROUP";
+    const provisional = origin === "MISSION_TARGET";
     return (
       <span
+        title={ACCESS_ORIGIN_HINTS[origin]}
         className={`inline-flex items-center gap-1 border px-1.5 py-0.5 text-[0.6rem] uppercase tracking-wider ${
           owned
             ? "border-gold bg-gold-faint/40 text-gold"
-            : "border-gold-dim bg-gold-faint/20 text-gold"
+            : provisional
+              ? "border-copper/60 bg-gold-faint/10 text-copper"
+              : "border-gold-dim bg-gold-faint/20 text-gold"
         }`}
       >
-        <span aria-hidden>✓</span>
-        {GRANT_SOURCE_LABELS[origin]}
+        <span aria-hidden>{provisional ? "⟡" : "✓"}</span>
+        {ACCESS_ORIGIN_LABELS[origin]}
       </span>
     );
   }
@@ -154,7 +194,7 @@ function Silhouette({ sealed }: { sealed: boolean }) {
   return (
     <span
       aria-hidden
-      className={`flex h-20 w-14 shrink-0 items-center justify-center border font-display ${
+      className={`flex h-24 w-[4.25rem] shrink-0 items-center justify-center border font-display ${
         sealed
           ? "border-gold-dim bg-[repeating-linear-gradient(45deg,transparent,transparent_4px,rgba(184,150,62,0.12)_4px,rgba(184,150,62,0.12)_8px)] text-gold"
           : "border-border-default bg-elevated text-ink-faint"

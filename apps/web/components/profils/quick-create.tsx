@@ -31,6 +31,11 @@ const labelCls = "mt-3 block text-xs uppercase tracking-wider text-ink-faint";
  * Le groupe : un seul → pré-sélectionné et affiché ; plusieurs → à choisir ;
  * aucun → la modération seule peut créer (dossier sans propriétaire).
  */
+
+// « Aucun groupe » (modération) est un choix explicite, distinct de « pas
+// encore choisi » — sinon le sélecteur ne peut pas les distinguer.
+const NO_GROUP = "__none__";
+
 export function QuickCreateProfile({
   sourceMissionId,
   groups,
@@ -48,7 +53,11 @@ export function QuickCreateProfile({
   const [lastName, setLastName] = useState("");
   const [title, setTitle] = useState("");
   const [titleTouched, setTitleTouched] = useState(false);
-  const [groupId, setGroupId] = useState(groups.length === 1 ? groups[0]!.id : "");
+  // Modération (canCreateWithoutGroup) : « dossier de la Toile » par défaut ;
+  // membre d'un seul groupe : son groupe, présélectionné.
+  const [groupId, setGroupId] = useState(
+    canCreateWithoutGroup ? NO_GROUP : groups.length === 1 ? groups[0]!.id : "",
+  );
   const [duplicates, setDuplicates] = useState<{ id: string; code: string; name: string }[]>([]);
   const [existing, setExisting] = useState<ExistingProfile[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -92,9 +101,6 @@ export function QuickCreateProfile({
     };
   }, [firstName, lastName, open]);
 
-  // « Aucun groupe » (modération) est un choix explicite, distinct de « pas
-  // encore choisi » — sinon le sélecteur ne peut pas les distinguer.
-  const NO_GROUP = "__none__";
   const needsGroupChoice = groups.length > 1 && !groupId;
   const noGroupAtAll = groups.length === 0 && !canCreateWithoutGroup;
   const canSubmit =
@@ -200,14 +206,17 @@ export function QuickCreateProfile({
               </p>
             )}
 
-            {/* Groupe propriétaire : le dossier appartient au groupe, pas à la personne */}
-            {groups.length === 1 && (
+            {/* Groupe propriétaire : le dossier appartient au groupe, pas à la
+                personne. La modération choisit TOUJOURS — y compris avec un
+                seul groupe : par défaut elle ouvre un dossier de la Toile,
+                pas un dossier de son groupe personnel. */}
+            {groups.length === 1 && !canCreateWithoutGroup && (
               <p className="mt-3 text-xs text-ink-muted">
                 Groupe propriétaire :{" "}
                 <span className="text-gold">{groups[0]!.name}</span>
               </p>
             )}
-            {groups.length > 1 && (
+            {(groups.length > 1 || (groups.length >= 1 && canCreateWithoutGroup)) && (
               <>
                 <label htmlFor="qc-group" className={labelCls}>Pour quel groupe ? *</label>
                 <select
@@ -217,11 +226,11 @@ export function QuickCreateProfile({
                   className={inputCls}
                   required
                 >
-                  <option value="">— choisir —</option>
+                  {!canCreateWithoutGroup && <option value="">— choisir —</option>}
+                  {canCreateWithoutGroup && <option value={NO_GROUP}>Aucun (dossier de la Toile)</option>}
                   {groups.map((g) => (
                     <option key={g.id} value={g.id}>{g.name}</option>
                   ))}
-                  {canCreateWithoutGroup && <option value={NO_GROUP}>Aucun (dossier de la Toile)</option>}
                 </select>
               </>
             )}

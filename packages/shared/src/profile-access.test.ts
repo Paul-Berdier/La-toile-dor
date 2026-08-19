@@ -73,6 +73,23 @@ describe("canViewCharacterProfile — l'accès appartient au groupe", () => {
   it("la modération voit tout, sans octroi", () => {
     expect(canViewCharacterProfile(moderator, dossier())).toBe(true);
   });
+
+  it("la cible d'une mission EN COURS de son groupe se lit sans achat, le temps de la mission", () => {
+    // Le lecteur a été chargé avec les dossiers cibles des missions attribuées
+    // à ses groupes : le dossier « p » en fait partie.
+    const onMission = viewer({ groupIds: new Set(["A"]), missionTargetProfileIds: new Set(["p"]) });
+    expect(canViewCharacterProfile(onMission, dossier())).toBe(true);
+    // Un autre dossier, non visé, reste scellé
+    expect(canViewCharacterProfile(onMission, dossier({ id: "autre" }))).toBe(false);
+    // L'attribution retirée (plus de cible dans l'ensemble) : l'accès disparaît
+    expect(canViewCharacterProfile(viewer({ groupIds: new Set(["A"]) }), dossier())).toBe(false);
+  });
+
+  it("la cible de mission donne à lire et à contribuer, jamais à modifier la source", () => {
+    const onMission = viewer({ groupIds: new Set(["A"]), missionTargetProfileIds: new Set(["p"]) });
+    expect(canContributeToCharacterProfile(onMission, dossier())).toBe(true);
+    expect(canEditCharacterProfile(onMission, dossier())).toBe(false);
+  });
 });
 
 describe("accessOrigin — le lecteur sait pourquoi il voit", () => {
@@ -92,6 +109,14 @@ describe("accessOrigin — le lecteur sait pourquoi il voit", () => {
   it("gagné en mission est distinct d'un achat", () => {
     const d = dossier({ grants: [{ groupId: "A", sourceType: "MISSION_GRANTED", revokedAt: null }] });
     expect(accessOrigin(inA, d)).toBe("MISSION_GRANTED");
+  });
+
+  it("cible de mission en cours : origine provisoire, après tout octroi écrit", () => {
+    const onMission = viewer({ groupIds: new Set(["A"]), missionTargetProfileIds: new Set(["p"]) });
+    expect(accessOrigin(onMission, dossier())).toBe("MISSION_TARGET");
+    // Un octroi écrit (achat) prime sur l'accès provisoire de mission
+    const bought = dossier({ grants: [{ groupId: "A", sourceType: "PURCHASED", revokedAt: null }] });
+    expect(accessOrigin(onMission, bought)).toBe("PURCHASED");
   });
 
   it("null sans accès, et null pour la modération qui voit par fonction", () => {

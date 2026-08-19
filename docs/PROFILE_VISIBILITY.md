@@ -21,16 +21,19 @@ connaître sa valeur : c'est le comportement attendu (§13 du cahier des charges
 ## Rendu visuel : la distinction doit être indiscutable
 
 La différence entre « pas d'information » et « information refusée » ne repose
-**jamais sur la seule couleur** — elle porte sur la forme et la longueur :
+**jamais sur la seule couleur** — elle porte sur les glyphes et la graisse :
 
 | État | Rendu | Label accessible |
 |---|---|---|
-| `???` | **Bande censurée** pleine largeur, fond obsidienne mat, liseré or, blocs `▮▮▮▮` et sceau 封, curseur `not-allowed` | « Information connue mais confidentielle » |
+| `???` | **« ??? »** en chasse fixe dorée, suivi d'un petit sceau 封 — le littéral du produit, partout identique (lignes, cartes, en-têtes, galerie, portrait) | « Information confidentielle » |
 | `Inconnu` | Mention italique discrète, sans cadre ni fond | « Information non renseignée » |
 | `Aucun` | Glyphe 無 cuivre + « Aucun » | « Absence confirmée » |
-| `Contradictoire` | Cadre rouge sang + ⚠ | « Renseignements contradictoires » |
+| `Contradictoire` | ⚠ rouge sang + « Contradictoire » | « Renseignements contradictoires » |
 
-Une variante `compact` de la bande existe pour les en-têtes et les listes.
+Le composant unique est `FieldValue` / `Redacted`
+(`apps/web/components/profils/field-value.tsx`) — aucun écran ne réécrit le
+littéral. Les valeurs VISIBLES portent leur pastille de **confiance** (§47)
+lorsque celle-ci n'est pas « Confirmé », avec l'explication en infobulle.
 
 **Dossier ouvert = parchemin.** Un dossier dont le lecteur possède les valeurs
 s'affiche sur `bg-parchment` avec titres à l'encre de sceau — même grammaire
@@ -66,6 +69,10 @@ pas de tableau `images` — `{ state: "REDACTED" }` tout court) et pour les
 ⚠ Rappel : en **mode développement**, React streame des valeurs de débogage.
 Les garanties valent pour `next build` + `next start`.
 
+Le « dernier tarif consenti » d'un dossier est réservé à la **modération**
+(`lastPrice`) : pour un chef, ce serait un renseignement sur les achats des
+autres groupes. Le chef négocie sur l'estimation publique arrondie.
+
 ## La règle d'accès est UNIQUE et centralisée
 
 Toute décision « ce lecteur voit-il / modifie-t-il ce dossier ? » est prise par
@@ -73,12 +80,26 @@ Toute décision « ce lecteur voit-il / modifie-t-il ce dossier ? » est prise p
 
 | Fonction | Vrai si… |
 |---|---|
-| `canViewCharacterProfile(viewer, profile)` | `profile.intel.view` **ou** membre du groupe créateur **ou** octroi actif (`ProfileAccessGrant.revokedAt = null`) pour l'un des groupes du lecteur |
+| `canViewCharacterProfile(viewer, profile)` | `profile.intel.view` **ou** membre du groupe créateur **ou** octroi actif (`ProfileAccessGrant.revokedAt = null`) pour l'un des groupes du lecteur **ou** dossier cible d'une mission EN COURS attribuée à l'un de ses groupes (`missionTargetProfileIds`) |
 | `canEditCharacterProfile` | non archivé **et** (`profile.manage` **ou** membre du groupe créateur) |
 | `canContributeToCharacterProfile` | non archivé **et** `canView` |
 | `canAdministerCharacterProfile` | `profile.manage` |
 | `canCreateCharacterProfile` | `profile.manage` **ou** membre d'au moins un groupe actif |
-| `accessOrigin` | pourquoi il voit : `CREATED_BY_GROUP` > `PURCHASED` > `MODERATOR_GRANTED` > `MISSION_GRANTED` |
+| `accessOrigin` | pourquoi il voit : `CREATED_BY_GROUP` > `PURCHASED` > `MODERATOR_GRANTED` > `MISSION_GRANTED` > `MISSION_TARGET` (calculée, provisoire) |
+
+### Accès par la mission (`MISSION_TARGET`)
+
+Quand une revendication est **acceptée** (attribution active, mission
+`ASSIGNED` ou `IN_PROGRESS`), tous les membres du groupe lisent les dossiers
+des **cibles** de la mission — sans achat. Cet accès est **calculé**, jamais
+stocké : il naît avec l'attribution, disparaît si elle est retirée, et devient
+un octroi durable `MISSION_GRANTED` à la clôture
+(`applyMissionOutcomeToProfiles`). Il donne à lire et à **contribuer**, jamais
+à modifier la source. L'interface l'étiquette « ⟡ Mission en cours ».
+`getProfileViewer` charge ces dossiers une fois par requête
+(`missionTargetProfileIds`), et `visibleProfileIds` — l'union créés ∪ octroyés
+∪ cibles de mission — est le SEUL ensemble utilisé pour restreindre les listes
+et les filtres protégés.
 
 Côté web, `apps/web/server/profiles/access.ts` charge le lecteur une fois par
 requête (`getProfileViewer`, groupes **actifs** seulement) et expose
@@ -100,20 +121,32 @@ de `value`, pas d'URL d'image, pas de nombre d'images ni de contributions, pas
 de nom de groupe propriétaire, pas de grade dans l'estimation (forme
 `{ scope: "public", price }` uniquement).
 
+Trois canaux latéraux sont volontairement brouillés pour ce lecteur :
+
+- **`updatedAt` est tronqué au jour** (liste et détail) : à la minute près,
+  croisé avec la clôture d'une mission, il dirait quel renseignement vient
+  d'entrer dans un dossier scellé ;
+- **l'estimation publique est arrondie au millier** (`≈`) : au palier fin du
+  barème, les valeurs de champs étant des multiples ronds, une division
+  suffirait à retrouver le multiplicateur de grade — pourtant « ??? » ;
+- **`sealedCount` est dérivé du sérialiseur** (nombre de champs `REDACTED` +
+  galerie) — la même source de vérité que les « ??? » affichés, donc aucune
+  soustraction possible entre deux comptes.
+
 ## Matrice des permissions
 
-| Action | Super-mod. | Modérateur | Groupe créateur | Groupe acquéreur (achat / mission) | Sans accès |
-|---|:--:|:--:|:--:|:--:|:--:|
-| Voir la liste : code, titre, prénom, nom | ✔ | ✔ | ✔ | ✔ | ✔ |
-| Voir toutes les valeurs, galerie, historique | ✔ | ✔ | ✔ | ✔ | — |
-| Ouvrir un dossier (pour son groupe) | ✔ (sans groupe possible) | ✔ | ✔ tout membre | ✔ tout membre | ✔ si membre d'un groupe |
-| Modifier le dossier (formulaire, galerie) | ✔ | ✔ | ✔ | — | — |
-| Proposer un renseignement (contribution) | écrit direct | écrit direct | écrit direct | ✔ → revue | — |
-| Trancher une contribution | ✔ | ✔ | ✔ (sur son dossier) | — | — |
-| Notes internes | ✔ | ✔ | — | — | — |
-| Demander l'accès pour SON groupe | — | — | (déjà propriétaire) | (déjà acquis) | chef ✔ |
-| Approuver / refuser / révoquer (motivé) | ✔ | ✔ | — | — | — |
-| Référentiels (dont classes, yeux), fusion, suppression | ✔ | proposer | — | — | — |
+| Action | Super-mod. | Modérateur | Groupe créateur | Groupe acquéreur (achat / mission close) | Groupe en mission (cible, provisoire) | Sans accès |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|
+| Voir la liste : code, titre, prénom, nom | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
+| Voir toutes les valeurs, galerie, historique | ✔ | ✔ | ✔ | ✔ | ✔ (le temps de la mission) | — |
+| Ouvrir un dossier (pour son groupe) | ✔ (sans groupe possible) | ✔ | ✔ tout membre | ✔ tout membre | ✔ tout membre | ✔ si membre d'un groupe |
+| Modifier le dossier (formulaire, galerie) | ✔ | ✔ | ✔ | — | — | — |
+| Proposer un renseignement (contribution) | écrit direct | écrit direct | écrit direct | ✔ → revue | ✔ → revue | — |
+| Trancher une contribution | ✔ | ✔ | ✔ (sur son dossier) | — | — | — |
+| Notes internes | ✔ | ✔ | — | — | — | — |
+| Demander l'accès pour SON groupe | — | — | (déjà propriétaire) | (déjà acquis) | chef ✔ (pour garder après la mission) | chef ✔ |
+| Approuver / refuser / révoquer (motivé) | ✔ | ✔ | — | — | — | — |
+| Référentiels (dont classes, yeux), fusion, suppression | ✔ | proposer | — | — | — | — |
 
 Permissions : `profile.manage`, `profile.intel.view`,
 `profile.purchase.review`, `profile.request.create`,
@@ -134,12 +167,23 @@ l'existence d'un dossier hors de portée du lecteur.
 
 ## La liste : carte scellée vs carte acquise
 
-La liste affiche pour tous le **titre**, « Prénom Nom » et le code. Une carte
-**scellée** montre une silhouette, le sceau « 封 Non acquis » et les actions
-« Voir » / « Demander l'accès » ; une carte **acquise** montre le portrait, la
-raison de l'accès (« ✓ Créé par votre groupe »…) et « Ouvrir le dossier ».
-`hasVisiblePortrait` n'est vrai que pour un lecteur autorisé. Rien n'est masqué
-en CSS : ce qui n'est pas dans la ligne n'a pas quitté le serveur.
+La liste affiche pour tous le **titre**, « Prénom Nom » et le code, plus un
+**aperçu** de quatre rubriques (classe, grade, faction, yeux) produit par la
+même règle que le dossier (`serializePreview`, qui repose sur
+`buildFieldView`) : sans accès, chaque rubrique n'est qu'un **état** — « ??? »
+ou « Inconnu » — sans valeur ni identifiant dans la charge. Une carte
+**scellée** montre une silhouette, ces quatre états, le sceau « 封 Dossier non
+acquis » et les actions « Voir » / « Demander l'accès » (l'ancre `#acces` mène
+au panneau de demande) ; une carte **acquise** montre le portrait,
+« Grade · Classe », la faction, la raison de l'accès (« ✓ Créé par votre
+groupe »…) et « Ouvrir le dossier ». `hasVisiblePortrait` n'est vrai que pour
+un lecteur autorisé. Rien n'est masqué en CSS : ce qui n'est pas dans la ligne
+n'a pas quitté le serveur.
+
+En tête de liste, le résumé (§48) : pour un groupe — dossiers accessibles,
+ouverts par ses groupes, acquis, demandes en attente, renseignements
+proposés ; pour la modération — dossiers, contributions en attente, conflits
+(`?conflits=1` sur la file de revue), demandes d'achat.
 
 ## Anti-fuite par les filtres
 
@@ -148,9 +192,9 @@ nom, code) pour tout le monde — chercher dessus ne révèle rien. Les filtres 
 révéleraient une information protégée (faction, clan, grade, état, portrait,
 traits, volume de renseignements) ne sont **proposés** qu'à la modération, et
 pour tout autre lecteur `listProfiles` restreint d'abord l'ensemble aux
-dossiers qu'il voit déjà (`grantedProfileIds ∪ createdProfileIds`) avant de
-filtrer dedans : un dossier scellé n'est jamais dans la base de recherche d'un
-filtre protégé, donc pas de fuite par différence de résultats ni par compteur.
+dossiers qu'il voit déjà (`visibleProfileIds`) avant de filtrer dedans : un
+dossier scellé n'est jamais dans la base de recherche d'un filtre protégé,
+donc pas de fuite par différence de résultats ni par compteur.
 
 Les filtres s'appliquent **au fil de la frappe** (`ProfileFilters`, temporisation
 de 250 ms puis `router.replace`) : l'URL reste partageable, l'historique ne se

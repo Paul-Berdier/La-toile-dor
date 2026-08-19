@@ -12,8 +12,17 @@ import {
   type ProfileAccessViewer,
   type ProfileAccessTarget,
   type GrantSource,
+  type AccessOrigin,
 } from "@toile/shared";
 import type { CurrentUser } from "@/lib/session";
+
+/**
+ * Statuts pendant lesquels une attribution active ouvre les dossiers des
+ * cibles. Pas au-delà : à la clôture (COMPLETED / FAILED) l'octroi
+ * MISSION_GRANTED est écrit et la modération peut le révoquer — un accès
+ * calculé qui survivrait à la clôture rendrait cette révocation inopérante.
+ */
+export const MISSION_TARGET_ACCESS_STATUSES = ["ASSIGNED", "IN_PROGRESS"] as const;
 
 /**
  * Contexte d'accès aux dossiers de renseignement.
@@ -47,8 +56,12 @@ export const getProfileViewer = cache(async (current: CurrentUser) => {
   // ne peut pas charger les octrois de chaque dossier un par un.
   const grantedProfileIds = new Set<string>();
   const createdProfileIds = new Set<string>();
+  // Cibles des missions EN COURS attribuées à ses groupes : accès provisoire,
+  // calculé et jamais stocké — il suit l'attribution (retirée → disparu) et
+  // la clôture (→ octroi MISSION_GRANTED écrit par applyMissionOutcomeToProfiles).
+  const missionTargetProfileIds = new Set<string>();
   if (!canViewAll && groupIds.length > 0) {
-    const [grants, created] = await Promise.all([
+    const [grants, created, targets] = await Promise.all([
       prisma.profileAccessGrant.findMany({
         where: { groupId: { in: groupIds }, revokedAt: null },
         select: { profileId: true },
@@ -57,15 +70,27 @@ export const getProfileViewer = cache(async (current: CurrentUser) => {
         where: { createdByGroupId: { in: groupIds }, archivedAt: null },
         select: { id: true },
       }),
+      prisma.missionTarget.findMany({
+        where: {
+          profileId: { not: null },
+          mission: {
+            status: { in: [...MISSION_TARGET_ACCESS_STATUSES] },
+            assignments: { some: { active: true, groupId: { in: groupIds } } },
+          },
+        },
+        select: { profileId: true },
+      }),
     ]);
     for (const grant of grants) grantedProfileIds.add(grant.profileId);
     for (const profile of created) createdProfileIds.add(profile.id);
+    for (const target of targets) if (target.profileId) missionTargetProfileIds.add(target.profileId);
   }
 
   const accessViewer: ProfileAccessViewer = {
     userId: current.session.userId,
     permissions: current.permissions,
     groupIds: new Set(groupIds),
+    missionTargetProfileIds,
   };
 
   return {
@@ -83,6 +108,17 @@ export const getProfileViewer = cache(async (current: CurrentUser) => {
     groupNames,
     grantedProfileIds,
     createdProfileIds,
+    missionTargetProfileIds,
+    /**
+     * Tous les dossiers que le lecteur voit par ses groupes — créés, octroyés,
+     * cibles de mission en cours. C'est l'ensemble à utiliser pour restreindre
+     * une LISTE ou un filtre protégé (jamais une partie seulement).
+     */
+    visibleProfileIds: new Set<string>([
+      ...createdProfileIds,
+      ...grantedProfileIds,
+      ...missionTargetProfileIds,
+    ]),
     /** Le lecteur sous la forme attendue par la règle partagée */
     accessViewer,
   };
@@ -97,7 +133,7 @@ export interface AccessDecision {
   canContribute: boolean;
   canAdminister: boolean;
   /** Pourquoi le lecteur voit — null s'il ne voit pas, ou voit par fonction */
-  origin: GrantSource | null;
+  origin: AccessOrigin | null;
   /** Le dossier appartient à l'un de ses groupes */
   ownedByMyGroup: boolean;
 }
@@ -150,11 +186,7 @@ export function decideAccessForGroup(
  * octroi actif de l'un de ses groupes.
  */
 export function canViewProfileValues(viewer: ProfileViewer, profileId: string): boolean {
-  return (
-    viewer.canViewAll ||
-    viewer.createdProfileIds.has(profileId) ||
-    viewer.grantedProfileIds.has(profileId)
-  );
+  return viewer.canViewAll || viewer.visibleProfileIds.has(profileId);
 }
 
 /** Sélection Prisma minimale pour nourrir `decideAccess`. */

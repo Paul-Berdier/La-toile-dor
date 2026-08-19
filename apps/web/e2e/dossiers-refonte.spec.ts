@@ -176,7 +176,7 @@ test("une image de galerie n'est ni servie ni nommée à un lecteur sans accès"
     const readBodies = collectBodies(page);
     await loginAs(context, "demo-member-2-0-0");
     await page.goto(`/profils/${profile.id}`);
-    await expect(page.getByRole("img", { name: /confidentielles/i })).toBeVisible();
+    await expect(page.getByRole("img", { name: /confidentiel/i }).first()).toBeVisible();
     const html = await page.content();
     expect(html).not.toContain(imageId);
     expect(html).not.toContain("ZZ-LEGENDE-SECRETE");
@@ -420,7 +420,7 @@ test("le rapport de fin de mission enregistre sorts, renseignements et nouveau d
     await page.getByLabel("Détails").fill("ZZ-COMPLICE-SUR-LES-TOITS");
     await page.getByRole("button", { name: "Suivant →" }).click();
     // Étape 3 : finaliser
-    await page.getByRole("button", { name: /Déposer le rapport final et les renseignements/ }).click();
+    await page.getByRole("button", { name: /Terminer la mission et enregistrer les renseignements/ }).click();
     await expect(page.getByText(/Rapport final enregistré/)).toBeVisible();
 
     const report = await prisma.missionReport.findFirstOrThrow({ where: { missionId: mission.id, isFinal: true } });

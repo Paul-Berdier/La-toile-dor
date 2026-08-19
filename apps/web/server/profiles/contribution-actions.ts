@@ -37,6 +37,14 @@ import {
   runContributionTransaction,
 } from "./contribution-transactions";
 
+/**
+ * Messages d'erreur du service de contribution autorisés à remonter au
+ * formulaire — même liste blanche que le rapport de mission. Tout autre
+ * message pourrait, un jour, contenir une valeur : il part en 500 anonyme.
+ */
+const SAFE_CONTRIBUTION_ERROR =
+  /^(Option de référentiel invalide|Faction inconnue|Grade inconnu|Le champ .* ne se déclare pas|Le champ .* ne peut pas être vidé)/;
+
 export interface ContributionActionResult {
   ok: boolean;
   error?: string;
@@ -191,8 +199,12 @@ export async function submitIntelContributionAction(raw: unknown): Promise<Contr
     if (isRetryableContributionTransactionError(error)) {
       return { ok: false, error: "Le dossier a été modifié en même temps ; réessayez." };
     }
-    // Erreurs lisibles (option de référentiel invalide…) : au formulaire, pas en 500
-    if (error instanceof Error && !("code" in error)) return { ok: false, error: error.message };
+    // Liste BLANCHE des messages montrés au formulaire : un passthrough de
+    // tout Error.message finirait par fuir un message interne contenant une
+    // valeur. Tout le reste part en 500 anonyme.
+    if (error instanceof Error && SAFE_CONTRIBUTION_ERROR.test(error.message)) {
+      return { ok: false, error: error.message };
+    }
     throw error;
   }
 
@@ -369,7 +381,9 @@ export async function reviewIntelContributionAction(raw: unknown): Promise<Contr
     if (isRetryableContributionTransactionError(error)) {
       return { ok: false, error: "Une autre décision a modifié ce dossier ; rechargez puis réessayez." };
     }
-    if (error instanceof Error && !("code" in error)) return { ok: false, error: error.message };
+    if (error instanceof Error && SAFE_CONTRIBUTION_ERROR.test(error.message)) {
+      return { ok: false, error: error.message };
+    }
     throw error;
   }
 

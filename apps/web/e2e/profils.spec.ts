@@ -140,7 +140,7 @@ test("la LISTE montre titre, prénom et nom à tous — et rien d'autre sans acc
   await expect(page.getByText(/Akira Kaguya/).first()).toBeVisible();
   // La carte est SCELLÉE : sceau et « Voir », pas « Ouvrir »
   const card = page.locator("article, li").filter({ hasText: profile.code }).first();
-  await expect(card.getByText(/Non acquis/)).toBeVisible();
+  await expect(card.getByText(/non acquis/i).first()).toBeVisible();
 
   for (const body of await readBodies()) {
     for (const secret of SECRETS) expect(body).not.toContain(secret);
@@ -261,8 +261,11 @@ test("création rapide : prénom seul, code généré, doublons avertis sans blo
   expect(created.code).toMatch(/^PRF-\d{6}$/);
   expect(created.characterLastName).toBeNull();
 
-  // Second profil au MÊME prénom : averti, puis créé sur confirmation
-  await page.reload();
+  // Second profil au MÊME prénom : averti, puis créé sur confirmation.
+  // `goto` et non `reload` : après la création, la modale pousse vers la page
+  // du dossier créé — recharger « où on en est » dépendait de la vitesse de
+  // cette navigation.
+  await page.goto("/profils");
   await page.getByRole("button", { name: "Nouveau dossier" }).click();
   await page.getByLabel("Prénom du personnage *").fill(unique);
   await page.getByRole("button", { name: "Créer rapidement" }).click();

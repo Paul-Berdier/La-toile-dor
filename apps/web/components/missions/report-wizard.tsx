@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   CONTRIBUTABLE_FIELD_KEYS,
   EMPTY_REPORT_PAYLOAD,
@@ -11,6 +12,7 @@ import {
   PROFILE_FIELD_LABELS,
   REPORT_IMAGES_MAX,
   REPORT_IMAGE_MAX_BYTES,
+  isReportEntryComplete,
   untreatedDossiers,
   type MissionReportPayload,
   type ProfileFieldKey,
@@ -28,10 +30,20 @@ import { INTEL_PALETTE, IntelValueEditor, canDeclareNone, type IntelRefs } from 
 export interface WizardTarget {
   id: string;
   profileId: string | null;
-  /** Prénom + code : ce que tout le monde voit d'un dossier */
+  /** Prénom + nom + code : les valeurs PUBLIQUES d'un dossier */
   name: string;
   code: string | null;
   outcome: string;
+  /** Précision déjà consignée (panneau des cibles) — préremplie ici */
+  note?: string | null;
+  /** Le groupe rapporteur lit-il ce dossier ? (affichage seulement) */
+  canViewDossier?: boolean;
+  /**
+   * Libellés courants des champs (§41 « Valeur actuelle »). Fournis SEULEMENT
+   * si le groupe rapporteur voit le dossier — sinon null, et le client
+   * affiche « Confidentielle » sans avoir jamais reçu la valeur.
+   */
+  currentValues?: Record<string, string> | null;
 }
 
 const STEPS = ["Résultat", "Renseignements", "Validation"] as const;
@@ -74,12 +86,22 @@ export function MissionReportWizard({
   const [payload, setPayload] = useState<MissionReportPayload>(() => {
     const base = initialDraft ?? EMPTY_REPORT_PAYLOAD;
     // Les sorts suivent les cibles actuelles : une cible ajoutée depuis le
-    // brouillon apparaît, une cible retirée disparaît.
+    // brouillon apparaît, une cible retirée disparaît. Le sort et la note
+    // déjà consignés (panneau des cibles) préremplissent la première visite.
     const known = new Map(base.outcomes.map((o) => [o.targetId, o]));
     return {
       ...base,
-      outcomes: targets.map((t) => known.get(t.id) ?? { targetId: t.id, outcome: (t.outcome as never) ?? "UNKNOWN" }),
-      dossiers: base.dossiers.filter((d) => targets.some((t) => t.profileId === d.profileId)),
+      outcomes: targets.map(
+        (t) =>
+          known.get(t.id) ?? {
+            targetId: t.id,
+            outcome: (t.outcome as never) ?? "UNKNOWN",
+            ...(t.note ? { note: t.note } : {}),
+          },
+      ),
+      // Les blocs `linked` (dossiers rattachés par l'équipe) survivent au
+      // filtre : ils ne dépendent pas des cibles de la mission.
+      dossiers: base.dossiers.filter((d) => d.linked || targets.some((t) => t.profileId === d.profileId)),
     };
   });
   const [step, setStep] = useState(initialDraft?.step ?? 0);
@@ -150,7 +172,9 @@ export function MissionReportWizard({
     setPayload(fn);
   }, []);
   const goTo = (s: number) => {
-    dirty.current = true;
+    // Naviguer dans un wizard VIERGE ne crée pas de brouillon : seul un
+    // rapport déjà entamé (frappe ou brouillon existant) mémorise son étape.
+    if (dirty.current || saved !== null) dirty.current = true;
     setDuplicates([]);
     setDuplicateConfirmationToken("");
     setStep(s);
@@ -191,6 +215,31 @@ export function MissionReportWizard({
         dossiers: existing ? p.dossiers.map((d) => (d.profileId === profileId ? next : d)) : [...p.dossiers, next],
       };
     });
+  // Dossiers EXISTANTS rattachés par l'équipe (ninja croisé qui avait déjà sa
+  // fiche) : les renseignements partent en revue, sauf si le groupe possède
+  // le dossier — c'est le serveur qui tranche.
+  const linkedDossiers = payload.dossiers.filter((d) => d.linked);
+  const addLinked = (profile: { id: string; code: string; firstName: string; lastName?: string | null }, entries: ReportIntelEntry[] = []) =>
+    update((p) =>
+      p.dossiers.some((d) => d.profileId === profile.id)
+        ? p
+        : {
+            ...p,
+            dossiers: [
+              ...p.dossiers,
+              {
+                profileId: profile.id,
+                noNewInfo: false,
+                entries,
+                linked: true,
+                name: [profile.firstName, profile.lastName].filter(Boolean).join(" "),
+                code: profile.code,
+              },
+            ],
+          },
+    );
+  const removeLinked = (profileId: string) =>
+    update((p) => ({ ...p, dossiers: p.dossiers.filter((d) => !(d.linked && d.profileId === profileId)) }));
 
   const addDiscovered = () =>
     update((p) => ({
@@ -211,6 +260,29 @@ export function MissionReportWizard({
   );
   const summaryOk = payload.summary.trim().length >= 10;
   const discoveredOk = payload.discovered.every((d) => d.firstName.trim().length > 0);
+  // Entrées incomplètes : signalées AVANT le dépôt, avec le nom du dossier et
+  // du champ — pas un « Required » anglais renvoyé par le serveur.
+  const incompleteEntries = useMemo(() => {
+    const out: { where: string; fields: string[] }[] = [];
+    const nameOfTarget = new Map(dossierTargets.map((t) => [t.profileId, t.name]));
+    for (const d of payload.dossiers) {
+      if (d.noNewInfo) continue;
+      const missing = d.entries
+        .filter((e) => !isReportEntryComplete(e))
+        .map((e) => PROFILE_FIELD_LABELS[e.fieldKey as ProfileFieldKey] ?? e.fieldKey);
+      if (missing.length > 0) out.push({ where: d.name ?? nameOfTarget.get(d.profileId) ?? "Dossier", fields: missing });
+    }
+    for (const d of payload.discovered) {
+      const missing = d.entries
+        .filter((e) => !isReportEntryComplete(e))
+        .map((e) => PROFILE_FIELD_LABELS[e.fieldKey as ProfileFieldKey] ?? e.fieldKey);
+      if (missing.length > 0) out.push({ where: d.firstName.trim() || "Ninja découvert", fields: missing });
+    }
+    return out;
+  }, [payload, dossierTargets]);
+  // Un dossier rattaché sans le moindre renseignement n'a rien à faire là
+  const emptyLinked = linkedDossiers.filter((d) => d.entries.length === 0);
+  const entriesOk = incompleteEntries.length === 0 && emptyLinked.length === 0;
 
   // ── Étape 3 : finalisation ──
   const finalize = () => {
@@ -224,6 +296,9 @@ export function MissionReportWizard({
       const draftSaved = await enqueueDraftSave(snapshot);
       if (!draftSaved) {
         finalizing.current = false;
+        // Sans ce message, le bouton semblerait ne rien faire : l'échec du
+        // pré-enregistrement doit être dit là où l'utilisateur regarde.
+        setError("Le rapport n'a pas pu être déposé : le brouillon ne s'enregistre plus. Corrigez-le puis réessayez.");
         return;
       }
       const fd = new FormData();
@@ -256,7 +331,7 @@ export function MissionReportWizard({
       <div role="status" className="border border-gold bg-gold-faint/20 p-4 text-sm text-ink">
         <p className="font-display tracking-widest text-gold uppercase">Rapport final enregistré</p>
         <ul className="mt-2 space-y-0.5 text-xs text-ink-muted">
-          <li>· {done.outcomesRecorded} sort(s) de cible consigné(s)</li>
+          <li>· {done.outcomesRecorded} sort(s) de cible consigné(s) dans votre rapport — la modération consolide le sort officiel</li>
           <li>
             · {done.contributions} renseignement(s) — {done.appliedDirectly} inscrit(s) directement,{" "}
             {done.contributions - done.appliedDirectly} en attente de la modération
@@ -387,11 +462,30 @@ export function MissionReportWizard({
               key={t.id}
               title={t.name}
               code={t.code}
+              profileId={t.profileId}
+              currentValues={t.canViewDossier ? (t.currentValues ?? null) : null}
               dossier={dossierOf(t.profileId)}
               onChange={(patch) => setDossier(t.profileId, patch)}
               refs={refs}
             />
           ))}
+          {linkedDossiers.map((d) => (
+            <DossierBlock
+              key={`linked-${d.profileId}`}
+              title={d.name || "Dossier rattaché"}
+              code={d.code ?? null}
+              profileId={d.profileId}
+              linked
+              onRemove={() => removeLinked(d.profileId)}
+              dossier={d}
+              onChange={(patch) => setDossier(d.profileId, patch)}
+              refs={refs}
+            />
+          ))}
+          <LinkExistingDossier
+            excludeIds={[...dossierTargets.map((t) => t.profileId), ...linkedDossiers.map((d) => d.profileId)]}
+            onPick={(profile) => addLinked(profile)}
+          />
           {payload.discovered.map((d) => (
             <div key={d.localId} className="border border-gold-dim bg-raised p-3">
               <div className="flex items-center justify-between gap-2">
@@ -419,6 +513,12 @@ export function MissionReportWizard({
               {untreated.length} dossier(s) encore sans réponse : ajoutez un renseignement ou cochez « Aucune nouvelle information ».
             </p>
           )}
+          {incompleteEntries.length > 0 && (
+            <p className="text-xs text-warning">
+              Champs ajoutés sans valeur :{" "}
+              {incompleteEntries.map((x) => `${x.where} (${x.fields.join(", ")})`).join(" · ")}.
+            </p>
+          )}
         </div>
       )}
 
@@ -438,18 +538,60 @@ export function MissionReportWizard({
             {!summaryOk && <li className="text-warning">· Le résumé (étape 1) doit faire au moins 10 caractères.</li>}
             {untreated.length > 0 && <li className="text-warning">· {untreated.length} dossier(s) non traité(s) à l&rsquo;étape 2.</li>}
             {!discoveredOk && <li className="text-warning">· Un ninja découvert n&rsquo;a pas de prénom.</li>}
+            {incompleteEntries.map((x) => (
+              <li key={x.where} className="text-warning">
+                · {x.where} : valeur manquante pour {x.fields.join(", ")} (étape 2).
+              </li>
+            ))}
+            {emptyLinked.length > 0 && (
+              <li className="text-warning">
+                · Un dossier rattaché n&rsquo;a aucun renseignement : ajoutez-en ou retirez-le (étape 2).
+              </li>
+            )}
           </ul>
           {duplicates.length > 0 && (
             <div className="border border-warning/50 bg-warning/10 p-3 text-xs text-warning">
               <p className="font-medium">Des dossiers ressemblants existent déjà :</p>
-              <ul className="mt-1 space-y-0.5">
-                {duplicates.map((d) => (
-                  <li key={d.localId}>
-                    · {payload.discovered.find((x) => x.localId === d.localId)?.firstName} — {d.matches.map((m) => `${m.code} ${m.name}`).join(", ")}
-                  </li>
-                ))}
+              <ul className="mt-1 space-y-1.5">
+                {duplicates.map((d) => {
+                  const block = payload.discovered.find((x) => x.localId === d.localId);
+                  return (
+                    <li key={d.localId}>
+                      · {block?.firstName}
+                      <span className="mt-0.5 flex flex-wrap gap-1.5">
+                        {d.matches.map((m) => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            // « C'est lui » : le bloc découvert devient un
+                            // rattachement au dossier existant — les
+                            // renseignements saisis sont conservés.
+                            onClick={() => {
+                              if (!block) return;
+                              const [firstName, ...rest] = m.name.split(" ");
+                              update((p) => ({
+                                ...p,
+                                discovered: p.discovered.filter((x) => x.localId !== d.localId),
+                              }));
+                              addLinked(
+                                { id: m.id, code: m.code, firstName: firstName ?? m.name, lastName: rest.join(" ") || null },
+                                block.entries,
+                              );
+                            }}
+                            className="border border-warning/60 px-1.5 py-0.5 text-[0.65rem] hover:border-gold hover:text-gold"
+                          >
+                            C&rsquo;est {m.code} {m.name}
+                          </button>
+                        ))}
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>
-              <p className="mt-1">S&rsquo;il s&rsquo;agit de la même personne, retirez le bloc et rattachez le dossier existant (modération). Sinon, confirmez.</p>
+              <p className="mt-1.5">
+                S&rsquo;il s&rsquo;agit de la même personne, cliquez sur son dossier ci-dessus : vos renseignements y
+                seront proposés. Sinon, confirmez la création.
+              </p>
             </div>
           )}
           <p className="text-[0.7rem] text-ink-faint">
@@ -469,7 +611,7 @@ export function MissionReportWizard({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex gap-2">
           {step > 0 && <Button type="button" variant="ghost" size="sm" onClick={() => goTo(step - 1)}>← Précédent</Button>}
-          {initialDraft && (
+          {saved !== null && (
             <Button type="button" variant="ghost" size="sm" onClick={() => {
               if (!window.confirm("Effacer le brouillon de ce rapport ?")) return;
               finalizing.current = true;
@@ -502,13 +644,18 @@ export function MissionReportWizard({
         </div>
         {step < 2 ? (
           <Button type="button" variant="outline" size="sm" onClick={() => goTo(step + 1)}>Suivant →</Button>
-        ) : duplicates.length > 0 ? (
-          <Button type="button" variant="gold" onClick={() => finalize()} disabled={!canFinalize || isPending || !summaryOk || untreated.length > 0 || !discoveredOk}>
-            {isPending ? "Enregistrement…" : "Confirmer et déposer le rapport final"}
-          </Button>
         ) : (
-          <Button type="button" variant="gold" onClick={() => finalize()} disabled={!canFinalize || isPending || !summaryOk || untreated.length > 0 || !discoveredOk}>
-            {isPending ? "Enregistrement…" : "Déposer le rapport final et les renseignements"}
+          <Button
+            type="button"
+            variant="gold"
+            onClick={() => finalize()}
+            disabled={!canFinalize || isPending || !summaryOk || untreated.length > 0 || !discoveredOk || !entriesOk}
+          >
+            {isPending
+              ? "Enregistrement…"
+              : duplicates.length > 0
+                ? "Confirmer et terminer le rapport"
+                : "Terminer la mission et enregistrer les renseignements"}
           </Button>
         )}
       </div>
@@ -519,41 +666,101 @@ export function MissionReportWizard({
 function DossierBlock({
   title,
   code,
+  profileId,
   dossier,
   onChange,
   refs,
+  currentValues,
+  linked = false,
+  onRemove,
 }: {
   title: string;
   code: string | null;
+  profileId: string;
   dossier: { profileId: string; noNewInfo: boolean; entries: ReportIntelEntry[] };
   onChange: (patch: Partial<{ noNewInfo: boolean; entries: ReportIntelEntry[] }>) => void;
   refs: IntelRefs;
+  /**
+   * Libellés courants des champs (§41). `null` = dossier confidentiel pour ce
+   * groupe (« Valeur actuelle : Confidentielle ») ; `undefined` = ne pas
+   * afficher la ligne (dossier rattaché à la main, état inconnu du client).
+   */
+  currentValues?: Record<string, string> | null;
+  /** Dossier existant rattaché par l'équipe (pas une cible officielle) */
+  linked?: boolean;
+  onRemove?: () => void;
 }) {
   const treated = dossier.noNewInfo || dossier.entries.length > 0;
+  const count = dossier.entries.length;
+  // Ouvert au CHARGEMENT si non traité, puis la carte appartient à
+  // l'utilisateur : un prop `open` réactif refermerait la carte à la première
+  // information saisie, en plein milieu de l'édition.
+  const [initiallyOpen] = useState(!treated);
   return (
-    <div className={`border p-3 ${treated ? "border-gold-dim bg-raised" : "border-border-default bg-raised"}`}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-ink">
+    /* Carte repliable : une mission à cinq cibles reste lisible. Le résumé
+       dit tout (✓, compte) même repliée. */
+    <details
+      {...(initiallyOpen ? { open: true } : {})}
+      className={`border ${treated ? "border-gold-dim bg-raised" : "border-border-default bg-raised"}`}
+    >
+      <summary className="flex cursor-pointer flex-wrap items-center justify-between gap-2 p-3">
+        <span className="text-sm text-ink">
+          {treated && <span aria-hidden className="mr-1.5 text-gold">✓</span>}
           {title}
           {code && <span className="ml-1.5 font-mono-toile text-[0.65rem] text-ink-faint">{code}</span>}
-          {treated && <span aria-hidden className="ml-2 text-gold">✓</span>}
-        </p>
-        <label className="flex items-center gap-2 text-xs text-ink-muted">
-          <input
-            type="checkbox"
-            checked={dossier.noNewInfo}
-            // Cocher « rien de neuf » vide les entrées : pas d'ambiguïté à l'envoi
-            onChange={(e) => onChange(e.target.checked ? { noNewInfo: true, entries: [] } : { noNewInfo: false })}
-          />
-          Aucune nouvelle information
-        </label>
-      </div>
-      {!dossier.noNewInfo && (
-        <div className="mt-2">
-          <EntriesEditor entries={dossier.entries} onChange={(entries) => onChange({ entries })} refs={refs} />
+          {linked && (
+            <span className="ml-2 border border-copper/50 px-1 text-[0.6rem] uppercase tracking-wider text-copper">
+              rattaché
+            </span>
+          )}
+        </span>
+        <span className="text-[0.7rem] text-ink-faint">
+          {dossier.noNewInfo
+            ? "Aucune nouvelle information"
+            : count > 0
+              ? `${count} information${count > 1 ? "s" : ""} ajoutée${count > 1 ? "s" : ""}`
+              : "À traiter"}
+        </span>
+      </summary>
+      <div className="border-t border-border-default/60 p-3 pt-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <Link
+            href={`/profils/${profileId}`}
+            className="font-mono-toile text-[0.7rem] text-gold underline-offset-2 hover:underline"
+          >
+            諜 Voir le dossier
+          </Link>
+          <span className="flex items-center gap-3">
+            {!linked && (
+              <label className="flex min-h-[2rem] items-center gap-2 text-xs text-ink-muted">
+                <input
+                  type="checkbox"
+                  checked={dossier.noNewInfo}
+                  // Cocher « rien de neuf » vide les entrées : pas d'ambiguïté à l'envoi
+                  onChange={(e) => onChange(e.target.checked ? { noNewInfo: true, entries: [] } : { noNewInfo: false })}
+                />
+                Aucune nouvelle information
+              </label>
+            )}
+            {linked && onRemove && (
+              <button type="button" onClick={onRemove} className="text-[0.7rem] text-ink-faint underline hover:text-blood-bright">
+                retirer ce dossier
+              </button>
+            )}
+          </span>
         </div>
-      )}
-    </div>
+        {!dossier.noNewInfo && (
+          <div className="mt-2">
+            <EntriesEditor
+              entries={dossier.entries}
+              onChange={(entries) => onChange({ entries })}
+              refs={refs}
+              currentValues={currentValues}
+            />
+          </div>
+        )}
+      </div>
+    </details>
   );
 }
 
@@ -562,25 +769,46 @@ function EntriesEditor({
   entries,
   onChange,
   refs,
+  currentValues,
 }: {
   entries: ReportIntelEntry[];
   onChange: (entries: ReportIntelEntry[]) => void;
   refs: IntelRefs;
+  /** cf. DossierBlock — null = confidentiel, undefined = ne rien afficher */
+  currentValues?: Record<string, string> | null;
 }) {
   const [picking, setPicking] = useState(false);
   const setEntry = (i: number, patch: Partial<ReportIntelEntry>) =>
     onChange(entries.map((e, j) => (j === i ? { ...e, ...patch } : e)));
   const remove = (i: number) => onChange(entries.filter((_, j) => j !== i));
+  const usedKeys = new Set(entries.map((e) => e.fieldKey));
   return (
     <div className="space-y-2">
-      {entries.map((e, i) => (
-        <div key={`${e.fieldKey}-${i}`} className="border border-border-default bg-elevated p-2">
+      {entries.map((e, i) => {
+        const complete = isReportEntryComplete(e);
+        return (
+        <div key={`${e.fieldKey}-${i}`} className={`border bg-elevated p-2 ${complete ? "border-border-default" : "border-warning/60"}`}>
           <div className="flex items-center justify-between gap-2">
-            <p className="text-xs text-gold">{PROFILE_FIELD_LABELS[e.fieldKey as ProfileFieldKey]}</p>
-            <button type="button" onClick={() => remove(i)} className="text-[0.7rem] text-ink-faint underline hover:text-blood-bright">retirer</button>
+            <p className="text-xs text-gold">
+              {PROFILE_FIELD_LABELS[e.fieldKey as ProfileFieldKey]}
+              {!complete && <span className="ml-2 text-[0.65rem] normal-case text-warning">valeur manquante</span>}
+            </p>
+            <button type="button" onClick={() => remove(i)} className="min-h-[1.75rem] text-xs text-ink-faint underline hover:text-blood-bright">retirer</button>
           </div>
+          {/* §41 : ce que la Toile sait déjà — jamais la valeur d'un dossier
+              que le groupe ne possède pas (le serveur ne l'a pas envoyée). */}
+          {currentValues !== undefined && (
+            <p className="mt-0.5 text-[0.65rem] text-ink-faint">
+              Valeur actuelle :{" "}
+              {currentValues === null ? (
+                <span className="font-mono-toile text-gold-dim">Confidentielle</span>
+              ) : (
+                <span className="text-ink-muted">{currentValues[e.fieldKey] ?? "Inconnu"}</span>
+              )}
+            </p>
+          )}
           {canDeclareNone(e.fieldKey as ProfileFieldKey) && (
-            <label className="mt-1 flex items-center gap-2 text-[0.7rem] text-ink-muted">
+            <label className="mt-1 flex min-h-[1.75rem] items-center gap-2 text-xs text-ink-muted">
               <input type="checkbox" checked={e.knowledgeState === "NONE_CONFIRMED"}
                 onChange={(ev) => setEntry(i, { knowledgeState: ev.target.checked ? "NONE_CONFIRMED" : "KNOWN", value: undefined })} />
               Vérifié : il n&rsquo;y en a pas
@@ -605,29 +833,109 @@ function EntriesEditor({
               value={e.note ?? ""} onChange={(ev) => setEntry(i, { note: ev.target.value })} />
           </div>
         </div>
-      ))}
+        );
+      })}
       {picking ? (
         <div className="border border-border-gold bg-elevated p-2">
           {INTEL_PALETTE.map((section) => (
             <div key={section.title} className="mb-1.5">
               <p className="text-[0.6rem] uppercase tracking-wider text-ink-faint">{section.title}</p>
               <div className="flex flex-wrap gap-1">
-                {section.keys.filter((k) => CONTRIBUTABLE_FIELD_KEYS.includes(k)).map((k) => (
+                {/* Un champ déjà présent disparaît de la palette : le schéma
+                    refuse les doublons, et un doublon gelait tout le brouillon. */}
+                {section.keys
+                  .filter((k) => CONTRIBUTABLE_FIELD_KEYS.includes(k) && !usedKeys.has(k))
+                  .map((k) => (
                   <button key={k} type="button"
                     onClick={() => { onChange([...entries, { fieldKey: k, knowledgeState: "KNOWN", confidence: "PROBABLE" }]); setPicking(false); }}
-                    className="border border-border-default px-1.5 py-0.5 text-[0.7rem] text-ink-muted hover:border-gold hover:text-gold">
+                    className="min-h-[1.9rem] border border-border-default px-2 py-0.5 text-xs text-ink-muted hover:border-gold hover:text-gold">
                     {PROFILE_FIELD_LABELS[k]}
                   </button>
                 ))}
               </div>
             </div>
           ))}
-          <button type="button" onClick={() => setPicking(false)} className="text-[0.7rem] text-ink-faint underline">annuler</button>
+          <button type="button" onClick={() => setPicking(false)} className="text-xs text-ink-faint underline">annuler</button>
         </div>
       ) : (
-        <button type="button" onClick={() => setPicking(true)} className="border border-border-default px-2 py-1 text-xs text-ink-muted hover:border-gold hover:text-gold">
+        <button type="button" onClick={() => setPicking(true)} className="min-h-[2rem] border border-border-default px-2 py-1 text-xs text-ink-muted hover:border-gold hover:text-gold">
           + Ajouter un champ
         </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * « Ninja croisé, dossier existant » : la même recherche publique que
+ * l'association de cible — code, titre, prénom, nom, rien d'autre. Rattacher
+ * un dossier n'en révèle pas le contenu : les renseignements saisis partent
+ * en revue si le groupe ne le possède pas.
+ */
+function LinkExistingDossier({
+  excludeIds,
+  onPick,
+}: {
+  excludeIds: string[];
+  onPick: (profile: { id: string; code: string; firstName: string; lastName?: string | null }) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<{ id: string; code: string; firstName: string; lastName?: string | null }[]>([]);
+  useEffect(() => {
+    if (query.trim().length < 2) {
+      setResults([]);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/profils/recherche?q=${encodeURIComponent(query.trim())}`, {
+          signal: controller.signal,
+        });
+        if (res.ok) setResults(await res.json());
+      } catch {
+        // Frappe suivante : requête annulée
+      }
+    }, 250);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [query]);
+  const visible = results.filter((r) => !excludeIds.includes(r.id));
+  return (
+    <div className="border border-dashed border-border-default p-3">
+      <label htmlFor="rw-link-search" className={labelCls}>
+        Ninja croisé qui a déjà un dossier ? Rattachez-le au rapport
+      </label>
+      <input
+        id="rw-link-search"
+        type="search"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Prénom, nom ou code (PRF-…)"
+        autoComplete="off"
+        className={input}
+      />
+      {visible.length > 0 && (
+        <ul className="mt-1 max-h-32 space-y-0.5 overflow-y-auto">
+          {visible.map((profile) => (
+            <li key={profile.id}>
+              <button
+                type="button"
+                onClick={() => {
+                  onPick(profile);
+                  setQuery("");
+                  setResults([]);
+                }}
+                className="w-full px-2 py-1 text-left text-xs text-ink-muted hover:bg-hover-bg hover:text-gold"
+              >
+                {[profile.firstName, profile.lastName].filter(Boolean).join(" ")}
+                <span className="ml-1.5 font-mono-toile text-[0.65rem] text-ink-faint">{profile.code}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

@@ -101,21 +101,46 @@ export default async function ProfilsPage({
   const pendingContributions = viewer.canManage
     ? await prisma.profileIntelContribution.count({ where: { status: "PENDING_REVIEW" } })
     : 0;
-  // Résumé pour les groupes : ce qu'ils possèdent, ce qu'ils attendent. Des
-  // COMPTES sur leurs propres dossiers — rien sur ceux des autres.
-  const summary =
-    !viewer.canViewAll && viewer.groupIds.length > 0
-      ? {
-          created: viewer.createdProfileIds.size,
-          acquired: [...viewer.grantedProfileIds].filter((id) => !viewer.createdProfileIds.has(id)).length,
-          pendingRequests: await prisma.profilePurchaseRequest.count({
-            where: { groupId: { in: viewer.groupIds }, status: "PENDING" },
-          }),
-          pendingContributions: await prisma.profileIntelContribution.count({
-            where: { contributorId: viewer.userId, status: "PENDING_REVIEW" },
-          }),
-        }
-      : null;
+
+  // Résumé en tête de liste — des COMPTES, jamais des contenus.
+  // Groupes : ce qu'ils possèdent et ce qu'ils attendent, sur LEURS dossiers.
+  // Modération : l'état de la Toile (dossiers, contributions, conflits, ventes).
+  type SummaryTile = { label: string; value: number; href: string; tone?: "warning" };
+  let summary: SummaryTile[] | null = null;
+  if (!viewer.canViewAll && viewer.groupIds.length > 0) {
+    const [pendingRequests, myContributions] = await Promise.all([
+      prisma.profilePurchaseRequest.count({
+        where: { groupId: { in: viewer.groupIds }, status: "PENDING" },
+      }),
+      prisma.profileIntelContribution.count({
+        where: { contributorId: viewer.userId, status: "PENDING_REVIEW" },
+      }),
+    ]);
+    const acquired = [...viewer.grantedProfileIds].filter((id) => !viewer.createdProfileIds.has(id)).length;
+    summary = [
+      { label: "Dossiers accessibles", value: viewer.visibleProfileIds.size, href: "/profils?acces=granted" },
+      { label: "Ouverts par vos groupes", value: viewer.createdProfileIds.size, href: "/profils?acces=granted" },
+      { label: "Acquis", value: acquired, href: "/profils?acces=granted" },
+      { label: "Demandes en attente", value: pendingRequests, href: "/profils/mes-demandes", tone: pendingRequests > 0 ? "warning" : undefined },
+      { label: "Renseignements proposés", value: myContributions, href: "/profils/mes-demandes" },
+    ];
+  } else if (viewer.canViewAll) {
+    const [allProfiles, conflicts, pendingPurchases] = await Promise.all([
+      prisma.characterProfile.count({ where: { archivedAt: null, mergedIntoId: null } }),
+      // Conflits à trancher : contributions en attente qui contredisent la
+      // valeur en place, plus les champs marqués contradictoires.
+      prisma.profileIntelContribution.count({
+        where: { status: "PENDING_REVIEW", conflictsWithExisting: true },
+      }),
+      prisma.profilePurchaseRequest.count({ where: { status: "PENDING" } }),
+    ]);
+    summary = [
+      { label: "Dossiers", value: allProfiles, href: "/profils" },
+      { label: "Contributions en attente", value: pendingContributions, href: "/profils/contributions", tone: pendingContributions > 0 ? "warning" : undefined },
+      { label: "Conflits", value: conflicts, href: "/profils/contributions?conflits=1", tone: conflicts > 0 ? "warning" : undefined },
+      { label: "Demandes d'achat", value: pendingPurchases, href: "/profils/demandes", tone: pendingPurchases > 0 ? "warning" : undefined },
+    ];
+  }
 
   const asOptions = (rows: { id: string; label: string }[]) =>
     rows.map((row) => ({ value: row.id, label: row.label }));
@@ -168,16 +193,16 @@ export default async function ProfilsPage({
       </div>
 
       {summary && (
-        <dl className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Résumé de vos dossiers">
-          {[
-            ["Ouverts par vos groupes", summary.created, "/profils?acces=granted"],
-            ["Acquis", summary.acquired, "/profils?acces=granted"],
-            ["Demandes en attente", summary.pendingRequests, "/profils/mes-demandes"],
-            ["Renseignements proposés", summary.pendingContributions, "/profils/mes-demandes"],
-          ].map(([label, value, href]) => (
-            <Link key={String(label)} href={String(href)} className="border border-border-default bg-raised px-3 py-2 hover:border-gold">
-              <dt className="text-[0.6rem] uppercase tracking-wider text-ink-faint">{label}</dt>
-              <dd className="font-mono-toile text-lg text-gold">{value}</dd>
+        <dl
+          className={`mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 ${summary.length > 4 ? "lg:grid-cols-5" : "lg:grid-cols-4"}`}
+          aria-label={viewer.canViewAll ? "État de la Toile" : "Résumé de vos dossiers"}
+        >
+          {summary.map((tile) => (
+            <Link key={tile.label} href={tile.href} className="border border-border-default bg-raised px-3 py-2 hover:border-gold">
+              <dt className="text-[0.6rem] uppercase tracking-wider text-ink-faint">{tile.label}</dt>
+              <dd className={`font-mono-toile text-lg ${tile.tone === "warning" ? "text-warning" : "text-gold"}`}>
+                {tile.value}
+              </dd>
             </Link>
           ))}
         </dl>

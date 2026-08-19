@@ -184,8 +184,19 @@ Cet accès général au briefing ne donne pas les mêmes champs à tous :
 - un agent ou membre d'un groupe attribué reçoit la vue `assigned`, sans ces
   trois champs ;
 - le chef d'un groupe attribué reçoit la vue `leader` : noms de la ou des
-  cibles et faction cible, mais aucun commanditaire ;
+  cibles et faction cible, mais aucun commanditaire — plus un bloc
+  « **Dossiers des cibles** » en lecture seule, avec l'état d'ouverture et le
+  lien vers chaque dossier ;
 - seule la modération reçoit `clientName`, le commanditaire.
+
+**Dossiers des cibles pendant la mission** : dès qu'une attribution est active
+(mission `ASSIGNED` / `IN_PROGRESS`), tous les membres du groupe lisent les
+dossiers de renseignement des cibles (`MissionTarget.profileId`) — accès
+calculé `MISSION_TARGET`, retiré avec l'attribution, transformé en octroi
+`MISSION_GRANTED` à la clôture. Voir `PROFILE_VISIBILITY.md`. Conséquence
+assumée : l'identité d'une cible fichée est donc visible de tout le groupe via
+la liste des dossiers, même si la vue `assigned` du briefing ne nomme pas les
+cibles — c'est l'engagement du groupe qui ouvre le renseignement.
 
 `Mission.targetFactionId` désigne la faction RP de la cible. Elle est distincte
 de `assignedFactionId`, qui reste une colonne historique liée au groupe

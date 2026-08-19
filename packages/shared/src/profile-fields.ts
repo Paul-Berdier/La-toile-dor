@@ -11,6 +11,14 @@
 
 export type ProfileKnowledge = "UNKNOWN" | "KNOWN" | "NONE_CONFIRMED" | "CONFLICTING";
 
+/** Libellés français des états de connaissance (éditeur, bloc modération). */
+export const KNOWLEDGE_LABELS: Record<ProfileKnowledge, string> = {
+  UNKNOWN: "Inconnu",
+  KNOWN: "Valeur connue",
+  NONE_CONFIRMED: "Absence confirmée",
+  CONFLICTING: "Contradictoire",
+};
+
 export type ProfileDisplayState =
   | "UNKNOWN" // Inconnu — information non acquise
   | "REDACTED" // ??? — acquise mais confidentielle pour ce lecteur
@@ -28,7 +36,9 @@ export const DISPLAY_LABELS: Record<Exclude<ProfileDisplayState, "VISIBLE">, str
 /** Libellés accessibles (aria) des états non littéraux. */
 export const DISPLAY_ARIA_LABELS: Record<Exclude<ProfileDisplayState, "VISIBLE">, string> = {
   UNKNOWN: "Information non renseignée",
-  REDACTED: "Information connue mais confidentielle",
+  // « Information confidentielle » : la Toile la possède, votre groupe n'y a
+  // pas accès. Le mot « confidentiel » est ce que les tests cherchent.
+  REDACTED: "Information confidentielle",
   NONE: "Absence confirmée",
   CONFLICTING: "Renseignements contradictoires",
 };

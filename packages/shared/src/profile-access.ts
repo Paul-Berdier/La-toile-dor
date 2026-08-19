@@ -46,6 +46,30 @@ export const GRANT_SOURCE_LABELS: Record<GrantSource, string> = {
   MISSION_GRANTED: "Gagné en mission",
 };
 
+/**
+ * Pourquoi un lecteur voit un dossier. Les quatre sources d'octroi (écrites en
+ * base), plus une origine CALCULÉE : `MISSION_TARGET`, le dossier est la cible
+ * d'une mission en cours attribuée à l'un de ses groupes. Elle n'est pas
+ * stockée — elle vaut tant que l'attribution est active et la mission ouverte,
+ * et se transforme en octroi `MISSION_GRANTED` à la clôture.
+ */
+export type AccessOrigin = GrantSource | "MISSION_TARGET";
+
+export const ACCESS_ORIGIN_LABELS: Record<AccessOrigin, string> = {
+  ...GRANT_SOURCE_LABELS,
+  MISSION_TARGET: "Mission en cours",
+};
+
+/** Explication longue (infobulle) de chaque origine. */
+export const ACCESS_ORIGIN_HINTS: Record<AccessOrigin, string> = {
+  CREATED_BY_GROUP: "Votre groupe a ouvert ce dossier : vous le lisez et le complétez.",
+  PURCHASED: "Votre groupe a acheté ce dossier : lecture complète, propositions de renseignement.",
+  MODERATOR_GRANTED: "La modération a ouvert ce dossier à votre groupe.",
+  MISSION_GRANTED: "Votre groupe a gagné ce dossier en menant une mission à son terme.",
+  MISSION_TARGET:
+    "Ce dossier est lié à une mission en cours attribuée à votre groupe : il reste ouvert le temps de la mission.",
+};
+
 // ── Ce que la règle a besoin de savoir ──────────────────────────
 
 export interface ProfileAccessViewer {
@@ -53,6 +77,14 @@ export interface ProfileAccessViewer {
   permissions: ReadonlySet<string>;
   /** Groupes ACTIFS dont le lecteur est membre — l'appelant filtre isActive */
   groupIds: ReadonlySet<string>;
+  /**
+   * Dossiers cibles de missions EN COURS (attribuées, actives) de l'un de ses
+   * groupes. Calculé par l'appelant une fois par requête ; absent = aucun.
+   * Quand la revendication d'un groupe est acceptée, ses membres doivent
+   * pouvoir lire le dossier de la cible sans attendre la clôture — sinon ils
+   * partent en mission sur une fiche scellée.
+   */
+  missionTargetProfileIds?: ReadonlySet<string>;
 }
 
 export interface ProfileAccessGrantLike {
@@ -98,19 +130,24 @@ export function canViewCharacterProfile(
   // Le groupe créateur voit toujours son dossier, même si l'octroi
   // CREATED_BY_GROUP manquait (données antérieures au backfill).
   if (target.createdByGroupId && viewer.groupIds.has(target.createdByGroupId)) return true;
-  return activeGrantsFor(viewer, target).length > 0;
+  if (activeGrantsFor(viewer, target).length > 0) return true;
+  // Cible d'une mission en cours de l'un de ses groupes : accès le temps de
+  // la mission, sans achat. À la clôture, l'octroi MISSION_GRANTED prend le
+  // relais ; si l'attribution est retirée avant, l'accès disparaît avec elle.
+  return viewer.missionTargetProfileIds?.has(target.id) ?? false;
 }
 
 /**
  * Pourquoi le lecteur voit-il ce dossier ? Retourne la source la plus forte,
  * dans un ordre qui reflète ce que le lecteur veut savoir : « c'est le nôtre »
- * prime sur « on l'a payé », qui prime sur « on nous l'a donné ».
+ * prime sur « on l'a payé », qui prime sur « on nous l'a donné », qui prime
+ * sur « c'est la cible de notre mission » (provisoire).
  * `null` s'il ne le voit pas, ou s'il le voit par sa fonction (modération).
  */
 export function accessOrigin(
   viewer: ProfileAccessViewer,
   target: ProfileAccessTarget,
-): GrantSource | null {
+): AccessOrigin | null {
   if (target.createdByGroupId && viewer.groupIds.has(target.createdByGroupId)) {
     return "CREATED_BY_GROUP";
   }
@@ -118,6 +155,7 @@ export function accessOrigin(
   for (const source of GRANT_SOURCES) {
     if (sources.has(source)) return source;
   }
+  if (viewer.missionTargetProfileIds?.has(target.id)) return "MISSION_TARGET";
   return null;
 }
 

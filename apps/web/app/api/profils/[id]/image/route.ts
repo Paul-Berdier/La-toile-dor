@@ -26,10 +26,23 @@ export async function GET(
   if (!current) return new NextResponse(null, { status: 404 });
 
   const { id } = await params;
+  // La DÉCISION d'abord, les octets ensuite : charger l'image avant de savoir
+  // si on la sert ferait payer la lecture des octets à chaque sonde d'un
+  // lecteur non autorisé — même sans fuite, c'est du travail offert.
   const profile = await prisma.characterProfile.findUnique({
     where: { id },
+    select: accessTargetSelect,
+  });
+  if (!profile || profile.archivedAt) return new NextResponse(null, { status: 404 });
+
+  const viewer = await getProfileViewer(current);
+  if (!decideAccess(viewer, toAccessTarget(profile)).canView) {
+    return new NextResponse(null, { status: 404 });
+  }
+
+  const bytes = await prisma.characterProfile.findUnique({
+    where: { id },
     select: {
-      ...accessTargetSelect,
       imageData: true,
       imageMime: true,
       images: {
@@ -39,16 +52,9 @@ export async function GET(
       },
     },
   });
-  if (!profile || profile.archivedAt) return new NextResponse(null, { status: 404 });
-
-  const viewer = await getProfileViewer(current);
-  if (!decideAccess(viewer, toAccessTarget(profile)).canView) {
-    return new NextResponse(null, { status: 404 });
-  }
-
-  const primary = profile.images[0];
-  const data = primary?.imageData ?? profile.imageData;
-  const mime = primary?.imageMime ?? profile.imageMime;
+  const primary = bytes?.images[0];
+  const data = primary?.imageData ?? bytes?.imageData;
+  const mime = primary?.imageMime ?? bytes?.imageMime;
   if (!data || !mime) return new NextResponse(null, { status: 404 });
 
   return new NextResponse(Buffer.from(data), {

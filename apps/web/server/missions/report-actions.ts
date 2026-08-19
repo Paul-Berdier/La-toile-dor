@@ -55,6 +55,31 @@ export interface ReportActionResult {
 
 type ReportTx = Prisma.TransactionClient;
 
+/**
+ * Message français lisible pour une erreur de validation du rapport. Le
+ * client valide déjà avant d'envoyer : ceci est le filet de sécurité — il ne
+ * doit pas parler anglais (« Required ») ni pointer un chemin JSON brut.
+ */
+function formatReportIssue(issue?: { message?: string; path?: (string | number)[] }): string {
+  if (!issue) return "Rapport incomplet.";
+  const TRANSLATIONS: Record<string, string> = {
+    Required: "Valeur manquante",
+    "Invalid cuid": "Référence invalide",
+    "Invalid input": "Valeur invalide",
+    "Expected string, received null": "Valeur manquante",
+  };
+  const message = TRANSLATIONS[issue.message ?? ""] ?? issue.message ?? "Valeur invalide.";
+  const path = issue.path ?? [];
+  let where = "";
+  if (path[0] === "dossiers" && typeof path[1] === "number") where = `Dossier n°${path[1] + 1}`;
+  else if (path[0] === "discovered" && typeof path[1] === "number") where = `Ninja découvert n°${path[1] + 1}`;
+  else if (path[0] === "outcomes") where = "Sort d'une cible";
+  else if (path[0] === "summary") where = "Résumé";
+  const fieldIndex = path.indexOf("entries");
+  if (fieldIndex >= 0) where += `${where ? ", " : ""}renseignement n°${Number(path[fieldIndex + 1] ?? 0) + 1}`;
+  return where ? `${where} : ${message}` : message;
+}
+
 /** Toutes les écritures draft/final prennent le même verrou de mission. */
 async function lockMission(tx: ReportTx, missionId: string) {
   await tx.$queryRaw<Array<{ id: string }>>`
@@ -199,7 +224,9 @@ export async function saveMissionReportDraftAction(input: {
   payload: unknown;
 }): Promise<ReportActionResult> {
   const parsed = missionReportPayloadSchema.safeParse(input.payload);
-  if (!parsed.success) return { ok: false, error: "Brouillon invalide." };
+  if (!parsed.success) {
+    return { ok: false, error: `Brouillon invalide — ${formatReportIssue(parsed.error.errors[0])}` };
+  }
   const r = await resolveReporter(input.missionId, input.groupId);
   if (!r.mission || !r.groupId) return { ok: false, error: r.error ?? "Refusé." };
   if (!["ASSIGNED", "IN_PROGRESS"].includes(r.mission.status)) {
@@ -297,7 +324,7 @@ export async function finalizeMissionReportAction(formData: FormData): Promise<R
   }
   const parsed = missionReportFinalizeSchema.safeParse({ ...(payloadRaw as object), missionId });
   if (!parsed.success) {
-    return { ok: false, error: parsed.error.errors[0]?.message ?? "Rapport incomplet." };
+    return { ok: false, error: formatReportIssue(parsed.error.errors[0]) };
   }
   const payload = parsed.data;
   // Le rapport conserve l'observation propre à ce groupe, indépendamment de
@@ -337,8 +364,14 @@ export async function finalizeMissionReportAction(formData: FormData): Promise<R
   ) {
     return { ok: false, error: "Le sort de chaque cible de la mission doit être renseigné une seule fois." };
   }
-  if (payload.dossiers.some((d) => !targetProfileIds.includes(d.profileId))) {
+  // Un dossier non « rattaché » doit être une cible officielle ; un dossier
+  // rattaché par l'équipe (ninja croisé déjà fiché) est accepté s'il existe —
+  // ses renseignements passeront par la revue comme toute contribution.
+  if (payload.dossiers.some((d) => !d.linked && !targetProfileIds.includes(d.profileId))) {
     return { ok: false, error: "Un dossier du rapport n'est pas une cible de cette mission." };
+  }
+  if (payload.dossiers.some((d) => d.linked && d.entries.length === 0)) {
+    return { ok: false, error: "Un dossier rattaché ne porte aucun renseignement : ajoutez-en ou retirez-le." };
   }
 
   // Preuves visuelles (validées par signature, jamais par le type déclaré)
@@ -490,7 +523,9 @@ export async function finalizeMissionReportAction(formData: FormData): Promise<R
           where: { id: d.profileId },
           select: accessTargetSelect,
         });
-        if (!profile || profile.archivedAt) continue;
+        // Perdre silencieusement des renseignements saisis serait pire qu'un
+        // refus : l'équipe doit retirer le bloc en connaissance de cause.
+        if (!profile || profile.archivedAt) throw new Error("DOSSIER_ARCHIVED");
         // Le groupe créateur (ou la modération) écrit directement dans SON dossier
         const canEdit = decideAccessForGroup(viewer, toAccessTarget(profile), groupId).canEdit;
         for (const entry of d.entries) await contribute(d.profileId, entry, canEdit);
@@ -543,6 +578,12 @@ export async function finalizeMissionReportAction(formData: FormData): Promise<R
     if (error instanceof Error && error.message === "TARGETS_CHANGED") {
       return { ok: false, error: "Les cibles de la mission viennent de changer : rechargez le rapport." };
     }
+    if (error instanceof Error && error.message === "DOSSIER_ARCHIVED") {
+      return {
+        ok: false,
+        error: "Un dossier du rapport a été archivé ou fusionné entre-temps : retirez son bloc puis redéposez.",
+      };
+    }
     if ((error as { code?: string }).code === "P2002") {
       return { ok: false, error: "Votre groupe a déjà déposé son rapport final pour cette mission." };
     }
@@ -551,7 +592,12 @@ export async function finalizeMissionReportAction(formData: FormData): Promise<R
     }
     // Seules les validations de référentiel explicitement produites par notre
     // service sont montrées ; aucune erreur interne brute ne quitte le serveur.
-    if (error instanceof Error && /^(Option de référentiel invalide|Faction inconnue|Grade inconnu)/.test(error.message)) {
+    if (
+      error instanceof Error &&
+      /^(Option de référentiel invalide|Faction inconnue|Grade inconnu|Le champ .* ne se déclare pas|Le champ .* ne peut pas être vidé)/.test(
+        error.message,
+      )
+    ) {
       return { ok: false, error: error.message };
     }
     throw error;

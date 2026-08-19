@@ -474,7 +474,10 @@ export async function getMissionDetail(current: CurrentUser, missionId: string) 
           profile: {
             select: {
               code: true,
+              title: true,
               characterFirstName: true,
+              // Le nom est PUBLIC (il figure dans le titre du dossier)
+              characterLastName: true,
               fieldIntel: { where: { knowledgeState: "KNOWN" }, select: { fieldKey: true } },
             },
           },

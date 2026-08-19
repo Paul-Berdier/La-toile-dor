@@ -30,9 +30,22 @@
 | `MODERATOR_GRANTED` | offert ou restauré par la modération | « ✓ Accès accordé » |
 | `MISSION_GRANTED` | groupes ayant engagé des agents, à la clôture (`sourceId` = mission) | « ✓ Gagné en mission » |
 
+S'y ajoute une origine **calculée**, jamais stockée : `MISSION_TARGET`
+(« ⟡ Mission en cours ») — le dossier est la cible d'une mission en cours
+attribuée à l'un des groupes du lecteur. Cet accès vit et meurt avec
+l'attribution ; il n'apparaît pas dans la table des octrois et n'a donc rien à
+révoquer. Un dossier ainsi ouvert n'affiche **pas** de bouton d'achat tant que
+la mission court : le chef peut toutefois déposer une demande pour le garder
+après la mission (avant elle, ou une fois l'accès retombé).
+
 Les accès antérieurs à la colonne ont été **backfillés** (`PURCHASED` s'ils
 portent une demande, migration `20260819100000`). La modération distingue ainsi
 un accès payé d'un accès gagné au prix du sang avant de révoquer.
+
+**Fusion de dossiers** : les octrois actifs du doublon sont transférés vers le
+dossier conservé — un groupe qui avait payé pour « ce personnage » garde son
+accès, même si le doublon était maigre. Ce transfert est un élargissement
+d'accès décidé par la modération au moment de fusionner.
 
 ## Ryōs — limite assumée
 

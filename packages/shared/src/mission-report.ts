@@ -87,6 +87,16 @@ export const reportDossierSchema = z
     /** « Aucune nouvelle information » — un clic, et le dossier est traité */
     noNewInfo: z.boolean().default(false),
     entries: z.array(reportIntelEntrySchema).max(40).default([]),
+    /**
+     * Dossier EXISTANT rattaché par l'équipe elle-même (pas une cible de la
+     * mission) — un ninja croisé qui avait déjà sa fiche. Les renseignements
+     * passent alors par la revue, sauf si le groupe possède le dossier. Le
+     * nom et le code ne servent qu'à réafficher le bloc depuis le brouillon :
+     * ce sont des valeurs PUBLIQUES, jamais une source de vérité.
+     */
+    linked: z.boolean().optional(),
+    name: z.string().trim().max(160).optional(),
+    code: z.string().trim().max(20).optional(),
   })
   .superRefine((dossier, ctx) => {
     addUniqueEntryIssues(dossier.entries, ctx);
@@ -213,6 +223,18 @@ export const EMPTY_REPORT_PAYLOAD: MissionReportPayload = {
   discovered: [],
   step: 0,
 };
+
+/**
+ * Une entrée est-elle COMPLÈTE, c'est-à-dire finalisable telle quelle ? Le
+ * brouillon accepte une valeur encore vide (le champ vient d'être ajouté) ;
+ * le client s'en sert pour signaler ce qui manque AVANT d'essayer de déposer,
+ * au lieu de laisser le serveur répondre « Required ».
+ */
+export function isReportEntryComplete(entry: ReportIntelEntry): boolean {
+  if (entry.knowledgeState === "NONE_CONFIRMED") return canDeclareNoneForField(entry.fieldKey);
+  const schema = CONTRIBUTION_VALUE_SCHEMAS[entry.fieldKey];
+  return Boolean(schema?.safeParse(entry.value).success);
+}
 
 /**
  * Chaque dossier cible doit avoir été TRAITÉ : soit « rien de neuf », soit au

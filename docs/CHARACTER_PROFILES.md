@@ -286,12 +286,16 @@ validation par signature binaire, 2 Mo, `private, no-store`.
 
 ## Historique et complétude
 
-Tout lecteur **autorisé** voit l'historique des mises à jour (champ, auteur,
-mission source, confiance, justification — jamais les valeurs brutes, qui
-restent côté modération) et un **score de complétude** (part des champs connus
-ou vérifiés absents). Ni l'un ni l'autre n'est calculé pour un lecteur sans
-accès : un second compte à côté du nombre de renseignements scellés parlerait
-par soustraction.
+Tout lecteur **autorisé** voit la section « **Historique du renseignement** »
+(timeline : date, champ, confiance, mission source, auteur, justification —
+l'auteur et la mission n'étant nommés qu'à la modération ou à l'auteur
+lui-même ; jamais les valeurs brutes, qui restent côté modération) et un
+**score de complétude** (part des champs connus ou vérifiés absents). Ni l'un
+ni l'autre n'est calculé pour un lecteur sans accès : un second compte à côté
+du nombre de renseignements scellés parlerait par soustraction. L'état de
+connaissance UNKNOWN est représenté par l'**absence** de ligne
+`CharacterFieldIntel` (aucun code « UNKNOWN » dans les référentiels classe /
+yeux) : les anciens dossiers affichent « Inconnu » sans backfill.
 
 ## Notes internes
 

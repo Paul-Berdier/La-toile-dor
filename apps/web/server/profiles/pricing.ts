@@ -112,8 +112,14 @@ export async function estimateProfilePrice(
   );
 
   // Lecteur sans accès : le montant, et rien qui permette de le décomposer.
+  // Arrondi GROSSIER : au palier fin du barème (100), le montant exact est un
+  // oracle — les valeurs de champs étant des multiples ronds, une division
+  // suffirait à retrouver le multiplicateur de grade (pourtant « ??? ») et le
+  // nombre de liens. Au millier, l'inférence champ par champ devient vaseuse,
+  // et le chef garde un ordre de grandeur pour négocier.
   if (!canViewValues) {
-    return { scope: "public", price: result.price };
+    const coarse = Math.max(1000, pricing.roundTo * 10);
+    return { scope: "public", price: Math.max(coarse, Math.round(result.price / coarse) * coarse) };
   }
 
   return {

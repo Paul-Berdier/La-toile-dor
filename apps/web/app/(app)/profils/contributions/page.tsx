@@ -12,11 +12,23 @@ export const dynamic = "force-dynamic";
  * Regroupées par dossier ; la décision se prend avec le dossier ouvert à côté
  * (le lien), pas à l'aveugle.
  */
-export default async function ContributionsPage() {
+export default async function ContributionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ conflits?: string | string[] }>;
+}) {
   await requireUserWith(PERMISSIONS.PROFILE_MANAGE);
+  const sp = await searchParams;
+  // « ?conflits=1 » : ne garder que les propositions qui contredisent une
+  // valeur en place — celles que la modération doit trancher en priorité.
+  const onlyConflicts = (Array.isArray(sp.conflits) ? sp.conflits[0] : sp.conflits) === "1";
 
   const rows = await prisma.profileIntelContribution.findMany({
-    where: { status: "PENDING_REVIEW", profile: { archivedAt: null } },
+    where: {
+      status: "PENDING_REVIEW",
+      profile: { archivedAt: null },
+      ...(onlyConflicts ? { conflictsWithExisting: true } : {}),
+    },
     orderBy: { createdAt: "asc" },
     include: {
       profile: { select: { id: true, code: true, title: true, characterFirstName: true, characterLastName: true } },
@@ -62,14 +74,31 @@ export default async function ContributionsPage() {
       <h1 className="mt-3 font-display text-xl tracking-[0.15em] text-ink uppercase">
         Renseignements proposés
       </h1>
-      <p className="mt-1 mb-6 text-xs text-ink-faint">
+      <p className="mt-1 mb-4 text-xs text-ink-faint">
         Ce que les groupes rapportent sur les dossiers qu&rsquo;ils détiennent. Accepter inscrit la
         valeur ; fusionner complète ; contradictoire garde les deux versions et le signale.
       </p>
 
+      <nav aria-label="Filtre des propositions" className="mb-6 flex flex-wrap gap-2 text-xs">
+        <Link
+          href="/profils/contributions"
+          aria-current={!onlyConflicts ? "page" : undefined}
+          className={`border px-2.5 py-1 ${!onlyConflicts ? "border-gold text-gold" : "border-border-default text-ink-muted hover:border-gold"}`}
+        >
+          Toutes les propositions
+        </Link>
+        <Link
+          href="/profils/contributions?conflits=1"
+          aria-current={onlyConflicts ? "page" : undefined}
+          className={`border px-2.5 py-1 ${onlyConflicts ? "border-blood text-blood-bright" : "border-border-default text-ink-muted hover:border-blood"}`}
+        >
+          ⚠ Conflits seulement
+        </Link>
+      </nav>
+
       {byProfile.size === 0 && (
         <p className="border border-border-default bg-raised p-8 text-center text-sm text-ink-faint italic">
-          Aucune proposition en attente.
+          {onlyConflicts ? "Aucun conflit en attente." : "Aucune proposition en attente."}
         </p>
       )}
 

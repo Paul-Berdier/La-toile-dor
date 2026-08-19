@@ -153,6 +153,11 @@ export async function createMissionAction(raw: unknown): Promise<CreateMissionRe
       creatorId: current.session.userId,
       responsibleModeratorId: current.session.userId,
       visibility: { create: data.visibility },
+      // Le dossier choisi dans l'assistant est AUSSI une cible au sens
+      // multi-cibles : c'est `MissionTarget` que lisent la clôture (état
+      // vital, octrois) et l'accès des groupes engagés. Sans cette ligne, la
+      // cible du wizard restait invisible à tout ce mécanisme.
+      ...(linkedTargetId ? { targets: { create: { profileId: linkedTargetId } } } : {}),
     },
   });
 
@@ -272,6 +277,10 @@ export async function updateMissionAction(input: {
 
   const publishDraft = existing.status === "DRAFT" && data.publish;
   const nextStatus = publishDraft ? "AVAILABLE" : existing.status;
+  const [nextTargetProfileId, nextClientProfileId] = await Promise.all([
+    resolveLinkedProfile(data.targetProfileId),
+    resolveLinkedProfile(data.clientProfileId),
+  ]);
   try {
     await prisma.$transaction(async (tx) => {
       const updated = await tx.mission.updateMany({
@@ -289,11 +298,11 @@ export async function updateMissionAction(input: {
           primaryObjective: data.primaryObjective ?? null,
           secondaryObjectives: data.secondaryObjectives,
           targetIdentity: data.targetIdentity ?? null,
-          targetProfileId: await resolveLinkedProfile(data.targetProfileId),
+          targetProfileId: nextTargetProfileId,
           targetFactionId: targetFaction?.id ?? null,
           location: data.location ?? null,
           clientName: data.clientName ?? null,
-          clientProfileId: await resolveLinkedProfile(data.clientProfileId),
+          clientProfileId: nextClientProfileId,
           constraints: data.constraints ?? null,
           prohibitions: data.prohibitions ?? null,
           evidence: data.evidence ?? null,
@@ -319,6 +328,22 @@ export async function updateMissionAction(input: {
         create: { missionId: existing.id, ...data.visibility },
         update: data.visibility,
       });
+
+      // Le dossier du wizard suit dans `MissionTarget` : ajouté s'il manque.
+      // On ne retire PAS l'ancienne cible quand le lien change — elle a pu
+      // être posée ou complétée (sort, note) par le panneau « Cibles », qui
+      // reste l'outil de référence pour en retirer une.
+      if (nextTargetProfileId) {
+        const already = await tx.missionTarget.findFirst({
+          where: { missionId: existing.id, profileId: nextTargetProfileId },
+          select: { id: true },
+        });
+        if (!already) {
+          await tx.missionTarget.create({
+            data: { missionId: existing.id, profileId: nextTargetProfileId },
+          });
+        }
+      }
     });
   } catch (error) {
     if (error instanceof Error && error.message === "CONCURRENT_UPDATE") {

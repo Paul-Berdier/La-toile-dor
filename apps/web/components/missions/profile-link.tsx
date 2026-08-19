@@ -18,9 +18,9 @@ interface Found {
  * renseignements de la mission au bon endroit plutôt que d'ouvrir un second
  * dossier pour le même personnage.
  *
- * La recherche interroge la même route que l'éditeur de dossiers, réservée à
- * la modération : ce composant n'est rendu que dans le formulaire de création,
- * lui-même réservé aux mêmes personnes.
+ * La recherche interroge la route publique des dossiers (code, titre, prénom,
+ * nom — rien d'autre) ; ce composant, lui, n'est rendu que dans le formulaire
+ * de création de mission, réservé à la modération.
  */
 export function ProfileLink({
   label,

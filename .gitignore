@@ -35,7 +35,7 @@ audit-identite*/
 *.iml
 
 # Claude Code — réglages locaux (launch.json reste partagé)
-.claude/settings.local.json*
+.claude/
 
 # OS
 .DS_Store

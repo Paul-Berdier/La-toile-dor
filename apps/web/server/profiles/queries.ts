@@ -19,7 +19,16 @@ import {
   type ProfileViewer,
   type AccessDecision,
 } from "./access";
-import { dossierInclude, serializeDossier, type SerializedDossier } from "./serializer";
+import {
+  dayOf,
+  dossierInclude,
+  previewSelect,
+  serializeDossier,
+  serializePreview,
+  type PreviewFieldKey,
+  type SerializedDossier,
+} from "./serializer";
+import type { ProfileFieldView, AccessOrigin } from "@toile/shared";
 import { estimateProfilePrice, type ProfileEstimate } from "./pricing";
 
 // ── Liste des dossiers ──
@@ -70,10 +79,16 @@ export interface ProfileListRow {
   hasVisiblePortrait: boolean;
   updatedAt: string;
   /**
+   * Aperçu de la carte — grade, classe, faction, yeux — produit par la MÊME
+   * règle que le dossier : sans accès, un état (« ??? » / « Inconnu ») et
+   * rien d'autre ; avec accès, le libellé.
+   */
+  preview: Record<PreviewFieldKey, ProfileFieldView>;
+  /**
    * Pourquoi le lecteur voit ce dossier — le lecteur ne doit pas se le
    * demander. `null` s'il ne le voit pas, ou le voit par fonction.
    */
-  accessOrigin: GrantSource | null;
+  accessOrigin: AccessOrigin | null;
   /** Chefs/agents : état d'une demande de leurs groupes, s'il y en a une */
   accessBadge: "pending" | "refused" | null;
   /** Modération uniquement */
@@ -126,7 +141,7 @@ export async function listProfiles(
 
   if (protectedFilterRequested) {
     if (!viewer.canViewAll) {
-      where.id = { in: [...viewer.grantedProfileIds, ...viewer.createdProfileIds] };
+      where.id = { in: [...viewer.visibleProfileIds] };
     }
     if (filters.factionId) where.factionId = filters.factionId;
     if (filters.rankId) where.rankId = filters.rankId;
@@ -146,17 +161,24 @@ export async function listProfiles(
       ...(filters.traitOptionIds ?? []),
     ].filter(Boolean);
     for (const optionId of traitIds) and.push({ traits: { some: { optionId } } });
-    if (and.length > 0) where.AND = and;
 
     if (filters.minIntel && filters.minIntel > 0) {
-      where.fieldIntel = { some: { knowledgeState: "KNOWN" } };
+      // Le SEUIL demandé, pas « au moins un » : le filtre ne doit pas mentir.
+      const grouped = await prisma.characterFieldIntel.groupBy({
+        by: ["profileId"],
+        where: { knowledgeState: "KNOWN" },
+        _count: { profileId: true },
+        having: { profileId: { _count: { gte: Math.trunc(filters.minIntel) } } },
+      });
+      and.push({ id: { in: grouped.map((g) => g.profileId) } });
     }
+    if (and.length > 0) where.AND = and;
   }
 
   // Filtre d'accès pour chefs/agents (basé sur LEURS groupes uniquement)
   if (!viewer.canViewAll && filters.access) {
     if (filters.access === "granted") {
-      where.id = { in: [...viewer.grantedProfileIds, ...viewer.createdProfileIds] };
+      where.id = { in: [...viewer.visibleProfileIds] };
     } else {
       where.purchaseRequests = {
         some: {
@@ -188,6 +210,7 @@ export async function listProfiles(
       archivedAt: true,
       imageMime: true,
       updatedAt: true,
+      ...previewSelect,
       _count: { select: { fieldIntel: true, images: { where: { deletedAt: null } } } },
       // Octrois des groupes du lecteur seulement : de quoi décider et dire
       // POURQUOI il voit, sans charger ceux des autres groupes.
@@ -237,7 +260,11 @@ export async function listProfiles(
       lastName: profile.characterLastName,
       canViewValues: canView,
       hasVisiblePortrait: canView && (profile._count.images > 0 || profile.imageMime != null),
-      updatedAt: profile.updatedAt.toISOString(),
+      // Sans accès, l'horodatage exact dirait QUAND un renseignement vient
+      // d'être ajouté (croisé avec une clôture de mission, par ex.) : on
+      // arrondit au jour pour les lecteurs non autorisés.
+      updatedAt: canView ? profile.updatedAt.toISOString() : dayOf(profile.updatedAt),
+      preview: serializePreview(profile, canView),
       accessOrigin: decision.origin,
       accessBadge,
       ...(viewer.canViewAll
@@ -450,10 +477,15 @@ export async function getDossierDetail(
   // docs/PROFILE_VISIBILITY.md), et motive la demande d'accès. Il ne doit en
   // revanche JAMAIS voisiner un autre compte (nombre de champs « connus », par
   // ex.) : par soustraction, la différence dirait combien de champs sont
-  // « Aucun » ou « contradictoire ».
-  const sealedCount = profile.fieldIntel.filter(
-    (row) => row.knowledgeState !== "UNKNOWN",
-  ).length;
+  // « Aucun » ou « contradictoire ». Il est dérivé du SÉRIALISEUR — la même
+  // source de vérité que les « ??? » affichés : compter les lignes d'intel à
+  // part donnerait un second nombre, et la différence parlerait.
+  const sealedForCount = canView
+    ? serializeDossier(profile, viewer, false, rpConfig)
+    : dossier;
+  const sealedCount =
+    Object.values(sealedForCount.fields).filter((field) => field.displayState === "REDACTED").length +
+    (sealedForCount.gallery.state === "REDACTED" ? 1 : 0);
   // Dernier tarif consenti : MODÉRATION seulement. Pour un lecteur sans accès,
   // c'est un renseignement sur les AUTRES groupes — lequel a acheté, et à quel
   // prix. Le chef a désormais l'estimation du barème comme base de

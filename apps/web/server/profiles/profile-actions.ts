@@ -106,16 +106,19 @@ export async function quickCreateProfileAction(raw: unknown): Promise<ProfileAct
 
   // ── Groupe propriétaire ──
   // Un seul groupe : déduit. Plusieurs : le formulaire doit l'avoir demandé.
-  // Modération : peut créer sans groupe (dossier de la Toile elle-même).
+  // Modération : sans groupe explicite, le dossier appartient à la TOILE
+  // (aucun groupe) — jamais, par défaut, au groupe personnel du modérateur :
+  // une cible ouverte depuis une mission deviendrait sinon la propriété de
+  // son groupe, avec droit d'écriture pour tous ses membres.
   let ownerGroupId: string | null = null;
   if (parsed.data.groupId) {
     if (!viewer.groupIds.includes(parsed.data.groupId) && !viewer.canManage) {
       return { ok: false, error: "Vous n'appartenez pas à ce groupe." };
     }
     ownerGroupId = parsed.data.groupId;
-  } else if (viewer.groupIds.length === 1) {
+  } else if (!viewer.canManage && viewer.groupIds.length === 1) {
     ownerGroupId = viewer.groupIds[0]!;
-  } else if (viewer.groupIds.length > 1 && !viewer.canManage) {
+  } else if (!viewer.canManage && viewer.groupIds.length > 1) {
     return { ok: false, error: "Précisez pour quel groupe vous ouvrez ce dossier." };
   }
   if (!(await canUseSourceMission(current, parsed.data.sourceMissionId, ownerGroupId))) {
@@ -818,7 +821,10 @@ export async function addTechniqueAction(raw: unknown): Promise<ProfileActionRes
     action: "profile.technique_added",
     resourceType: "characterProfile",
     resourceId: parsed.data.profileId,
-    newValues: { techniqueId: technique.id, name: parsed.data.name },
+    // Jamais le NOM de la technique : c'est une valeur vendue, et le journal
+    // d'audit est lisible plus largement que les dossiers. L'id suffit à
+    // remonter à la ligne ; la révision (modération) garde le détail.
+    newValues: { techniqueId: technique.id },
     ...meta,
   });
   revalidatePath(`/profils/${parsed.data.profileId}`);
@@ -841,7 +847,8 @@ export async function deleteTechniqueAction(techniqueId: string): Promise<Profil
     action: "profile.technique_removed",
     resourceType: "characterProfile",
     resourceId: technique.profileId,
-    oldValues: { name: technique.name },
+    // Même règle qu'à l'ajout : l'id, jamais le nom (valeur vendue)
+    oldValues: { techniqueId },
     ...meta,
   });
   revalidatePath(`/profils/${technique.profileId}`);

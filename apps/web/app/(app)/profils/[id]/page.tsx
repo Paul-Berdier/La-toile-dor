@@ -4,12 +4,14 @@ import {
   PROFILE_FIELD_LABELS,
   CONFIDENCE_LABELS,
   GRANT_SOURCE_LABELS,
+  KNOWLEDGE_LABELS,
   type GrantSource,
   type IntelConfidenceCode,
+  type ProfileKnowledge,
 } from "@toile/shared";
 import { requireUser } from "@/lib/session";
 import { getDossierDetail, type RelationView } from "@/server/profiles/queries";
-import { DossierRow, FieldValue, SwatchValue, swatchesOf } from "@/components/profils/field-value";
+import { DossierRow, FieldValue, Redacted, SwatchValue, swatchesOf } from "@/components/profils/field-value";
 import { RequestAccessPanel, RevokeGrantButton } from "@/components/profils/request-access";
 import { OriginBadge } from "@/components/profils/dossier-card";
 import { ProfileGallery } from "@/components/profils/gallery";
@@ -48,9 +50,10 @@ export default async function DossierPage({
   // sombre : il n'y a rien à lire.
   const open = dossier.canViewValues;
   const tone: "dark" | "parchment" = open ? "parchment" : "dark";
+  // `scroll-mt` : la navigation collante ne doit pas recouvrir le titre visé
   const sectionCls = open
-    ? "border border-parchment-deep bg-parchment p-5 text-parchment-text shadow-card"
-    : "border border-border-default bg-raised p-5";
+    ? "scroll-mt-14 border border-parchment-deep bg-parchment p-5 text-parchment-text shadow-card"
+    : "scroll-mt-14 border border-border-default bg-raised p-5";
   // Sur parchemin, les titres sont à l'encre de sceau (rouge sombre) :
   // l'or manque de contraste sur papier clair.
   const headingCls = open
@@ -93,18 +96,33 @@ export default async function DossierPage({
             />
           ) : (
             <div
+              role="img"
               aria-label={
                 dossier.image.displayState === "REDACTED"
-                  ? "Portrait connu mais confidentiel"
+                  ? "Portrait confidentiel"
                   : "Portrait non renseigné"
               }
-              className={`flex h-32 w-24 shrink-0 flex-col items-center justify-center gap-1 border font-display text-2xl ${
+              title={
+                dossier.image.displayState === "REDACTED"
+                  ? "La Toile détient un portrait — image confidentielle"
+                  : "Aucun portrait connu"
+              }
+              className={`flex h-32 w-24 shrink-0 flex-col items-center justify-center gap-1 border font-display ${
                 dossier.image.displayState === "REDACTED"
                   ? "border-gold-dim bg-[repeating-linear-gradient(45deg,transparent,transparent_5px,rgba(184,150,62,0.12)_5px,rgba(184,150,62,0.12)_10px)] text-gold"
                   : "border-border-default bg-elevated text-ink-faint"
               }`}
             >
-              {dossier.image.displayState === "REDACTED" ? "???" : "諜"}
+              {dossier.image.displayState === "REDACTED" ? (
+                <>
+                  <span aria-hidden className="font-mono-toile text-xl tracking-[0.2em]">???</span>
+                  <span aria-hidden className="font-mono-toile text-[0.5rem] uppercase tracking-widest text-gold-dim">
+                    Image confidentielle
+                  </span>
+                </>
+              ) : (
+                <span aria-hidden className="text-2xl">諜</span>
+              )}
             </div>
           )}
           <div className="min-w-0 flex-1">
@@ -126,6 +144,12 @@ export default async function DossierPage({
                 <span className="ml-1.5">{f.lastName.displayValue}</span>
               )}
             </p>
+            {/* Grade · Classe — la ligne qui situe le ninja d'un coup d'œil */}
+            <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-ink-muted">
+              <FieldValue field={f.rank} compact />
+              <span aria-hidden className="text-ink-faint">·</span>
+              <FieldValue field={f.ninjaClass} compact />
+            </p>
             {detail.ownerGroupName && (
               <p className="mt-1 text-[0.7rem] text-ink-faint">
                 Dossier ouvert par le groupe <span className="text-ink-muted">{detail.ownerGroupName}</span>
@@ -137,7 +161,6 @@ export default async function DossierPage({
               {([
                 ["État", f.lifeStatus],
                 ["Faction", f.faction],
-                ["Grade", f.rank],
               ] as const).map(([labelText, field]) => (
                 <div key={labelText} className="flex shrink-0 items-center gap-1.5">
                   <dt className="whitespace-nowrap text-ink-faint">{labelText} :</dt>
@@ -145,10 +168,13 @@ export default async function DossierPage({
                 </div>
               ))}
             </dl>
-            <p className="mt-2 whitespace-nowrap font-mono-toile text-[0.6rem] text-ink-faint">
-              Mise à jour : {new Date(dossier.updatedAt).toLocaleString("fr-FR")}
+            <p className="mt-2 font-mono-toile text-[0.6rem] text-ink-faint">
+              Mise à jour :{" "}
+              {open
+                ? new Date(dossier.updatedAt).toLocaleString("fr-FR")
+                : new Date(dossier.updatedAt).toLocaleDateString("fr-FR")}
               {detail.completion && (
-                <span className="ml-3" title="Part des champs renseignés">
+                <span className="ml-3 whitespace-nowrap" title="Part des champs renseignés">
                   · complétude {Math.round((detail.completion.known / detail.completion.total) * 100)} %
                 </span>
               )}
@@ -172,10 +198,17 @@ export default async function DossierPage({
           hasAside ? "lg:grid-cols-[1fr_18rem]" : "lg:grid-cols-1"
         }`}
       >
-        <div className="space-y-5">
+        {/* min-w-0 : sans lui, les ancres `whitespace-nowrap` de la navigation
+            imposent leur largeur min-content à la colonne de grille, et toute
+            la page déborde horizontalement sur mobile. */}
+        <div className="min-w-0 space-y-5">
           {/* Navigation entre sections : ancres (accessibles, sans JS), collante sur grand écran */}
           <nav aria-label="Sections du dossier" className="sticky top-0 z-10 -mx-1 flex gap-1 overflow-x-auto bg-base/95 px-1 py-2 backdrop-blur">
-            {SECTION_NAV.filter((s) => s.id !== "renseignement" || detail.access.canContribute).map((s) => (
+            {SECTION_NAV.filter((s) =>
+              s.id === "renseignement" ? detail.access.canContribute
+              : s.id === "historique" ? detail.access.canView
+              : true,
+            ).map((s) => (
               <a key={s.id} href={`#${s.id}`} className="whitespace-nowrap border border-border-default px-2 py-1 text-[0.7rem] uppercase tracking-wider text-ink-faint hover:border-gold hover:text-gold">
                 {s.label}
               </a>
@@ -222,7 +255,7 @@ export default async function DossierPage({
               {(["hairColor", "skinTone", "eyeColor"] as const).map((key) => (
                 <DossierRow key={key} label={PROFILE_FIELD_LABELS[key]} field={f[key]} tone={tone}>
                   {f[key].displayState === "VISIBLE" ? (
-                    <SwatchValue swatches={swatchesOf(f[key].value)} label={f[key].displayValue} tone={tone} />
+                    <SwatchValue swatches={swatchesOf(f[key].value)} label={f[key].displayValue} tone={tone} confidence={f[key].confidence} />
                   ) : undefined}
                 </DossierRow>
               ))}
@@ -339,14 +372,7 @@ export default async function DossierPage({
                   {relations.map((rel) => (
                     <li key={`list-${rel.relationId}`} className="flex items-baseline justify-between gap-3">
                       <span className={`text-[0.7rem] uppercase tracking-wider ${open ? "text-parchment-text/60" : "text-ink-faint"}`}>
-                        {rel.typeVisible ? rel.groupLabel : (
-                          <span
-                            aria-label="Lien connu mais confidentiel"
-                            className="inline-block border border-gold-dim bg-obsidian px-1.5 font-mono-toile text-[0.65rem] tracking-widest text-gold-dim"
-                          >
-                            ▮▮▮
-                          </span>
-                        )}
+                        {rel.typeVisible ? rel.groupLabel : <Redacted compact />}
                       </span>
                       <Link href={`/profils/${rel.related.id}`} className={open ? "text-parchment-text hover:text-blood" : "text-ink hover:text-gold"}>
                         {rel.related.firstName}
@@ -409,24 +435,55 @@ export default async function DossierPage({
                   <MyContributions rows={detail.contributions.mine} />
                 </div>
               )}
-              {detail.history.length > 0 && (
-                <details className="mt-4">
-                  <summary className={`cursor-pointer text-[0.7rem] uppercase tracking-wider ${open ? "text-parchment-text/60 hover:text-blood" : "text-ink-faint hover:text-gold"}`}>
-                    Historique des mises à jour ({detail.history.length})
-                  </summary>
-                  <ul className="mt-2 space-y-1 text-[0.7rem]">
-                    {detail.history.map((h) => (
-                      <li key={h.id} className={open ? "text-parchment-text/80" : "text-ink-muted"}>
-                        <span className="font-mono-toile">{new Date(h.createdAt).toLocaleString("fr-FR")}</span>
-                        {" — "}<span className={open ? "text-parchment-text" : "text-ink"}>{h.fieldLabel}</span>
-                        {h.authorName && <span className={open ? "text-parchment-text/60" : "text-ink-faint"}> · {h.authorName}</span>}
-                        {h.sourceMissionCode && <span className={open ? "text-parchment-text/60" : "text-ink-faint"}> · mission {h.sourceMissionCode}</span>}
-                        {h.confidence && <span className={open ? "text-parchment-text/60" : "text-ink-faint"}> · {CONFIDENCE_LABELS[h.confidence as IntelConfidenceCode] ?? h.confidence}</span>}
-                        {h.justification && <span className={open ? "text-parchment-text/60" : "text-ink-faint"}> — {h.justification}</span>}
-                      </li>
-                    ))}
-                  </ul>
-                </details>
+            </section>
+          )}
+
+          {/* Historique du renseignement (§45) : qui, quand, pourquoi, depuis
+              quelle mission — pour qui VOIT le dossier. Les sources qu'un
+              lecteur n'a pas le droit de connaître (mission, auteur d'un
+              autre groupe) ont été retirées côté serveur. */}
+          {detail.access.canView && (
+            <section className={sectionCls} id="historique">
+              <h2 className={headingCls}>Historique du renseignement</h2>
+              {detail.history.length === 0 ? (
+                <p className={`text-xs italic ${open ? "text-parchment-text/50" : "text-ink-faint"}`}>
+                  Aucune mise à jour consignée depuis l&rsquo;ouverture du dossier.
+                </p>
+              ) : (
+                <ol className={`relative ml-2 border-l pl-4 ${open ? "border-parchment-deep" : "border-border-default"}`}>
+                  {detail.history.map((h) => (
+                    <li key={h.id} className="relative mb-3 last:mb-0">
+                      <span
+                        aria-hidden
+                        className={`absolute -left-[1.3rem] top-1.5 h-2 w-2 border ${open ? "border-blood bg-parchment" : "border-gold bg-base"}`}
+                      />
+                      <p className={`font-mono-toile text-[0.65rem] ${open ? "text-parchment-text/60" : "text-ink-faint"}`}>
+                        {new Date(h.createdAt).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}
+                      </p>
+                      <p className={`text-sm ${open ? "text-parchment-text" : "text-ink"}`}>
+                        {h.fieldLabel}
+                        {h.confidence && (
+                          <span className={`ml-2 text-[0.65rem] uppercase tracking-wider ${open ? "text-parchment-text/60" : "text-ink-faint"}`}>
+                            {CONFIDENCE_LABELS[h.confidence as IntelConfidenceCode] ?? h.confidence}
+                          </span>
+                        )}
+                      </p>
+                      {(h.sourceMissionCode || h.authorName || h.justification) && (
+                        <p className={`text-xs ${open ? "text-parchment-text/70" : "text-ink-muted"}`}>
+                          {h.sourceMissionCode && <span>Mission {h.sourceMissionCode}</span>}
+                          {h.sourceMissionCode && h.authorName && " · "}
+                          {h.authorName && <span>{h.authorName}</span>}
+                          {h.justification && (
+                            <span className={open ? "text-parchment-text/60" : "text-ink-faint"}>
+                              {(h.sourceMissionCode || h.authorName) && " — "}
+                              {h.justification}
+                            </span>
+                          )}
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ol>
               )}
             </section>
           )}
@@ -448,7 +505,7 @@ export default async function DossierPage({
                 {internal.intel.map((row) => (
                   <li key={row.fieldKey}>
                     · {PROFILE_FIELD_LABELS[row.fieldKey as keyof typeof PROFILE_FIELD_LABELS] ?? row.fieldKey}
-                    {" — "}{row.knowledgeState}
+                    {" — "}{KNOWLEDGE_LABELS[row.knowledgeState as ProfileKnowledge] ?? row.knowledgeState}
                     {row.confidence && ` · ${CONFIDENCE_LABELS[row.confidence as IntelConfidenceCode]}`}
                     {row.sourceMissionCode && ` · mission ${row.sourceMissionCode}`}
                     {row.observedAtRp && ` · observé : ${row.observedAtRp}`}
@@ -469,16 +526,20 @@ export default async function DossierPage({
           )}
         </div>
 
-        {/* Colonne latérale (rendue uniquement si elle a du contenu) */}
-        <aside className={`space-y-5 ${hasAside ? "" : "hidden"}`}>
+        {/* Colonne latérale (rendue uniquement si elle a du contenu). Sur un
+            dossier SCELLÉ, elle passe en tête sur mobile : l'explication et la
+            demande d'accès ne doivent pas se trouver sous vingt « ??? ». */}
+        <aside className={`min-w-0 space-y-5 ${hasAside ? "" : "hidden"} ${open ? "" : "order-first lg:order-none"}`}>
           {/* Un dossier possédé n'affiche JAMAIS d'invitation à le racheter */}
           {dossier.canViewValues && !viewer.canViewAll ? (
             <p className="border border-gold-dim bg-gold-faint/20 px-3 py-2 text-xs text-gold">
-              Votre groupe possède ce dossier : les informations connues vous sont ouvertes.
+              {detail.access.origin === "MISSION_TARGET"
+                ? "Ce dossier est lié à une mission en cours de votre groupe : il vous est ouvert le temps de la mission."
+                : "Votre groupe possède ce dossier : les informations connues vous sont ouvertes."}
             </p>
           ) : (
             !viewer.canViewAll && (
-              <section className="border border-border-gold bg-raised p-4">
+              <section id="acces" className="scroll-mt-20 border border-border-gold bg-raised p-4">
                 <div className="mb-3 flex items-center gap-3">
                   <SealGlyph />
                   <div>
@@ -500,6 +561,7 @@ export default async function DossierPage({
                     </p>
                     <p className="mt-1 font-mono-toile text-lg text-gold">
                       <span aria-hidden className="mr-1 text-sm text-gold-dim">両</span>
+                      {detail.estimate.scope === "public" && <span aria-label="environ">≈ </span>}
                       {detail.estimate.price.toLocaleString("fr-FR")}
                     </p>
                     {/* Le détail n'existe que dans la forme « full », servie
@@ -545,18 +607,7 @@ export default async function DossierPage({
                     Une demande de votre groupe attend la décision d&rsquo;un tisseur.
                   </p>
                 ) : requestableGroups.length > 0 ? (
-                  <>
-                    {detail.lastPrice != null && (
-                      <p className="mb-3 text-xs text-ink-muted">
-                        Dernier tarif consenti pour ce dossier :{" "}
-                        <span className="font-mono-toile text-gold">
-                          {detail.lastPrice.toLocaleString("fr-FR")} ryōs
-                        </span>
-                        . Le tisseur fixe le prix définitif.
-                      </p>
-                    )}
-                    <RequestAccessPanel profileId={dossier.id} groups={requestableGroups} />
-                  </>
+                  <RequestAccessPanel profileId={dossier.id} groups={requestableGroups} />
                 ) : (
                   <p className="text-xs leading-relaxed text-ink-muted">
                     Seuls les chefs de groupe peuvent négocier l&rsquo;ouverture d&rsquo;un
@@ -619,6 +670,7 @@ const SECTION_NAV = [
   { id: "relations", label: "Relations" },
   { id: "analyse", label: "Analyse" },
   { id: "renseignement", label: "Renseignement" },
+  { id: "historique", label: "Historique" },
 ] as const;
 
 /** Titre de section avec, pour qui le peut, le lien « Modifier » vers la bonne rubrique. */
@@ -660,7 +712,7 @@ function RelationNode({ rel }: { rel: RelationView }) {
     >
       {rel.related.firstName}
       <span className="ml-1 text-[0.6rem] text-ink-faint">
-        {rel.typeVisible ? rel.groupLabel.toLowerCase() : "???"}
+        {rel.typeVisible ? rel.groupLabel.toLowerCase() : <Redacted compact />}
       </span>
     </Link>
   );

@@ -98,6 +98,111 @@ function optionValue(option: {
 }
 
 /**
+ * Construit la vue d'UN champ pour UN lecteur. C'est ici, et seulement ici,
+ * que la valeur réelle entre dans l'objet — et uniquement si le lecteur y a
+ * droit. Partagée par le dossier complet et par l'aperçu de la liste, pour
+ * qu'une carte ne puisse jamais dire plus que le dossier.
+ */
+export function buildFieldView(
+  key: ProfileFieldKey,
+  intelState: ProfileKnowledge | undefined,
+  raw: { value: unknown; label: string } | null,
+  canView: boolean,
+  confidence?: string | null,
+): ProfileFieldView {
+  // Absence de ligne d'intel : une valeur présente vaut KNOWN, sinon UNKNOWN
+  const knowledge: ProfileKnowledge = intelState ?? (raw ? "KNOWN" : "UNKNOWN");
+  // Donnée déclarée connue mais absente (sécurité) → traiter comme inconnue
+  const effective: ProfileKnowledge = knowledge === "KNOWN" && !raw ? "UNKNOWN" : knowledge;
+
+  // Le nom est PUBLIC (il figure dans le titre) : visible de tous dès qu'il
+  // est connu. Les autres champs suivent la décision d'accès.
+  const resolved = resolveFieldDisplay(effective, canView || isPublicProfileField(key));
+  const view: ProfileFieldView = {
+    key,
+    displayState: resolved.displayState,
+    displayValue: resolved.displayState === "VISIBLE" ? raw!.label : resolved.displayValue,
+  };
+  if (resolved.displayState === "VISIBLE") {
+    view.value = raw!.value;
+  }
+  if (canView && confidence) {
+    view.confidence = confidence as ProfileFieldView["confidence"];
+  }
+  return view;
+}
+
+/**
+ * Date tronquée au jour (UTC) — l'horodatage servi aux lecteurs SANS accès.
+ * À la minute, « mis à jour » croisé avec la clôture d'une mission dirait
+ * quel renseignement vient d'entrer dans un dossier scellé.
+ */
+export function dayOf(date: Date): string {
+  return `${date.toISOString().slice(0, 10)}T00:00:00.000Z`;
+}
+
+/** Champs résumés sur une carte de la liste : grade, classe, faction, yeux. */
+export const PREVIEW_FIELD_KEYS = ["rank", "ninjaClass", "faction", "eyeColor"] as const;
+export type PreviewFieldKey = (typeof PREVIEW_FIELD_KEYS)[number];
+
+/** Ce que la liste charge pour produire l'aperçu d'une carte. */
+export const previewSelect = {
+  ninjaClass: { select: { label: true } },
+  rank: { select: { label: true } },
+  faction: { select: { name: true } },
+  eyeColor: { select: { label: true, colorHex: true } },
+  eyeColorSecondary: { select: { label: true, colorHex: true } },
+  fieldIntel: {
+    where: { fieldKey: { in: [...PREVIEW_FIELD_KEYS] } },
+    select: { fieldKey: true, knowledgeState: true, confidence: true },
+  },
+} satisfies Prisma.CharacterProfileSelect;
+
+type PreviewRecord = Prisma.CharacterProfileGetPayload<{ select: typeof previewSelect }>;
+
+/**
+ * Aperçu d'un dossier pour sa carte : les MÊMES règles que le dossier complet
+ * (`buildFieldView`). Sans accès, chaque champ n'est qu'un état — « ??? » ou
+ * « Inconnu » — sans valeur ni identifiant.
+ */
+export function serializePreview(
+  profile: PreviewRecord,
+  canView: boolean,
+): Record<PreviewFieldKey, ProfileFieldView> {
+  const intelByKey = new Map(profile.fieldIntel.map((row) => [row.fieldKey, row]));
+  const raw: Record<PreviewFieldKey, { value: unknown; label: string } | null> = {
+    rank: profile.rank ? { value: profile.rank.label, label: profile.rank.label } : null,
+    ninjaClass: profile.ninjaClass
+      ? { value: profile.ninjaClass.label, label: profile.ninjaClass.label }
+      : null,
+    faction: profile.faction ? { value: profile.faction.name, label: profile.faction.name } : null,
+    eyeColor: profile.eyeColor
+      ? {
+          value: {
+            primary: { colorHex: profile.eyeColor.colorHex },
+            secondary: profile.eyeColorSecondary ? { colorHex: profile.eyeColorSecondary.colorHex } : null,
+          },
+          label: profile.eyeColorSecondary
+            ? `${profile.eyeColor.label} / ${profile.eyeColorSecondary.label}`
+            : profile.eyeColor.label,
+        }
+      : null,
+  };
+  const out = {} as Record<PreviewFieldKey, ProfileFieldView>;
+  for (const key of PREVIEW_FIELD_KEYS) {
+    const intel = intelByKey.get(key);
+    out[key] = buildFieldView(
+      key,
+      intel?.knowledgeState as ProfileKnowledge | undefined,
+      raw[key],
+      canView,
+      intel?.confidence,
+    );
+  }
+  return out;
+}
+
+/**
  * Sérialise un dossier pour UN lecteur. GARANTIE : lorsque le lecteur n'est
  * pas autorisé, aucune valeur réelle n'apparaît dans l'objet retourné —
  * seulement « Inconnu » ou « ??? » calculés.
@@ -227,28 +332,13 @@ export function serializeDossier(
 
   const buildField = (key: ProfileFieldKey): ProfileFieldView => {
     const intel = intelByKey.get(key);
-    const raw = rawValue(key);
-    // Absence de ligne d'intel : une valeur présente vaut KNOWN, sinon UNKNOWN
-    const knowledge: ProfileKnowledge =
-      (intel?.knowledgeState as ProfileKnowledge | undefined) ?? (raw ? "KNOWN" : "UNKNOWN");
-    // Donnée déclarée connue mais absente (sécurité) → traiter comme inconnue
-    const effective: ProfileKnowledge = knowledge === "KNOWN" && !raw ? "UNKNOWN" : knowledge;
-
-    // Le nom est PUBLIC (il figure dans le titre) : visible de tous dès qu'il
-    // est connu. Les autres champs suivent la décision d'accès.
-    const resolved = resolveFieldDisplay(effective, canView || isPublicProfileField(key));
-    const view: ProfileFieldView = {
+    return buildFieldView(
       key,
-      displayState: resolved.displayState,
-      displayValue: resolved.displayState === "VISIBLE" ? raw!.label : resolved.displayValue,
-    };
-    if (resolved.displayState === "VISIBLE") {
-      view.value = raw!.value;
-    }
-    if (canView && intel?.confidence) {
-      view.confidence = intel.confidence;
-    }
-    return view;
+      intel?.knowledgeState as ProfileKnowledge | undefined,
+      rawValue(key),
+      canView,
+      intel?.confidence,
+    );
   };
 
   const fields = {} as Record<ProfileFieldKey, ProfileFieldView>;
@@ -293,7 +383,7 @@ export function serializeDossier(
     firstName: profile.characterFirstName,
     canViewValues: canView,
     archived: profile.archivedAt != null,
-    updatedAt: profile.updatedAt.toISOString(),
+    updatedAt: canView ? profile.updatedAt.toISOString() : dayOf(profile.updatedAt),
     image,
     gallery,
     fields,

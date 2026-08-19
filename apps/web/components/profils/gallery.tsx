@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
+  DISPLAY_ARIA_LABELS,
   PROFILE_IMAGE_ACCEPT,
   PROFILE_IMAGE_MAX_BYTES,
   PROFILE_IMAGE_TYPE_LABELS,
@@ -52,11 +53,13 @@ export function ProfileGallery({
     return (
       <div
         role="img"
-        aria-label="Images connues mais confidentielles"
-        className="flex h-28 items-center justify-center border border-gold-dim bg-[repeating-linear-gradient(45deg,transparent,transparent_6px,rgba(184,150,62,0.10)_6px,rgba(184,150,62,0.10)_12px)]"
+        aria-label={DISPLAY_ARIA_LABELS.REDACTED}
+        title="La Toile détient des images de ce ninja — confidentielles sans accès au dossier"
+        className="flex h-28 flex-col items-center justify-center gap-1 border border-gold-dim bg-[repeating-linear-gradient(45deg,transparent,transparent_6px,rgba(184,150,62,0.10)_6px,rgba(184,150,62,0.10)_12px)]"
       >
-        <span className="font-mono-toile text-[0.65rem] uppercase tracking-[0.3em] text-gold">
-          封 Image confidentielle
+        <span aria-hidden className="font-mono-toile text-lg tracking-[0.2em] text-gold">???</span>
+        <span aria-hidden className="font-mono-toile text-[0.6rem] uppercase tracking-[0.3em] text-gold-dim">
+          封 Images confidentielles
         </span>
       </div>
     );

@@ -3,13 +3,18 @@
 import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
+  KNOWLEDGE_LABELS,
   PROFILE_FIELD_LABELS,
   canDeclareNoneForField,
+  isPublicProfileField,
+  resolveFieldDisplay,
   type ProfileFieldKey,
+  type ProfileFieldView,
 } from "@toile/shared";
 import { updateProfileAction, suggestReferenceAction } from "@/server/profiles/profile-actions";
 import { Button } from "@/components/ui/button";
 import { ReferencePicker } from "./reference-picker";
+import { FieldValue } from "./field-value";
 
 export interface RefOption {
   id: string;
@@ -97,10 +102,10 @@ const LIFE_OPTIONS = [
 ] as const;
 
 const KNOWLEDGE_CHOICES: { value: KnowledgeChoice; label: string; hint: string }[] = [
-  { value: "UNKNOWN", label: "Inconnu", hint: "La Toile ne possède pas cette information" },
-  { value: "KNOWN", label: "Valeur connue", hint: "Renseignement acquis" },
-  { value: "NONE_CONFIRMED", label: "Absence confirmée", hint: "Vérifié : il n'y en a pas" },
-  { value: "CONFLICTING", label: "Contradictoire", hint: "Renseignements incompatibles" },
+  { value: "UNKNOWN", label: KNOWLEDGE_LABELS.UNKNOWN, hint: "La Toile ne possède pas cette information" },
+  { value: "KNOWN", label: KNOWLEDGE_LABELS.KNOWN, hint: "Renseignement acquis" },
+  { value: "NONE_CONFIRMED", label: KNOWLEDGE_LABELS.NONE_CONFIRMED, hint: "Vérifié : il n'y en a pas" },
+  { value: "CONFLICTING", label: KNOWLEDGE_LABELS.CONFLICTING, hint: "Renseignements incompatibles" },
 ];
 
 const input =
@@ -1013,14 +1018,20 @@ function PermissionPreview({
     ] as const;
   }, [data, refs]);
 
-  /** Rendu exact des règles Inconnu / ??? / Aucun / Contradictoire. */
+  /**
+   * Rendu EXACT de la page dossier : la même résolution (`resolveFieldDisplay`)
+   * et le même composant (`FieldValue`) — l'aperçu ne doit pas mentir. Le
+   * nom est public : il reste lisible même pour un groupe sans accès.
+   */
   const render = (key: ProfileFieldKey, value: string, reveal: boolean) => {
-    const state = stateOf(key);
-    if (state === "UNKNOWN") return <span className="italic text-ink-faint">Inconnu</span>;
-    if (!reveal) return <span className="font-mono-toile text-gold">???</span>;
-    if (state === "NONE_CONFIRMED") return <span className="text-ink-muted">Aucun</span>;
-    if (state === "CONFLICTING") return <span className="text-blood-bright">Contradictoire</span>;
-    return <span className="text-ink-muted">{value || <span className="italic text-ink-faint">Inconnu</span>}</span>;
+    const state: KnowledgeChoice = stateOf(key) === "KNOWN" && !value ? "UNKNOWN" : stateOf(key);
+    const resolved = resolveFieldDisplay(state, reveal || isPublicProfileField(key));
+    const field: ProfileFieldView = {
+      key,
+      displayState: resolved.displayState,
+      displayValue: resolved.displayState === "VISIBLE" ? value : resolved.displayValue,
+    };
+    return <FieldValue field={field} compact />;
   };
 
   const Col = ({ title, reveal }: { title: string; reveal: boolean }) => (

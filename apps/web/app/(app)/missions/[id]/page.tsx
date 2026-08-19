@@ -24,6 +24,14 @@ import { ManageTeamButton } from "@/components/missions/manage-team";
 import { MissionAdminActions } from "@/components/missions/mission-admin-actions";
 import { MissionTargets } from "@/components/missions/mission-targets";
 import { getTargetIntelRule } from "@/server/missions/target-requirements";
+import {
+  canViewProfileValues,
+  decideAccessForGroup,
+  getProfileViewer,
+  toAccessTarget,
+} from "@/server/profiles/access";
+import { dossierInclude, serializeDossier } from "@/server/profiles/serializer";
+import { getRpTimeConfig } from "@/server/rp-config";
 import { PanelWatermark } from "@/components/shell/watermark";
 
 export const dynamic = "force-dynamic";
@@ -43,6 +51,8 @@ export default async function MissionDetailPage({
 
   const { mission, view, level, ctx } = detail;
   const streamer = await isStreamerMode();
+  // Accès aux dossiers des cibles : la même règle centrale que la page dossier
+  const profileViewer = await getProfileViewer(current);
   // Règle de renseignement en vigueur : sert à signaler les dossiers restés
   // vides avant la clôture, sans avoir à la deviner côté client.
   const targetIntelRule = await getTargetIntelRule();
@@ -127,18 +137,66 @@ export default async function MissionDetailPage({
     : [];
   // Le rapport nomme les cibles (identité réservée aux CHEFS des groupes
   // attribués et à la modération) : seul ce niveau de vue le dépose.
-  const showWizard =
+  const wizardEligible =
     reportOpen && (level === "leader" || level === "moderator") && reporterGroupId !== null;
-  const [reportRefs, reportDraft, reporterGroup] = showWizard
+  // Un groupe qui a déjà déposé son rapport final ne retrouve pas un wizard
+  // vierge au rechargement : il retrouve son rapport, déjà listé plus haut.
+  const finalReportRow = wizardEligible
+    ? await prisma.missionReport.findFirst({
+        where: { missionId: mission.id, reportingGroupId: reporterGroupId!, isFinal: true },
+        select: { submittedAt: true, authorId: true },
+      })
+    : null;
+  const finalReportAuthor = finalReportRow
+    ? await prisma.user.findUnique({ where: { id: finalReportRow.authorId }, select: { displayName: true } })
+    : null;
+  const finalReportDone = finalReportRow
+    ? { submittedAt: finalReportRow.submittedAt, authorName: finalReportAuthor?.displayName ?? null }
+    : null;
+  const showWizard = wizardEligible && !finalReportDone;
+  const [reportRefs, reportDraft, reporterGroup] = wizardEligible
     ? await Promise.all([
-        loadProfileRefs(),
-        prisma.missionReportDraft.findUnique({
-          where: { missionId_groupId: { missionId: mission.id, groupId: reporterGroupId! } },
-          select: { payload: true, updatedAt: true },
-        }),
+        showWizard ? loadProfileRefs() : null,
+        showWizard
+          ? prisma.missionReportDraft.findUnique({
+              where: { missionId_groupId: { missionId: mission.id, groupId: reporterGroupId! } },
+              select: { payload: true, updatedAt: true },
+            })
+          : null,
         prisma.group.findUnique({ where: { id: reporterGroupId! }, select: { name: true } }),
       ])
     : [null, null, null];
+  // §41 : « Valeur actuelle » par dossier cible. Pour un dossier que le groupe
+  // rapporteur VOIT, les libellés courants (jamais les structures) ; pour un
+  // dossier scellé, RIEN ne part — le client affichera « Confidentielle ».
+  const reporterCurrentValues = new Map<string, Record<string, string>>();
+  if (showWizard && reporterGroupId) {
+    const targetProfileIds = mission.targets
+      .map((t) => t.profileId)
+      .filter((id): id is string => Boolean(id));
+    if (targetProfileIds.length > 0) {
+      const profiles = await prisma.characterProfile.findMany({
+        where: { id: { in: targetProfileIds }, archivedAt: null },
+        include: { ...dossierInclude, accessGrants: { select: { groupId: true, sourceType: true, revokedAt: true } } },
+      });
+      const rpConfigForDossiers = await getRpTimeConfig();
+      for (const profile of profiles) {
+        // Au nom du GROUPE rapporteur : voir par un autre de ses groupes ne
+        // donne pas le droit d'étiqueter ce groupe-ci.
+        const canView =
+          profileViewer.canViewAll ||
+          decideAccessForGroup(profileViewer, toAccessTarget(profile), reporterGroupId).canView ||
+          profileViewer.missionTargetProfileIds.has(profile.id);
+        if (!canView) continue;
+        const dossier = serializeDossier(profile, profileViewer, true, rpConfigForDossiers);
+        const labels: Record<string, string> = {};
+        for (const [key, field] of Object.entries(dossier.fields)) {
+          labels[key] = field.displayValue;
+        }
+        reporterCurrentValues.set(profile.id, labels);
+      }
+    }
+  }
   const reportDraftPayload = reportDraft
     ? (missionReportPayloadSchema.safeParse(reportDraft.payload).data ?? null)
     : null;
@@ -217,7 +275,9 @@ export default async function MissionDetailPage({
       </header>
 
       <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_20rem]">
-        <div className="space-y-5">
+        {/* min-w-0 : les colonnes de grille ne doivent pas hériter du min-content
+            de leur contenu (codes, boutons nowrap) — sinon débordement mobile */}
+        <div className="min-w-0 space-y-5">
           {/* Résumé public */}
           {view.publicSummary && (
             <section className="border border-border-default bg-raised p-5">
@@ -344,6 +404,62 @@ export default async function MissionDetailPage({
             </section>
           )}
 
+          {/* Cibles — chef d'un groupe attribué : les dossiers des cibles lui
+              sont ouverts le temps de la mission (règle MISSION_TARGET), puis
+              acquis à la clôture. Lecture seule : rattacher ou retirer une
+              cible reste un acte de modération. */}
+          {level === "leader" && mission.targets.length > 0 && (
+            <section className="border border-border-default bg-raised p-4">
+              <h2 className="mb-1 font-display text-sm tracking-widest text-gold uppercase">
+                Dossiers des cibles
+              </h2>
+              <p className="mb-3 text-xs text-ink-faint">
+                Ouverts à votre groupe tant que la mission est en cours ; ils vous restent acquis si
+                elle est menée à son terme.
+              </p>
+              <ul className="space-y-2">
+                {mission.targets.map((target) => {
+                  const opened = target.profileId ? canViewProfileValues(profileViewer, target.profileId) : false;
+                  const name = target.profile
+                    ? [target.profile.characterFirstName, target.profile.characterLastName].filter(Boolean).join(" ")
+                    : target.label;
+                  return (
+                    <li key={target.id} className="flex flex-wrap items-center justify-between gap-2 border border-border-default bg-elevated px-3 py-2">
+                      <span className="min-w-0">
+                        <span className="text-sm text-ink">{mask(`CIB${target.id}`, name)}</span>
+                        {target.profile && (
+                          <span className="ml-1.5 font-mono-toile text-[0.65rem] text-ink-faint">{target.profile.code}</span>
+                        )}
+                        {target.profile?.title && (
+                          <span className="block truncate font-display text-xs text-gold/80">{target.profile.title}</span>
+                        )}
+                      </span>
+                      {target.profileId ? (
+                        <span className="flex items-center gap-2">
+                          <span
+                            className={`border px-1.5 py-0.5 text-[0.6rem] uppercase tracking-wider ${
+                              opened ? "border-copper/60 text-copper" : "border-border-default text-ink-faint"
+                            }`}
+                          >
+                            {opened ? "⟡ Ouvert à votre groupe" : "封 Dossier scellé"}
+                          </span>
+                          <Link
+                            href={`/profils/${target.profileId}`}
+                            className="font-mono-toile text-[0.7rem] text-gold underline-offset-2 hover:underline"
+                          >
+                            {opened ? "Ouvrir le dossier" : "Voir"}
+                          </Link>
+                        </span>
+                      ) : (
+                        <span className="text-[0.65rem] text-warning">sans dossier</span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          )}
+
           {/* Cibles et leur sort — modération : c'est ce qui met les dossiers
               à jour à la clôture et ouvre l'accès aux groupes engagés. */}
           {level === "moderator" && (
@@ -354,7 +470,9 @@ export default async function MissionDetailPage({
                 id: target.id,
                 profileId: target.profileId,
                 profileCode: target.profile?.code ?? null,
-                profileName: target.profile?.characterFirstName ?? null,
+                profileName: target.profile
+                  ? [target.profile.characterFirstName, target.profile.characterLastName].filter(Boolean).join(" ")
+                  : null,
                 label: target.label,
                 outcome: target.outcome,
                 note: target.note,
@@ -542,6 +660,19 @@ export default async function MissionDetailPage({
                   </button>
                 </form>
               )}
+              {finalReportDone && (
+                <div className="border-t border-border-gold pt-4">
+                  <p role="status" className="border border-gold bg-gold-faint/20 p-3 text-xs text-ink">
+                    <span className="font-display tracking-widest text-gold uppercase">Rapport final déposé</span>
+                    <span className="mt-1 block text-ink-muted">
+                      {reporterGroup?.name ?? "Votre groupe"} a déposé son rapport le{" "}
+                      {finalReportDone.submittedAt.toLocaleString("fr-FR")}
+                      {finalReportDone.authorName && ` (${finalReportDone.authorName})`}. La clôture et la prime
+                      relèvent des tisseurs.
+                    </span>
+                  </p>
+                </div>
+              )}
               {showWizard && reportRefs && reporterGroupId && (
                 <div className="border-t border-border-gold pt-4">
                   <h3 className="mb-1 font-display text-sm tracking-widest text-gold uppercase">
@@ -559,9 +690,14 @@ export default async function MissionDetailPage({
                     targets={mission.targets.map((t) => ({
                       id: t.id,
                       profileId: t.profileId,
-                      name: t.profile?.characterFirstName ?? t.label ?? "Cible",
+                      name: t.profile
+                        ? [t.profile.characterFirstName, t.profile.characterLastName].filter(Boolean).join(" ")
+                        : t.label ?? "Cible",
                       code: t.profile?.code ?? null,
                       outcome: t.outcome,
+                      note: t.note,
+                      canViewDossier: t.profileId ? reporterCurrentValues.has(t.profileId) : false,
+                      currentValues: t.profileId ? reporterCurrentValues.get(t.profileId) ?? null : null,
                     }))}
                     refs={reportRefs}
                     initialDraft={reportDraftPayload}
@@ -575,7 +711,7 @@ export default async function MissionDetailPage({
         </div>
 
         {/* Colonne latérale */}
-        <aside className="space-y-5">
+        <aside className="min-w-0 space-y-5">
           {/* Modération : attribution / gestion de l'équipe multi-groupes */}
           {level === "moderator" &&
             ["AVAILABLE", "CLAIM_PENDING", "ASSIGNED", "IN_PROGRESS"].includes(mission.status) && (
