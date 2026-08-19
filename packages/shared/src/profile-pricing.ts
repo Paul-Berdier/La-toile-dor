@@ -85,7 +85,10 @@ export const DEFAULT_PROFILE_PRICING: ProfilePricing = {
     clans: 900,
     faction: 800,
     rank: 700,
-    lastName: 500,
+    // Le nom est PUBLIC (il est dans le titre du dossier) : on ne vend pas ce
+    // que tout le monde lit. Présent au barème pour que la grille soit
+    // complète, à zéro pour que le prix soit juste.
+    lastName: 0,
     lifeStatus: 400,
     age: 300,
     image: 900, // un visage vaut cher quand il faut reconnaître quelqu'un

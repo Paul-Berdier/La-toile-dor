@@ -4,7 +4,12 @@
 
 1. Un **chef de groupe** ouvre un dossier qu'il ne possède pas et clique
    « Demander l'accès pour mon groupe ». S'il dirige plusieurs groupes, il
-   choisit lequel. Un **agent** ne peut pas créer de demande.
+   choisit lequel. Un **agent** ne peut pas créer de demande. **Aucun bouton
+   d'achat** n'apparaît — et le serveur refuse la demande — si le groupe a
+   **créé** le dossier (`createdByGroupId`) ou le possède déjà (octroi actif).
+   La page `/profils/mes-demandes` montre à un groupe ses demandes (avec la
+   réponse du tisseur et le prix), ses accès et leur origine, ses révocations
+   et le motif.
 2. La demande (`ProfilePurchaseRequest`) part en `PENDING`. Un index partiel
    `(profileId, groupId) WHERE status = 'PENDING'` interdit les doublons.
 3. Les modérateurs voient la demande sur `/profils/demandes` : dossier, groupe,
@@ -15,6 +20,19 @@
 5. À l'approbation, un `ProfileAccessGrant` est créé. Index partiel
    `(profileId, groupId) WHERE revokedAt IS NULL` : **un seul accès actif**,
    donc pas de double octroi même en cas de double clic.
+
+## Origine d'un accès (`sourceType`)
+
+| `sourceType` | Qui l'obtient | Affiché |
+|---|---|---|
+| `CREATED_BY_GROUP` | le groupe qui a ouvert le dossier | « ✓ Créé par votre groupe » |
+| `PURCHASED` | demande d'achat approuvée (`sourceId` = demande, `priceRyos`) | « ✓ Dossier acquis » |
+| `MODERATOR_GRANTED` | offert ou restauré par la modération | « ✓ Accès accordé » |
+| `MISSION_GRANTED` | groupes ayant engagé des agents, à la clôture (`sourceId` = mission) | « ✓ Gagné en mission » |
+
+Les accès antérieurs à la colonne ont été **backfillés** (`PURCHASED` s'ils
+portent une demande, migration `20260819100000`). La modération distingue ainsi
+un accès payé d'un accès gagné au prix du sang avant de révoquer.
 
 ## Ryōs — limite assumée
 
@@ -36,7 +54,12 @@ comptable → octroi), sans changer le reste.
   porté par le groupe, pas par la personne).
 - Un membre **retiré** du groupe perd l'accès **immédiatement** (testé en e2e).
 - Plusieurs groupes peuvent acheter le même dossier.
-- Un modérateur peut **révoquer** un accès à tout moment (`revokedAt`).
+- Un modérateur peut **révoquer** un accès payé ou accordé — avec un **motif
+  obligatoire** et une confirmation (`revokedAt`, `revokedReason`) ; le groupe
+  est prévenu avec le motif. Un accès `CREATED_BY_GROUP` **ne se révoque pas**
+  (archiver le dossier si besoin).
+- Un groupe acquéreur lit le dossier et peut **proposer** des renseignements
+  (contributions soumises à revue) ; il ne modifie pas le dossier lui-même.
 
 ## Jamais compris dans l'achat
 
@@ -55,6 +78,11 @@ transaction, et affichées dans les « Échos » de l'application (mode sans bot
 | `PROFILE_REQUEST_CREATED` | modérateurs | code, prénom, groupe, demandeur (pseudonyme public) |
 | `PROFILE_REQUEST_APPROVED` | chef demandeur | code, prénom, prix |
 | `PROFILE_REQUEST_REFUSED` | chef demandeur | code, prénom, motif |
-| `PROFILE_UPDATED` | groupes détenteurs | code, prénom — **jamais la nouvelle information** |
+| `PROFILE_UPDATED` | groupes détenteurs (créateur et acquéreurs) | code, **champ** modifié — jamais la nouvelle information |
+| `PROFILE_CONTRIBUTION_RECEIVED` | modération | code, champ proposé |
+| `PROFILE_CONTRIBUTION_REVIEWED` | contributeur | code, champ, décision, note — jamais la valeur en place |
 
-Aucune information protégée ne transite par une notification.
+Aucune information protégée ne transite par une notification. Le **prix
+conseillé** (barème `DEFAULT_PROFILE_PRICING`, réglable) n'est détaillé
+(nombre de renseignements, grade, multiplicateur) qu'aux lecteurs qui voient
+déjà le dossier ; un acheteur potentiel ne reçoit que le montant.

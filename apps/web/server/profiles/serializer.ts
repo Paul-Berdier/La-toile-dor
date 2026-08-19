@@ -11,6 +11,7 @@ import {
   LIFE_STATUS_LABELS,
   SOURCE_SCOPE_LABELS,
   TRAIT_FIELD_TO_TYPE,
+  isPublicProfileField,
   PROFILE_IMAGE_TYPE_LABELS,
   type ProfileGalleryView,
   type ProfileImageType,
@@ -233,7 +234,9 @@ export function serializeDossier(
     // Donnée déclarée connue mais absente (sécurité) → traiter comme inconnue
     const effective: ProfileKnowledge = knowledge === "KNOWN" && !raw ? "UNKNOWN" : knowledge;
 
-    const resolved = resolveFieldDisplay(effective, canView);
+    // Le nom est PUBLIC (il figure dans le titre) : visible de tous dès qu'il
+    // est connu. Les autres champs suivent la décision d'accès.
+    const resolved = resolveFieldDisplay(effective, canView || isPublicProfileField(key));
     const view: ProfileFieldView = {
       key,
       displayState: resolved.displayState,

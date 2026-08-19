@@ -79,6 +79,15 @@ export function resolveFieldDisplay(
 
 // ── Clés de champ du dossier (CharacterFieldIntel.fieldKey) ──
 
+/**
+ * Champs PUBLICS : connus de tous dès qu'ils sont renseignés, sans accès au
+ * dossier — avec le titre et le prénom, ce sont les seules vraies valeurs
+ * qu'un lecteur sans accès reçoit. Le nom en fait partie : il figure déjà
+ * dans le titre (« Dossier — Akira Hoki »). Ils gardent un état de
+ * connaissance (on peut ignorer un nom) mais ne valent rien au barème.
+ */
+export const PUBLIC_FIELD_KEYS = ["lastName"] as const;
+
 export const PROFILE_FIELD_KEYS = [
   "lastName",
   "sex",
@@ -107,6 +116,11 @@ export const PROFILE_FIELD_KEYS = [
 ] as const;
 
 export type ProfileFieldKey = (typeof PROFILE_FIELD_KEYS)[number];
+
+/** Le champ est-il lisible par tous (sans accès au dossier) ? */
+export function isPublicProfileField(key: ProfileFieldKey): boolean {
+  return (PUBLIC_FIELD_KEYS as readonly string[]).includes(key);
+}
 
 export const PROFILE_FIELD_LABELS: Record<ProfileFieldKey, string> = {
   lastName: "Nom",

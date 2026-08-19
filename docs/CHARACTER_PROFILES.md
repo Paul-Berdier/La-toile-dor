@@ -7,6 +7,13 @@
 ## Principes
 
 - **Seul le prénom est obligatoire.** Tout le reste peut rester inconnu.
+- **Titre, prénom et nom sont publics** ; le titre est généré s'il manque
+  (« Dossier — Akira Hoki ») et peut être choisi à la création.
+- **Un dossier appartient à un groupe** (`createdByGroupId`) — pas à la personne
+  qui l'a ouvert. Le groupe reçoit un octroi `CREATED_BY_GROUP` ; tous ses
+  membres, présents et futurs, le voient et le complètent. La modération peut
+  ouvrir un dossier sans groupe (dossier de la Toile). Voir
+  [PROFILE_VISIBILITY.md](PROFILE_VISIBILITY.md) pour la règle d'accès unique.
 - Deux dossiers peuvent porter le même prénom — le prénom n'est jamais un
   identifiant. Chaque dossier reçoit `codeNumber` (compteur) et un code
   lisible `PRF-000142` généré automatiquement.
@@ -18,7 +25,9 @@
 
 | Table | Rôle |
 |---|---|
-| `CharacterProfile` | Le dossier : identité, apparence, affiliation, âge, analyse, notes internes |
+| `CharacterProfile` | Le dossier : identité, titre, groupe créateur, apparence (dont **yeux** : `eyeColorId` + `eyeColorSecondaryId` en hétérochromie, CHECK SQL), **classe** (`ninjaClassId`), affiliation, âge, analyse, notes internes |
+| `ProfileImage` | Galerie (portrait principal + pièces) — voir [PROFILE_IMAGES.md](PROFILE_IMAGES.md) |
+| `ProfileIntelContribution` | Renseignements proposés par les lecteurs autorisés — voir [PROFILE_INTEL_CONTRIBUTIONS.md](PROFILE_INTEL_CONTRIBUTIONS.md) |
 | `CharacterFieldIntel` | **État de connaissance par champ** (`fieldKey` → UNKNOWN/KNOWN/NONE_CONFIRMED/CONFLICTING) + confiance + mission source. L'absence de ligne vaut UNKNOWN |
 | `CharacterProfileTrait` | Liaison générique dossier ↔ référentiel (clans, natures, KG, styles, sous-styles, artefacts). Le type vient de l'option : filtrable comme six tables dédiées, sans duplication |
 | `CharacterSignatureTechnique` | Techniques propres — jutsu originaux (nom obligatoire, reste facultatif) |
@@ -49,8 +58,17 @@ chaîne. `CHECK (min <= max)`. Affichage : « 185 cm », « Entre 180 et 190 cm 
 
 ## Création
 
-- **Rapide** : bouton « Nouveau profil » → prénom seul → code généré, tous les
-  autres champs UNKNOWN, historique de création, dossier visible immédiatement.
+- **Qui** : tout membre d'un groupe actif (et la modération). Un seul groupe →
+  pré-sélectionné ; plusieurs → à choisir ; aucun → impossible (sauf modération,
+  dossier sans propriétaire).
+- **Rapide** : bouton « Nouveau dossier » → Prénom (obligatoire), Nom, Titre
+  (proposé), Groupe → « Créer rapidement » (ouvre le dossier) ou « Créer et
+  compléter » (ouvre le formulaire). Code généré, autres champs UNKNOWN,
+  historique de création, octroi `CREATED_BY_GROUP`.
+- **Une seule voie d'insertion** : `createOwnedProfile` /
+  `createProfileRecord` (`apps/web/server/profiles/create.ts`), utilisée par la
+  création rapide, les relations « nouveau proche », les cibles ajoutées depuis
+  une mission et les ninjas découverts en rapport.
 - **Doublons** : à la création, les dossiers dont le prénom normalisé
   **commence par** la saisie sont listés en avertissement (« Aki » fait
   ressortir « Akira »). Ni égalité stricte — qui ne signalerait presque
@@ -63,10 +81,42 @@ chaîne. `CHECK (min <= max)`. Affichage : « 185 cm », « Entre 180 et 190 cm 
   second — le doublon se repère avant la création, pas dans un message d'erreur
   après coup.
 - **Depuis une mission** : sur une mission attribuée/en cours/accomplie, le
-  bouton « Ajouter les renseignements au dossier » ouvre `/profils?mission=…`.
-  La mission est alors enregistrée comme source de chaque champ modifié.
-  Aucune donnée n'est appliquée automatiquement depuis un rapport texte : le
-  modérateur saisit et confirme les champs structurés.
+  bouton « Ajouter les renseignements au dossier » ouvre `/profils?mission=…`
+  (modération). Les **groupes engagés** passent par le rapport de fin de
+  mission en trois étapes — voir [MISSION_REPORTS.md](MISSION_REPORTS.md). La
+  mission est enregistrée comme source de chaque champ modifié.
+
+## Qui modifie quoi
+
+- **Modération** : tout, y compris les notes internes.
+- **Groupe créateur** : le formulaire complet (sauf notes internes), la galerie,
+  les techniques et relations ; il tranche aussi les contributions proposées sur
+  son dossier. Page `/profils/[id]/modifier` : `loadEditData(profileId, viewer)`
+  renvoie `null` à quiconque ne peut pas modifier — les valeurs et les notes ne
+  quittent jamais le serveur pour un lecteur qui ne le pourrait pas.
+- **Acquéreur** (achat, mission) : lecture, et **contributions** (« + Ajouter un
+  renseignement ») soumises à revue.
+- Chaque section du dossier porte un lien « Modifier » qui ouvre la bonne
+  rubrique du formulaire (`?section=identite|signalement|affiliation|capacites|combat|analyse`).
+
+## Classe et couleur des yeux
+
+- **Classe** (Soigneur / Traqueur / Ravageur / Défenseur) : référentiel
+  `NINJA_CLASS` administrable (pas un enum SQL) — la modération peut renommer
+  (le seed ne réécrase pas un libellé modifié, `preserveLabel`) ou ajouter. Une
+  seule classe principale en V1. Tarifée au barème comme une aptitude de combat.
+- **Couleur des yeux** : référentiel `EYE_COLOR` (Noir, Brun foncé, Brun,
+  Noisette, Ambre, Vert, Bleu, Gris, Rouge, Violet, Blanc, Doré, Autre) ; case
+  « Couleurs différentes (hétérochromie) » → Œil 1 / Œil 2, affiché « Bleu /
+  Vert ». **Un dôjutsu n'est pas une couleur d'yeux** : il se consigne dans les
+  techniques de clan. Un seul renseignement « yeux » au barème, quel que soit le
+  nombre d'iris.
+- Ajouter un champ de dossier impose de toucher **tous** les points de
+  couplage : `PROFILE_FIELD_KEYS`/`LABELS`, le sérialiseur (`rawValue`),
+  `edit-data.ts` (`inferKnown`, `EditFormData`), le formulaire,
+  `DEFAULT_PROFILE_PRICING.fieldValues` (test bloquant si une clé manque),
+  `updateProfileAction` (conflits, application, vidage) et les contributions
+  (`CONTRIBUTION_VALUE_SCHEMAS`, `describe/conflicts/applyContributionValue`).
 
 ## Saisie : un état par champ
 
@@ -202,7 +252,10 @@ son ancien code mène toujours au dossier fusionné.
 
 L'archivage est la voie normale. La suppression existe pour les dossiers
 ouverts par erreur ; elle exige de **recopier le code du dossier** et consigne
-dans l'audit ce qui a disparu (`profile.deleted` : code, prénom, nom).
+dans l'audit ce qui a disparu (`profile.deleted` : code, prénom, nom). Elle est
+**refusée** tant que des groupes ont **payé** l'accès (révoquer avec motif, ou
+archiver) ou que des missions visent ou citent le dossier (sinon cibles
+fantômes). La fusion, elle, emporte la galerie vers le survivant.
 
 Les dépendances (renseignements, traits, techniques, relations, révisions,
 demandes, accès) tombent en cascade. Les doublons qui redirigeaient vers le
@@ -224,13 +277,21 @@ dérivés à la lecture :
 | `CREATOR_OF` | Créateur de | Création de |
 | `SIBLING_OF` | Frère / sœur de | Frère / sœur de |
 
-## Portrait
+## Portrait et galerie
 
-Stocké en base (`imageData` / `imageMime`) comme les emblèmes de groupe — le
-système de fichiers Railway est éphémère. Servi par `/api/profils/[id]/image`,
-qui **revérifie les droits** : un portrait connu mais non acheté renvoie 404,
-jamais l'image. Formats PNG/JPEG/WEBP validés par **signature binaire**
-(le type déclaré ne suffit pas), 500 Ko maximum, cache `private, no-store`.
+Voir [PROFILE_IMAGES.md](PROFILE_IMAGES.md). Le portrait principal et la galerie
+vivent dans `ProfileImage` (octets en base) ; l'ancienne colonne `imageData`
+est conservée et encore servie à défaut. Routes gardées, 404 sans accès,
+validation par signature binaire, 2 Mo, `private, no-store`.
+
+## Historique et complétude
+
+Tout lecteur **autorisé** voit l'historique des mises à jour (champ, auteur,
+mission source, confiance, justification — jamais les valeurs brutes, qui
+restent côté modération) et un **score de complétude** (part des champs connus
+ou vérifiés absents). Ni l'un ni l'autre n'est calculé pour un lecteur sans
+accès : un second compte à côté du nombre de renseignements scellés parlerait
+par soustraction.
 
 ## Notes internes
 

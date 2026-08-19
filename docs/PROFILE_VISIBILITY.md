@@ -51,28 +51,76 @@ valeur réelle n'existe pas dans l'objet retourné, donc :
 - pas dans le payload RSC ;
 - pas dans une réponse d'API.
 
-Vérifié par `apps/web/e2e/profils.spec.ts` : le DOM **et** toutes les réponses
-réseau sont inspectés (build de production).
+Vérifié par `apps/web/e2e/profils.spec.ts` et `dossiers-refonte.spec.ts` : le
+DOM **et** toutes les réponses réseau sont inspectés (build de production), y
+compris pour la galerie (aucun identifiant d'image, aucune légende), les
+contributions (aucun indicateur de conflit pour le contributeur) et
+l'estimation (aucun grade pour un acheteur potentiel).
+
+Même discipline pour la **galerie** (`ProfileGalleryView` : sans accès, il n'y a
+pas de tableau `images` — `{ state: "REDACTED" }` tout court) et pour les
+**contributions** (`conflictsWithExisting` n'est sérialisé que si
+`access.canEdit`). Voir `PROFILE_IMAGES.md` et
+`PROFILE_INTEL_CONTRIBUTIONS.md`.
 
 ⚠ Rappel : en **mode développement**, React streame des valeurs de débogage.
 Les garanties valent pour `next build` + `next start`.
 
+## La règle d'accès est UNIQUE et centralisée
+
+Toute décision « ce lecteur voit-il / modifie-t-il ce dossier ? » est prise par
+`packages/shared/src/profile-access.ts` (pur, testé) :
+
+| Fonction | Vrai si… |
+|---|---|
+| `canViewCharacterProfile(viewer, profile)` | `profile.intel.view` **ou** membre du groupe créateur **ou** octroi actif (`ProfileAccessGrant.revokedAt = null`) pour l'un des groupes du lecteur |
+| `canEditCharacterProfile` | non archivé **et** (`profile.manage` **ou** membre du groupe créateur) |
+| `canContributeToCharacterProfile` | non archivé **et** `canView` |
+| `canAdministerCharacterProfile` | `profile.manage` |
+| `canCreateCharacterProfile` | `profile.manage` **ou** membre d'au moins un groupe actif |
+| `accessOrigin` | pourquoi il voit : `CREATED_BY_GROUP` > `PURCHASED` > `MODERATOR_GRANTED` > `MISSION_GRANTED` |
+
+Côté web, `apps/web/server/profiles/access.ts` charge le lecteur une fois par
+requête (`getProfileViewer`, groupes **actifs** seulement) et expose
+`decideAccess(viewer, target)`. Pages, actions serveur et routes API l'appellent
+toutes — aucune ne réimplémente la règle. Les routes API utilisent `getApiUser`
+(session valide **et** onboarding terminé), la même garde que les pages.
+
+**L'accès appartient au groupe, pas à la personne** : quitter le groupe fait
+perdre l'accès immédiatement ; le rejoindre le rend (e2e
+`dossiers-refonte.spec.ts`).
+
+## Ce qu'un lecteur SANS accès reçoit
+
+Exactement quatre vraies valeurs : **code, titre, prénom, nom**. Le nom est
+public (`PUBLIC_FIELD_KEYS`) parce qu'il figure dans le titre généré
+(« Dossier — Akira Hoki ») ; il garde un état de connaissance (on peut ignorer
+un nom) mais vaut **0** au barème. Tout le reste est absent du payload — pas
+de `value`, pas d'URL d'image, pas de nombre d'images ni de contributions, pas
+de nom de groupe propriétaire, pas de grade dans l'estimation (forme
+`{ scope: "public", price }` uniquement).
+
 ## Matrice des permissions
 
-| Action | Super-mod. | Modérateur | Chef de groupe | Agent |
-|---|:--:|:--:|:--:|:--:|
-| Voir la liste et les prénoms | ✔ | ✔ | ✔ | ✔ |
-| Voir toutes les valeurs | ✔ | ✔ | achat | achat |
-| Créer / modifier un dossier | ✔ | ✔ | — | — |
-| Portrait (route gardée) | ✔ | ✔ | achat | achat |
-| Notes internes, sources, historique | ✔ | ✔ | — | — |
-| Demander l'accès pour SON groupe | — | — | ✔ | — |
-| Approuver / refuser / révoquer | ✔ | ✔ | — | — |
-| Référentiels, fusion, archivage | ✔ | proposer | — | — |
+| Action | Super-mod. | Modérateur | Groupe créateur | Groupe acquéreur (achat / mission) | Sans accès |
+|---|:--:|:--:|:--:|:--:|:--:|
+| Voir la liste : code, titre, prénom, nom | ✔ | ✔ | ✔ | ✔ | ✔ |
+| Voir toutes les valeurs, galerie, historique | ✔ | ✔ | ✔ | ✔ | — |
+| Ouvrir un dossier (pour son groupe) | ✔ (sans groupe possible) | ✔ | ✔ tout membre | ✔ tout membre | ✔ si membre d'un groupe |
+| Modifier le dossier (formulaire, galerie) | ✔ | ✔ | ✔ | — | — |
+| Proposer un renseignement (contribution) | écrit direct | écrit direct | écrit direct | ✔ → revue | — |
+| Trancher une contribution | ✔ | ✔ | ✔ (sur son dossier) | — | — |
+| Notes internes | ✔ | ✔ | — | — | — |
+| Demander l'accès pour SON groupe | — | — | (déjà propriétaire) | (déjà acquis) | chef ✔ |
+| Approuver / refuser / révoquer (motivé) | ✔ | ✔ | — | — | — |
+| Référentiels (dont classes, yeux), fusion, suppression | ✔ | proposer | — | — | — |
 
 Permissions : `profile.manage`, `profile.intel.view`,
 `profile.purchase.review`, `profile.request.create`,
 `profile.reference.manage`, `profile.merge`. Toutes vérifiées **côté serveur**.
+L'interface dit toujours **pourquoi** on voit : « ✓ Créé par votre groupe »,
+« ✓ Dossier acquis », « ✓ Accès accordé », « ✓ Gagné en mission », ou « 封 Non
+acquis ».
 
 ## Pagination
 
@@ -84,25 +132,25 @@ recherche plutôt qu'à une limite d'affichage.
 Le total est compté avec les mêmes filtres que la liste : il ne révèle jamais
 l'existence d'un dossier hors de portée du lecteur.
 
-## Le nom de famille dans la liste
+## La liste : carte scellée vs carte acquise
 
-La liste affiche « Akira **Kaguya** » pour un lecteur autorisé, « Akira » seul
-sinon. Le nom est un renseignement comme un autre : la clé `lastName` n'existe
-**pas** dans la ligne envoyée à un lecteur sans accès (`ProfileListRow`), au
-même titre que `value` dans le sérialiseur du dossier. Rien n'est masqué en CSS.
+La liste affiche pour tous le **titre**, « Prénom Nom » et le code. Une carte
+**scellée** montre une silhouette, le sceau « 封 Non acquis » et les actions
+« Voir » / « Demander l'accès » ; une carte **acquise** montre le portrait, la
+raison de l'accès (« ✓ Créé par votre groupe »…) et « Ouvrir le dossier ».
+`hasVisiblePortrait` n'est vrai que pour un lecteur autorisé. Rien n'est masqué
+en CSS : ce qui n'est pas dans la ligne n'a pas quitté le serveur.
 
 ## Anti-fuite par les filtres
 
-Les filtres qui révéleraient une information protégée (faction, clan, état,
-grade) ne sont proposés **et appliqués** que pour la modération. Un chef ou un
-agent ne dispose que de filtres neutres : recherche par prénom/code, et état
-d'accès de ses propres groupes. Un utilisateur ne peut donc pas déduire la
-faction d'un dossier par différence de résultats ou par un compteur.
-
-La recherche **par nom de famille** obéit à la même règle : elle n'est ajoutée
-à la clause `OR` que pour `viewer.canViewAll`. Sans cette restriction, un
-lecteur pourrait deviner un nom protégé par essais successifs en observant les
-résultats.
+La recherche textuelle porte sur les **quatre champs publics** (titre, prénom,
+nom, code) pour tout le monde — chercher dessus ne révèle rien. Les filtres qui
+révéleraient une information protégée (faction, clan, grade, état, portrait,
+traits, volume de renseignements) ne sont **proposés** qu'à la modération, et
+pour tout autre lecteur `listProfiles` restreint d'abord l'ensemble aux
+dossiers qu'il voit déjà (`grantedProfileIds ∪ createdProfileIds`) avant de
+filtrer dedans : un dossier scellé n'est jamais dans la base de recherche d'un
+filtre protégé, donc pas de fuite par différence de résultats ni par compteur.
 
 Les filtres s'appliquent **au fil de la frappe** (`ProfileFilters`, temporisation
 de 250 ms puis `router.replace`) : l'URL reste partageable, l'historique ne se
