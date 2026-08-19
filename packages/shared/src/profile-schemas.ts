@@ -13,8 +13,23 @@ const firstNameSchema = z
   .regex(NAME_PATTERN, "Le prénom contient des caractères non autorisés.")
   .refine((v) => v.replace(/\s+/g, "").length > 0, "Le prénom ne peut pas être vide.");
 
+/**
+ * Création rapide : SEUL le prénom est obligatoire. Le nom, le titre et le
+ * groupe sont facultatifs — le titre est généré s'il manque, le groupe est
+ * déduit quand le créateur n'en a qu'un.
+ */
 export const profileQuickCreateSchema = z.object({
   firstName: firstNameSchema,
+  lastName: z
+    .string()
+    .trim()
+    .max(80)
+    .regex(NAME_PATTERN, "Le nom contient des caractères non autorisés.")
+    .optional()
+    .or(z.literal("")),
+  title: z.string().trim().max(120).optional().or(z.literal("")),
+  /** Groupe propriétaire — obligatoire pour un non-modérateur qui en a plusieurs */
+  groupId: z.string().cuid().optional(),
   sourceMissionId: z.string().cuid().optional(),
   /** true = ignorer l'avertissement de doublons et créer quand même */
   confirmDespiteDuplicates: z.boolean().default(false),

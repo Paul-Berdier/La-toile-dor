@@ -414,15 +414,22 @@ export default async function DossierPage({
                       <span aria-hidden className="mr-1 text-sm text-gold-dim">両</span>
                       {detail.estimate.price.toLocaleString("fr-FR")}
                     </p>
-                    <p className="text-[0.65rem] text-ink-faint">
-                      {detail.estimate.knownCount} renseignement
-                      {detail.estimate.knownCount > 1 ? "s" : ""}
-                      {detail.estimate.relationCount > 0 &&
-                        `, ${detail.estimate.relationCount} lien${detail.estimate.relationCount > 1 ? "s" : ""}`}
-                      {detail.estimate.gradeLabel &&
-                        ` · ${detail.estimate.gradeLabel} (×${detail.estimate.gradeMultiplier.toFixed(1)})`}
-                    </p>
-                    {viewer.canViewAll && (
+                    {/* Le détail n'existe que dans la forme « full », servie
+                        aux seuls lecteurs qui voient déjà le dossier. Un
+                        acheteur potentiel n'a que le montant : le nombre de
+                        renseignements ou le grade lui diraient ce qu'il
+                        vient précisément acheter. */}
+                    {detail.estimate.scope === "full" && (
+                      <p className="text-[0.65rem] text-ink-faint">
+                        {detail.estimate.knownCount} renseignement
+                        {detail.estimate.knownCount > 1 ? "s" : ""}
+                        {detail.estimate.relationCount > 0 &&
+                          `, ${detail.estimate.relationCount} lien${detail.estimate.relationCount > 1 ? "s" : ""}`}
+                        {detail.estimate.gradeLabel &&
+                          ` · ${detail.estimate.gradeLabel} (×${detail.estimate.gradeMultiplier.toFixed(1)})`}
+                      </p>
+                    )}
+                    {detail.estimate.scope === "full" && viewer.canViewAll && (
                       <details className="mt-2">
                         <summary className="cursor-pointer text-[0.65rem] text-ink-faint hover:text-gold">
                           Détail du calcul

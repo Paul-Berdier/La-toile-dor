@@ -19,6 +19,59 @@ async function akira() {
   });
 }
 
+test("un CHEF sans accès ne reçoit pas le grade par le panneau d'estimation", async ({
+  context,
+  page,
+}) => {
+  // Le lecteur le plus exposé : il voit le panneau « valeur estimée » (les
+  // agents ne le voient pas), et c'est là qu'une régression a un jour écrit le
+  // grade en clair — juste sous le même grade affiché « ??? ». Le test
+  // inspecte le DOM ET chaque réponse réseau, parce que la clé peut être
+  // absente de l'écran tout en voyageant dans la charge utile RSC.
+  const profile = await akira();
+  const grantedGroupIds = profile.accessGrants.map((g) => g.groupId);
+  const rank = await prisma.playerLevel.findUniqueOrThrow({
+    where: { id: profile.rankId! },
+    select: { label: true },
+  });
+  // demo-chief-3 dirige des groupes sans accès à ce dossier
+  const chiefGroups = await prisma.groupMember.findMany({
+    where: { userId: "demo-chief-3", isLeader: true },
+    select: { groupId: true },
+  });
+  expect(chiefGroups.some((g) => grantedGroupIds.includes(g.groupId))).toBe(false);
+
+  const bodies: string[] = [];
+  page.on("response", async (response) => {
+    const type = response.headers()["content-type"] ?? "";
+    if (type.includes("text") || type.includes("json") || type.includes("javascript")) {
+      bodies.push(await response.text().catch(() => ""));
+    }
+  });
+
+  await loginAs(context, "demo-chief-3");
+  await page.goto(`/profils/${profile.id}`);
+  // Le panneau d'estimation est bien là : c'est lui qu'on surveille
+  await expect(page.getByText(/valeur estimée/i)).toBeVisible();
+
+  // Le chef est lui-même gradé et son grade figure dans la barre latérale :
+  // on ne peut pas bannir le mot « Jonin » de la page. On cible donc la FORME
+  // exacte que produisait la fuite — « Jonin (×1.8) », le grade suivi de son
+  // multiplicateur — et les clés qui ne doivent exister que dans la forme
+  // complète de l'estimation.
+  const leakPattern = new RegExp(`${rank.label}\\s*\\(×`);
+  const html = await page.content();
+  expect(html, "le grade multiplié ne doit pas figurer dans le panneau").not.toMatch(leakPattern);
+  for (const body of bodies) {
+    expect(body).not.toMatch(leakPattern);
+    // Le nombre de renseignements et le détail du calcul sont des oracles :
+    // ces clés n'existent que dans la forme « full », jamais servie ici.
+    expect(body).not.toContain("knownCount");
+    expect(body).not.toContain("gradeLabel");
+    expect(body).not.toContain("gradeMultiplier");
+  }
+});
+
 test("un agent SANS accès voit le prénom, « Inconnu » et « ??? » — jamais les valeurs", async ({
   context,
   page,

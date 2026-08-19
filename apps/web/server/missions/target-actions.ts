@@ -3,8 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@toile/database";
 import { audit } from "@toile/auth";
-import { PERMISSIONS, normalizeRefLabel, formatProfileCode } from "@toile/shared";
+import { PERMISSIONS } from "@toile/shared";
 import { requireUser, requestMeta } from "@/lib/session";
+import { quickCreateProfileAction } from "@/server/profiles/profile-actions";
 
 export interface TargetActionResult {
   ok: boolean;
@@ -49,22 +50,21 @@ export async function addMissionTargetAction(input: {
   let profileId = input.profileId ?? null;
 
   if (!profileId && input.newProfileFirstName?.trim()) {
-    const firstName = input.newProfileFirstName.trim().replace(/\s+/g, " ");
-    const created = await prisma.$transaction(async (tx) => {
-      const draft = await tx.characterProfile.create({
-        data: {
-          code: `tmp-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
-          characterFirstName: firstName,
-          firstNameNorm: normalizeRefLabel(firstName),
-          createdById: current.session.userId,
-        },
-      });
-      return tx.characterProfile.update({
-        where: { id: draft.id },
-        data: { code: formatProfileCode(draft.codeNumber) },
-      });
+    // UNE seule voie de création, la même que partout ailleurs : groupe
+    // propriétaire, octroi CREATED_BY_GROUP, titre, détection de doublons,
+    // audit. Ce chemin contournait tout cela — un dossier ouvert depuis une
+    // mission n'avait ni propriétaire ni vérification de doublon.
+    const created = await quickCreateProfileAction({
+      firstName: input.newProfileFirstName,
+      sourceMissionId: mission.id,
+      // La modération ouvre souvent la cible d'une mission qui n'est celle
+      // d'aucun groupe : on ne bloque pas sur un doublon ici, on l'audite.
+      confirmDespiteDuplicates: true,
     });
-    profileId = created.id;
+    if (!created.ok || !created.profileId) {
+      return { ok: false, error: created.error ?? "L'ouverture du dossier a échoué." };
+    }
+    profileId = created.profileId;
   }
 
   if (!profileId && !input.label?.trim()) {

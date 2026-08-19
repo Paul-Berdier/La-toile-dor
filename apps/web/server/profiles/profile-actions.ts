@@ -23,7 +23,7 @@ import {
 } from "@toile/shared";
 import { requireUser, requestMeta } from "@/lib/session";
 import { enqueueNotifications, userIdsWithPermission } from "@/server/notifications";
-import { getProfileViewer } from "./access";
+import { getProfileViewer, decideAccess, toAccessTarget, accessTargetSelect } from "./access";
 import { findSimilarProfiles } from "./queries";
 
 export interface ProfileActionResult {
@@ -67,17 +67,52 @@ async function createProfileRecord(
 // Création rapide (prénom seul)
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * Ouvre un dossier — pour tout membre d'un groupe actif, plus seulement la
+ * modération. Un agent qui croise un inconnu en RP doit pouvoir ouvrir sa
+ * fiche sur-le-champ, pour son groupe.
+ *
+ * Le groupe devient PROPRIÉTAIRE : il reçoit un octroi CREATED_BY_GROUP, si
+ * bien que tous ses membres, présents et futurs, voient et complètent le
+ * dossier. La personne qui a cliqué n'a aucun droit particulier — si elle
+ * quitte le groupe, le dossier reste au groupe.
+ */
 export async function quickCreateProfileAction(raw: unknown): Promise<ProfileActionResult> {
-  const current = await guardManage();
-  if (!current) return { ok: false, error: "Seule la modération peut créer un dossier." };
+  const current = await requireUser();
+  const viewer = await getProfileViewer(current);
+  if (!viewer.canCreate) {
+    return {
+      ok: false,
+      error:
+        "Vous n'appartenez à aucun groupe : un dossier doit avoir un groupe propriétaire pour être vu et complété.",
+    };
+  }
 
   const parsed = profileQuickCreateSchema.safeParse(raw);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.errors[0]?.message ?? "Prénom invalide." };
   }
   const firstName = parsed.data.firstName.replace(/\s+/g, " ");
+  const lastName = parsed.data.lastName?.trim().replace(/\s+/g, " ") || null;
 
-  // Doublons potentiels : avertir sans bloquer
+  // ── Groupe propriétaire ──
+  // Un seul groupe : déduit. Plusieurs : le formulaire doit l'avoir demandé.
+  // Modération : peut créer sans groupe (dossier de la Toile elle-même).
+  let ownerGroupId: string | null = null;
+  if (parsed.data.groupId) {
+    if (!viewer.groupIds.includes(parsed.data.groupId) && !viewer.canManage) {
+      return { ok: false, error: "Vous n'appartenez pas à ce groupe." };
+    }
+    ownerGroupId = parsed.data.groupId;
+  } else if (viewer.groupIds.length === 1) {
+    ownerGroupId = viewer.groupIds[0]!;
+  } else if (viewer.groupIds.length > 1 && !viewer.canManage) {
+    return { ok: false, error: "Précisez pour quel groupe vous ouvrez ce dossier." };
+  }
+
+  // Doublons potentiels : avertir sans bloquer. Pour un lecteur qui n'a pas
+  // accès aux dossiers similaires, seuls code, titre, prénom et nom sont
+  // révélés — exactement ce que la liste montre déjà à tous.
   if (!parsed.data.confirmDespiteDuplicates) {
     const similar = await findSimilarProfiles(firstName);
     if (similar.length > 0) {
@@ -92,21 +127,40 @@ export async function quickCreateProfileAction(raw: unknown): Promise<ProfileAct
     }
   }
 
-  const profile = await prisma.$transaction((tx) =>
-    createProfileRecord(tx, {
+  const title =
+    parsed.data.title?.trim() || `Dossier — ${[firstName, lastName].filter(Boolean).join(" ")}`;
+
+  const profile = await prisma.$transaction(async (tx) => {
+    const created = await createProfileRecord(tx, {
       characterFirstName: firstName,
       firstNameNorm: normalizeRefLabel(firstName),
+      characterLastName: lastName,
+      title,
       createdById: current.session.userId,
-    }),
-  );
-  await prisma.characterProfileRevision.create({
-    data: {
-      profileId: profile.id,
-      fieldKey: "profile",
-      newValue: { created: true, firstName },
-      changedById: current.session.userId,
-      sourceMissionId: parsed.data.sourceMissionId ?? null,
-    },
+      createdByGroupId: ownerGroupId,
+    });
+    // L'accès du groupe créateur, tracé comme tel : c'est LUI le propriétaire
+    if (ownerGroupId) {
+      await tx.profileAccessGrant.create({
+        data: {
+          profileId: created.id,
+          groupId: ownerGroupId,
+          grantedById: current.session.userId,
+          sourceType: "CREATED_BY_GROUP",
+          priceRyos: null,
+        },
+      });
+    }
+    await tx.characterProfileRevision.create({
+      data: {
+        profileId: created.id,
+        fieldKey: "profile",
+        newValue: { created: true, firstName, lastName, title, groupId: ownerGroupId },
+        changedById: current.session.userId,
+        sourceMissionId: parsed.data.sourceMissionId ?? null,
+      },
+    });
+    return created;
   });
 
   const meta = await requestMeta();
@@ -115,7 +169,7 @@ export async function quickCreateProfileAction(raw: unknown): Promise<ProfileAct
     action: "profile.created",
     resourceType: "characterProfile",
     resourceId: profile.id,
-    newValues: { code: profile.code },
+    newValues: { code: profile.code, groupId: ownerGroupId },
     ...meta,
   });
 
@@ -645,12 +699,31 @@ export async function addRelationAction(raw: unknown): Promise<ProfileActionResu
   try {
     await prisma.$transaction(async (tx) => {
       if (!relatedId && input.newRelatedFirstName) {
-        // Création rapide d'un dossier minimal lié (prénom seul)
-        const minimal = await createProfileRecord(tx, {
-          characterFirstName: input.newRelatedFirstName.replace(/\s+/g, " "),
-          firstNameNorm: normalizeRefLabel(input.newRelatedFirstName),
-          createdById: current.session.userId,
+        // Création rapide d'un dossier minimal lié (prénom seul). Il hérite du
+        // groupe propriétaire du dossier d'origine : un proche ouvert depuis
+        // la fiche des Crocs de Fer est un dossier des Crocs de Fer.
+        const parent = await tx.characterProfile.findUnique({
+          where: { id: input.profileId },
+          select: { createdByGroupId: true },
         });
+        const firstName = input.newRelatedFirstName.replace(/\s+/g, " ");
+        const minimal = await createProfileRecord(tx, {
+          characterFirstName: firstName,
+          firstNameNorm: normalizeRefLabel(firstName),
+          title: `Dossier — ${firstName}`,
+          createdById: current.session.userId,
+          createdByGroupId: parent?.createdByGroupId ?? null,
+        });
+        if (parent?.createdByGroupId) {
+          await tx.profileAccessGrant.create({
+            data: {
+              profileId: minimal.id,
+              groupId: parent.createdByGroupId,
+              grantedById: current.session.userId,
+              sourceType: "CREATED_BY_GROUP",
+            },
+          });
+        }
         relatedId = minimal.id;
       }
       if (!relatedId) throw new Error("NO_TARGET");
@@ -848,6 +921,8 @@ export async function decidePurchaseAction(raw: unknown): Promise<ProfileActionR
             grantedById: current.session.userId,
             requestId,
             priceRyos: priceRyos ?? null,
+            sourceType: "PURCHASED",
+            sourceId: requestId,
           },
         });
       }
@@ -1395,6 +1470,35 @@ export async function mergeProfilesAction(input: {
         await tx.profilePurchaseRequest.update({ where: { id: pending.id }, data: { profileId: target.id } });
       }
     }
+    // ── Liens de mission ──
+    // Les cibles et commanditaires qui désignaient la source doivent suivre :
+    // sinon, à la clôture, `applyMissionOutcomeToProfiles` ignore le dossier
+    // fusionné (archivé), la mort n'est jamais consignée dans le survivant et
+    // les groupes qui ont fait le travail n'obtiennent pas l'accès. C'était un
+    // trou silencieux — rien n'alertait.
+    const sourceTargets = await tx.missionTarget.findMany({
+      where: { profileId: source.id },
+      select: { id: true, missionId: true },
+    });
+    for (const t of sourceTargets) {
+      const clash = await tx.missionTarget.findFirst({
+        where: { missionId: t.missionId, profileId: target.id, id: { not: t.id } },
+        select: { id: true },
+      });
+      // La même mission visait déjà le survivant : la cible source est un
+      // doublon, on la retire plutôt que de violer l'unicité (mission, dossier)
+      if (clash) await tx.missionTarget.delete({ where: { id: t.id } });
+      else await tx.missionTarget.update({ where: { id: t.id }, data: { profileId: target.id } });
+    }
+    await tx.mission.updateMany({
+      where: { targetProfileId: source.id },
+      data: { targetProfileId: target.id },
+    });
+    await tx.mission.updateMany({
+      where: { clientProfileId: source.id },
+      data: { clientProfileId: target.id },
+    });
+
     // Le dossier source devient une redirection archivée
     await tx.characterProfile.update({
       where: { id: source.id },

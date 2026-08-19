@@ -5,6 +5,7 @@ import { requireUser } from "@/lib/session";
 import { listProfiles } from "@/server/profiles/queries";
 import { QuickCreateProfile } from "@/components/profils/quick-create";
 import { ProfileFilters } from "@/components/profils/profile-filters";
+import { DossierCard } from "@/components/profils/dossier-card";
 import { buttonClasses } from "@/components/ui/button";
 
 export const dynamic = "force-dynamic";
@@ -182,75 +183,18 @@ export default async function ProfilsPage({
         </p>
       )}
 
-      <ul className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <ul
+        className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"
+        aria-live="polite"
+        aria-label="Dossiers"
+      >
         {rows.map((row) => (
-          <li key={row.id}>
-            <Link
-              href={withMission(`/profils/${row.id}`)}
-              className="flex h-full items-center gap-3 border border-border-default bg-raised p-3 transition-colors hover:border-border-gold hover:bg-hover-bg"
-            >
-              {row.hasVisiblePortrait ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={`/api/profils/${row.id}/image`}
-                  alt=""
-                  className="h-16 w-12 shrink-0 border border-border-gold object-cover"
-                />
-              ) : (
-                <span
-                  aria-hidden
-                  className="flex h-16 w-12 shrink-0 items-center justify-center border border-border-default bg-[repeating-linear-gradient(45deg,transparent,transparent_4px,rgba(184,150,62,0.08)_4px,rgba(184,150,62,0.08)_8px)] font-display text-gold-dim"
-                >
-                  諜
-                </span>
-              )}
-              <span className="min-w-0 flex-1">
-                <span className="block font-mono-toile text-[0.65rem] tracking-wider text-ink-faint">
-                  {row.code}
-                </span>
-                <span className="block truncate text-sm text-ink">
-                  {row.firstName}
-                  {/* Le nom n'est présent dans la charge utile que si le
-                      lecteur y a droit — rien n'est masqué en CSS.
-                      L'espace est un vrai caractère, non une marge : sinon le
-                      texte lu et copié serait « AkiraKaguya ». */}
-                  {row.lastName && (
-                    <>
-                      {" "}
-                      <span className="text-ink-muted">{row.lastName}</span>
-                    </>
-                  )}
-                </span>
-                <span className="mt-1 flex flex-wrap gap-1">
-                  {row.accessBadge === "granted" && (
-                    <span className="border border-gold-dim bg-gold-faint/30 px-1.5 py-0.5 text-[0.6rem] uppercase text-gold">
-                      Accès obtenu
-                    </span>
-                  )}
-                  {row.accessBadge === "pending" && (
-                    <span className="border border-warning/50 px-1.5 py-0.5 text-[0.6rem] uppercase text-warning">
-                      Demande en attente
-                    </span>
-                  )}
-                  {row.accessBadge === "refused" && (
-                    <span className="border border-blood/50 px-1.5 py-0.5 text-[0.6rem] uppercase text-blood-bright">
-                      Refusée
-                    </span>
-                  )}
-                  {viewer.canViewAll && (row.pendingRequests ?? 0) > 0 && (
-                    <span className="border border-warning/50 px-1.5 py-0.5 text-[0.6rem] uppercase text-warning">
-                      {row.pendingRequests} demande{(row.pendingRequests ?? 0) > 1 ? "s" : ""}
-                    </span>
-                  )}
-                  {viewer.canViewAll && (
-                    <span className="px-1.5 py-0.5 text-[0.6rem] text-ink-faint">
-                      {row.intelCount} renseignement{(row.intelCount ?? 0) > 1 ? "s" : ""}
-                    </span>
-                  )}
-                </span>
-              </span>
-            </Link>
-          </li>
+          <DossierCard
+            key={row.id}
+            row={row}
+            href={withMission(`/profils/${row.id}`)}
+            isModerator={viewer.canViewAll}
+          />
         ))}
       </ul>
 

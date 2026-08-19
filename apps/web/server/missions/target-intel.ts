@@ -145,6 +145,11 @@ export async function applyMissionOutcomeToProfiles(
           groupId,
           grantedById: input.actorId,
           priceRyos: null,
+          // Étiqueté à l'ÉCRITURE : sans cela le défaut PURCHASED classerait
+          // un accès gagné au prix du sang comme un achat, et la modération
+          // révoquerait l'un comme l'autre sans savoir ce qu'elle retire.
+          sourceType: "MISSION_GRANTED",
+          sourceId: input.missionId,
         },
       });
       result.grantsCreated += 1;

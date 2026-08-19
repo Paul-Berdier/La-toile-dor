@@ -9,6 +9,7 @@ export * from "./profile-fields";
 export * from "./character-age";
 export * from "./profile-schemas";
 export * from "./profile-pricing";
+export * from "./profile-access";
 export * from "./eligibility";
 export * from "./reward-sharing";
 export * from "./assignment-visibility";

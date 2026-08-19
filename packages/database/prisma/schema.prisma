@@ -284,6 +284,7 @@ model Group {
   invitations Invitation[]
   profileRequests ProfilePurchaseRequest[] @relation("GroupProfileRequests")
   profileGrants   ProfileAccessGrant[]     @relation("GroupProfileGrants")
+  createdProfiles CharacterProfile[]       @relation("GroupCreatedProfiles")
 
   @@unique([factionId, name])
 }
@@ -1040,6 +1041,14 @@ model CharacterProfile {
   internalNotes String?
 
   createdById String?
+  // Groupe qui a ouvert le dossier. C'est LUI le propriétaire — pas la
+  // personne : un membre qui part ne l'emporte pas, un nouveau membre en
+  // hérite. Nullable : les dossiers antérieurs à la notion, ouverts par la
+  // modération, n'ont pas de propriétaire et c'est exact — on ne devine pas.
+  createdByGroupId String?
+  // Titre du dossier — « L'Éclat Rouge ». Public au même titre que le prénom.
+  // Généré à la création s'il n'est pas fourni (« Dossier — Akira Hoki »).
+  title       String?
   updatedById String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @default(now()) @updatedAt
@@ -1047,6 +1056,7 @@ model CharacterProfile {
   mergedIntoId String? // redirection après fusion de doublons
   version     Int       @default(1)
 
+  createdByGroup Group? @relation("GroupCreatedProfiles", fields: [createdByGroupId], references: [id], onDelete: SetNull)
   hairColor ProfileReferenceOption? @relation("ProfileHairColor", fields: [hairColorId], references: [id])
   skinTone  ProfileReferenceOption? @relation("ProfileSkinTone", fields: [skinToneId], references: [id])
   faction   Faction?     @relation("ProfileFaction", fields: [factionId], references: [id])
@@ -1070,6 +1080,7 @@ model CharacterProfile {
   @@index([firstNameNorm])
   @@index([archivedAt])
   @@index([factionId])
+  @@index([createdByGroupId])
 }
 
 // État de connaissance par champ (fieldKey ∈ @toile/shared PROFILE_FIELD_KEYS).
@@ -1191,6 +1202,17 @@ model ProfilePurchaseRequest {
 
 // Autorisation d'accès d'un groupe à un dossier (révocable).
 // Un seul accès actif par (profil, groupe) — index partiel en migration.
+// D'où vient un accès. Un lecteur ne doit jamais se demander POURQUOI il voit
+// un dossier ; et la modération doit distinguer un accès payé d'un accès gagné
+// au prix du sang. Défaut PURCHASED : c'était la seule origine possible avant
+// cette colonne, hors mission (backfillée par requestId, voir la migration).
+enum ProfileGrantSource {
+  CREATED_BY_GROUP  // le groupe a ouvert le dossier
+  PURCHASED         // demande d'achat approuvée
+  MODERATOR_GRANTED // offert ou restauré par la modération
+  MISSION_GRANTED   // gagné à la clôture d'une mission
+}
+
 model ProfileAccessGrant {
   id          String  @id @default(cuid())
   profileId   String
@@ -1198,13 +1220,19 @@ model ProfileAccessGrant {
   grantedById String
   requestId   String?
   priceRyos   Int?
+  sourceType  ProfileGrantSource @default(PURCHASED)
+  // Ce qui a produit l'octroi, selon la source : id de mission pour
+  // MISSION_GRANTED, de demande pour PURCHASED — pour remonter à la cause.
+  sourceId    String?
   grantedAt   DateTime @default(now())
   revokedAt   DateTime?
   revokedById String?
+  revokedReason String?
 
   profile CharacterProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
   group   Group            @relation("GroupProfileGrants", fields: [groupId], references: [id], onDelete: Cascade)
 
   @@index([groupId, revokedAt])
   @@index([profileId, revokedAt])
+  @@index([profileId, sourceType])
 }
