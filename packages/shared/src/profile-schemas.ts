@@ -92,6 +92,7 @@ export const profileUpdateSchema = z
     chakraNatureIds: z.array(z.string().cuid()).max(20).optional(),
     kekkeiGenkaiIds: z.array(z.string().cuid()).max(20).optional(),
     clanTechniqueIds: z.array(z.string().cuid()).max(30).optional(),
+    signatureTechniqueIds: z.array(z.string().cuid()).max(30).optional(),
     combatStyleIds: z.array(z.string().cuid()).max(20).optional(),
     kenjutsuStyleIds: z.array(z.string().cuid()).max(10).optional(),
     artifactIds: z.array(z.string().cuid()).max(10).optional(),

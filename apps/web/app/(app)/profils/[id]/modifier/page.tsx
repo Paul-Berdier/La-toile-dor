@@ -107,16 +107,11 @@ export default async function ModifierDossierPage({
       <div className="mt-6 grid gap-5 lg:grid-cols-2">
         <section className="border border-border-default bg-raised p-5">
           <h2 className="mb-3 font-display text-sm tracking-widest text-gold uppercase">
-            Subjutsu et techniques propres
+            Techniques propres
           </h2>
           <TechniqueManager
             profileId={id}
             jutsuTypes={refs.jutsuTypes.map((j) => ({ id: j.id, label: j.label }))}
-            knownTechniques={refs.signatureTechniques.map((t) => ({
-              label: t.label,
-              // `category` du catalogue = code du type de jutsu à préremplir
-              jutsuTypeId: refs.jutsuTypes.find((j) => j.code === t.category)?.id ?? null,
-            }))}
             techniques={profile.techniques.map((t) => ({
               id: t.id,
               name: t.name,

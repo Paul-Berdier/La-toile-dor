@@ -70,7 +70,8 @@ export const DEFAULT_PROFILE_PRICING: ProfilePricing = {
     clanTechniques: 1600,
     strengths: 1500,
     artifacts: 1500,
-    techniques: 1400, // Subjutsu
+    signatureTechniques: 1400, // Subjutsu répertoriés (Rasengan, Hiraishin…)
+    techniques: 1400, // techniques propres au personnage
     combatStyles: 1200,
     chakraNatures: 1000,
     kenjutsuStyles: 800,
@@ -110,6 +111,7 @@ export const PRICING_GROUPS: { label: string; fields: ProfileFieldKey[] }[] = [
       "strengths",
       "kekkeiGenkai",
       "clanTechniques",
+      "signatureTechniques",
       "techniques",
       "combatStyles",
       "chakraNatures",

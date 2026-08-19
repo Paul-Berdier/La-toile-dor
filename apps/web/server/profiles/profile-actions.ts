@@ -428,6 +428,7 @@ export async function updateProfileAction(raw: unknown): Promise<ProfileActionRe
     ["chakraNatures", input.chakraNatureIds],
     ["kekkeiGenkai", input.kekkeiGenkaiIds],
     ["clanTechniques", input.clanTechniqueIds],
+    ["signatureTechniques", input.signatureTechniqueIds],
     ["combatStyles", input.combatStyleIds],
     ["kenjutsuStyles", input.kenjutsuStyleIds],
     ["artifacts", input.artifactIds],

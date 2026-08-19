@@ -21,7 +21,7 @@
 | `CharacterProfile` | Le dossier : identité, apparence, affiliation, âge, analyse, notes internes |
 | `CharacterFieldIntel` | **État de connaissance par champ** (`fieldKey` → UNKNOWN/KNOWN/NONE_CONFIRMED/CONFLICTING) + confiance + mission source. L'absence de ligne vaut UNKNOWN |
 | `CharacterProfileTrait` | Liaison générique dossier ↔ référentiel (clans, natures, KG, styles, sous-styles, artefacts). Le type vient de l'option : filtrable comme six tables dédiées, sans duplication |
-| `CharacterSignatureTechnique` | « Subjutsu » — techniques propres (nom obligatoire, reste facultatif) |
+| `CharacterSignatureTechnique` | Techniques propres — jutsu originaux (nom obligatoire, reste facultatif) |
 | `CharacterRelationship` | Relations sous forme **canonique** (`PARENT_OF`, `CREATOR_OF`, `SIBLING_OF` ordonné) |
 | `CharacterProfileRevision` | Historique champ par champ |
 | `ProfileReferenceOption` / `Suggestion` | Référentiels contrôlés — voir [PROFILE_REFERENCE_DATA.md](PROFILE_REFERENCE_DATA.md) |
@@ -128,20 +128,23 @@ renouvellerait les props sans réinitialiser les champs).
 Couvert par l'e2e « deux rédacteurs simultanés : le second n'écrase pas le
 premier ».
 
-## Subjutsu et techniques de clan
+## Subjutsu, techniques propres et techniques de clan
 
-Deux champs voisins, deux natures différentes :
+Trois champs voisins, trois natures différentes :
 
-- **Subjutsu** (`CharacterSignatureTechnique`) : les techniques propres au
-  personnage, en saisie libre — Rasengan, Chidori, Hiraishin… Elles portent un
-  nom, un type de jutsu et un rang.
+- **Subjutsu** (`SIGNATURE_TECHNIQUE`) : les techniques notoires du serveur —
+  Rasengan, Chidori, Hiraishin, Multi clonage, Rang X, Ermites… Un référentiel
+  contrôlé, choisi dans l'étape Capacités comme les Kekkei Genkai.
+- **Techniques propres** (`CharacterSignatureTechnique`) : les jutsu originaux
+  du personnage, en saisie libre — nom obligatoire, type et rang facultatifs.
 - **Techniques de clan** (`CLAN_TECHNIQUE`) : un référentiel contrôlé, car ces
   techniques circulent entre personnages et méritent un libellé stable.
 
-Les Subjutsu se saisissent depuis la page du dossier, mais leur **état** se
-déclare dans le formulaire, avec les autres champs : sans cela, il était
-impossible d'affirmer « la Toile a vérifié, ce personnage n'a aucune technique
-propre » — l'absence se confondait avec le simple fait de ne pas savoir.
+Les techniques propres se saisissent depuis la page du dossier, mais leur
+**état** se déclare dans le formulaire, avec les autres champs : sans cela, il
+était impossible d'affirmer « la Toile a vérifié, ce personnage n'a aucune
+technique propre » — l'absence se confondait avec le simple fait de ne pas
+savoir.
 
 Déclarer « Aucun » alors que le dossier liste des techniques ne les efface
 pas : ces fiches sont trop riches pour disparaître sur un choix de liste
