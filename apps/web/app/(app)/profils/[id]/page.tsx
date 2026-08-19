@@ -13,7 +13,7 @@ import { requireUser } from "@/lib/session";
 import { getDossierDetail, type RelationView } from "@/server/profiles/queries";
 import { DossierRow, FieldValue, Redacted, SwatchValue, swatchesOf } from "@/components/profils/field-value";
 import { RequestAccessPanel, RevokeGrantButton } from "@/components/profils/request-access";
-import { OriginBadge } from "@/components/profils/dossier-card";
+import { DeadCross, OriginBadge } from "@/components/profils/dossier-card";
 import { ProfileGallery } from "@/components/profils/gallery";
 import { ContributeIntel, MyContributions, PendingContributions } from "@/components/profils/contribute";
 import { loadProfileRefs } from "@/server/profiles/edit-data";
@@ -36,6 +36,15 @@ export default async function DossierPage({
 
   const { dossier, relations, viewer, internal, requestableGroups } = detail;
   const f = dossier.fields;
+  // Croix rouge : le ninja est MORT — seulement si l'état vital est servi au lecteur
+  const dead = f.lifeStatus.displayState === "VISIBLE" && f.lifeStatus.value === "DEAD";
+  // Un renseignement en attente propose la mort : les relecteurs (groupe
+  // créateur, modération) doivent le voir dès l'en-tête, pas au fond de la page.
+  const deathProposed =
+    detail.access.canEdit &&
+    detail.contributions.pending.some(
+      (c) => c.fieldKey === "lifeStatus" && c.proposedLabel === "Mort",
+    );
   // Référentiels pour la palette « + Ajouter un renseignement » — chargés
   // seulement si le lecteur peut contribuer : un lecteur sans accès n'a pas
   // besoin des listes, et ne doit pas voir le bouton.
@@ -87,12 +96,13 @@ export default async function DossierPage({
       {/* En-tête du dossier */}
       <header className="mt-4 border border-border-gold bg-raised p-5">
         <div className="flex flex-wrap items-start gap-4">
+          <span className="relative h-32 w-24 shrink-0">
           {dossier.image.displayState === "VISIBLE" ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={`/api/profils/${dossier.id}/image`}
               alt={`Portrait du dossier ${dossier.code}`}
-              className="h-32 w-24 shrink-0 border border-border-gold object-cover"
+              className={`h-32 w-24 border border-border-gold object-cover ${dead ? "opacity-70 grayscale" : ""}`}
             />
           ) : (
             <div
@@ -125,16 +135,31 @@ export default async function DossierPage({
               )}
             </div>
           )}
+          {dead && <DeadCross label="Ninja mort" />}
+          </span>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <p className="whitespace-nowrap font-mono-toile text-xs tracking-wider text-ink-faint">
                 {dossier.code}
               </p>
+              {dead && (
+                <span className="inline-flex items-center gap-1 border border-blood bg-blood/10 px-1.5 py-0.5 font-mono-toile text-[0.6rem] uppercase tracking-wider text-blood-bright">
+                  <span aria-hidden>✕</span> Mort
+                </span>
+              )}
               <OriginBadge origin={detail.access.origin} isModerator={viewer.canViewAll} />
               {!detail.access.canView && (
                 <span className="inline-flex items-center gap-1 border border-border-strong px-1.5 py-0.5 font-mono-toile text-[0.6rem] uppercase tracking-wider text-ink-faint">
                   <span aria-hidden>封</span> Non acquis
                 </span>
+              )}
+              {deathProposed && (
+                <a
+                  href="#renseignement"
+                  className="inline-flex items-center gap-1 border border-warning/60 bg-warning/10 px-1.5 py-0.5 font-mono-toile text-[0.6rem] uppercase tracking-wider text-warning hover:border-warning"
+                >
+                  <span aria-hidden>⚠</span> Un renseignement propose : Mort
+                </a>
               )}
             </div>
             <h1 className="mt-1 font-display text-2xl text-gold">{detail.title}</h1>

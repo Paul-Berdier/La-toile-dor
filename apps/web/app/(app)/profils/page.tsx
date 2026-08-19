@@ -6,12 +6,18 @@ import { listProfiles } from "@/server/profiles/queries";
 import { QuickCreateProfile } from "@/components/profils/quick-create";
 import { ProfileFilters } from "@/components/profils/profile-filters";
 import { DossierCard } from "@/components/profils/dossier-card";
+import { BulkLifeStatusBar, BulkSelectProvider } from "@/components/profils/bulk-life-status";
 import { buttonClasses } from "@/components/ui/button";
 
 export const dynamic = "force-dynamic";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+
+/** Enveloppe la grille dans la sélection multiple — modération seulement. */
+function MaybeBulkSelect({ enabled, children }: { enabled: boolean; children: React.ReactNode }) {
+  return enabled ? <BulkSelectProvider>{children}</BulkSelectProvider> : <>{children}</>;
+}
 
 export default async function ProfilsPage({
   searchParams,
@@ -263,20 +269,26 @@ export default async function ProfilsPage({
         </p>
       )}
 
-      <ul
-        className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"
-        aria-live="polite"
-        aria-label="Dossiers"
-      >
-        {rows.map((row) => (
-          <DossierCard
-            key={row.id}
-            row={row}
-            href={withMission(`/profils/${row.id}`)}
-            isModerator={viewer.canViewAll}
-          />
-        ))}
-      </ul>
+      {/* Modération : sélection multiple pour fixer l'état vital d'un lot de
+          dossiers (mort/vivant). Le provider n'existe que pour elle : les
+          cases des cartes ne rendent rien pour les autres lecteurs. */}
+      <MaybeBulkSelect enabled={viewer.canManage}>
+        <ul
+          className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"
+          aria-live="polite"
+          aria-label="Dossiers"
+        >
+          {rows.map((row) => (
+            <DossierCard
+              key={row.id}
+              row={row}
+              href={withMission(`/profils/${row.id}`)}
+              isModerator={viewer.canViewAll}
+            />
+          ))}
+        </ul>
+        {viewer.canManage && <BulkLifeStatusBar />}
+      </MaybeBulkSelect>
 
       {pageCount > 1 && (
         <nav

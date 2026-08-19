@@ -18,6 +18,7 @@ import {
   referenceSuggestionSchema,
   referenceOptionCreateSchema,
   PROFILE_FIELD_LABELS,
+  LIFE_STATUS_LABELS,
   TRAIT_FIELD_TO_TYPE,
   type ProfileFieldKey,
   type ProfileUpdateInput,
@@ -1393,6 +1394,84 @@ export async function uploadProfileImageAction(formData: FormData): Promise<Prof
 // ─────────────────────────────────────────────────────────────
 // Archivage et fusion (super-modérateurs)
 // ─────────────────────────────────────────────────────────────
+
+/**
+ * État vital de PLUSIEURS dossiers d'un coup — modération.
+ *
+ * Le cas d'usage : après un événement RP (bataille, purge), la modération
+ * marque une série de ninjas morts sans ouvrir chaque formulaire. La même
+ * discipline qu'une édition champ par champ : valeur + ligne d'intel
+ * (KNOWN/CONFIRMED) + révision + audit, dossier par dossier, dans une seule
+ * transaction. Les dossiers archivés ou fusionnés sont sautés, jamais touchés.
+ */
+export async function bulkSetLifeStatusAction(input: {
+  profileIds: string[];
+  lifeStatus: "ALIVE" | "DEAD";
+}): Promise<ProfileActionResult & { updated?: number; skipped?: number }> {
+  const current = await guardManage();
+  if (!current) return { ok: false, error: "Réservé à la modération." };
+  const ids = [...new Set(input.profileIds)].filter((id) => typeof id === "string" && id.length > 0);
+  if (ids.length === 0) return { ok: false, error: "Aucun dossier sélectionné." };
+  if (ids.length > 100) return { ok: false, error: "100 dossiers maximum par traitement." };
+  if (!["ALIVE", "DEAD"].includes(input.lifeStatus)) return { ok: false, error: "État invalide." };
+
+  const label = LIFE_STATUS_LABELS[input.lifeStatus] ?? input.lifeStatus;
+  let updated = 0;
+  let skipped = 0;
+  await prisma.$transaction(async (tx) => {
+    const profiles = await tx.characterProfile.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, lifeStatus: true, archivedAt: true, mergedIntoId: true },
+    });
+    skipped += ids.length - profiles.length;
+    for (const profile of profiles) {
+      if (profile.archivedAt || profile.mergedIntoId || profile.lifeStatus === input.lifeStatus) {
+        skipped += 1;
+        continue;
+      }
+      await tx.characterProfile.update({
+        where: { id: profile.id },
+        data: { lifeStatus: input.lifeStatus, updatedById: current.session.userId, version: { increment: 1 } },
+      });
+      await tx.characterFieldIntel.upsert({
+        where: { profileId_fieldKey: { profileId: profile.id, fieldKey: "lifeStatus" } },
+        update: { knowledgeState: "KNOWN", confidence: "CONFIRMED", updatedById: current.session.userId },
+        create: {
+          profileId: profile.id,
+          fieldKey: "lifeStatus",
+          knowledgeState: "KNOWN",
+          confidence: "CONFIRMED",
+          updatedById: current.session.userId,
+        },
+      });
+      await tx.characterProfileRevision.create({
+        data: {
+          profileId: profile.id,
+          fieldKey: "lifeStatus",
+          oldValue: { lifeStatus: profile.lifeStatus },
+          newValue: { lifeStatus: input.lifeStatus },
+          justification: `État vital fixé à « ${label} » par la modération (traitement groupé).`,
+          confidence: "CONFIRMED",
+          changedById: current.session.userId,
+        },
+      });
+      updated += 1;
+    }
+  });
+
+  const meta = await requestMeta();
+  await audit({
+    actorId: current.session.userId,
+    action: "profile.life_status_bulk",
+    resourceType: "characterProfile",
+    resourceId: ids[0]!,
+    newValues: { lifeStatus: input.lifeStatus, profileIds: ids, updated, skipped },
+    ...meta,
+  });
+  revalidatePath("/profils");
+  for (const id of ids) revalidatePath(`/profils/${id}`);
+  return { ok: true, updated, skipped };
+}
 
 export async function archiveProfileAction(profileId: string): Promise<ProfileActionResult> {
   const current = await requireUser();

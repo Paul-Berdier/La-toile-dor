@@ -57,12 +57,38 @@ export async function applyMissionOutcomeToProfiles(
     groupIds: string[];
     actorId: string;
     clientProfileId: string | null;
+    /** Catégorie de la mission — une élimination accomplie tue sa cible */
+    missionCategory?: string;
+    /** La mission est close en SUCCÈS (COMPLETED, pas FAILED) */
+    missionSucceeded?: boolean;
   },
 ): Promise<TargetIntelResult> {
   const targets = await tx.missionTarget.findMany({
     where: { missionId: input.missionId },
     select: { id: true, profileId: true, outcome: true, note: true },
   });
+
+  // Mission d'ÉLIMINATION accomplie : une cible dont personne n'a consigné le
+  // sort est PRÉSUMÉE éliminée — c'est l'objet même du contrat. Un sort
+  // explicite (en fuite, capturée, épargnée…) n'est jamais écrasé : l'équipe
+  // ou la modération a dit autre chose, cela prime sur la présomption.
+  const presumeEliminated =
+    input.missionCategory === "ELIMINATION" && input.missionSucceeded === true;
+  if (presumeEliminated) {
+    for (const target of targets) {
+      if (target.outcome !== "UNKNOWN") continue;
+      target.outcome = "ELIMINATED";
+      await tx.missionTarget.update({
+        where: { id: target.id },
+        data: {
+          outcome: "ELIMINATED",
+          note: target.note || "Présumée éliminée — mission d'élimination accomplie.",
+          recordedAt: new Date(),
+          recordedById: input.actorId,
+        },
+      });
+    }
+  }
 
   const result: TargetIntelResult = {
     lifeStatusUpdated: [],

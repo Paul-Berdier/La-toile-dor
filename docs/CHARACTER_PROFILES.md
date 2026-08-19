@@ -243,6 +243,31 @@ pas ».
 Le dossier source devient une **redirection** (`mergedIntoId` + `archivedAt`) :
 son ancien code mène toujours au dossier fusionné.
 
+## État vital : mort, croix rouge, traitement groupé
+
+L'état vital (`lifeStatus` : Vivant / **Mort** / Disparu) est un renseignement
+comme un autre — protégé (« ??? ») pour qui n'a pas le dossier. Pour un
+lecteur **autorisé**, un ninja mort porte une **croix rouge** sur son portrait
+(carte de la liste et en-tête du dossier, composant `DeadCross`) et un badge
+« ✕ Mort ».
+
+Trois façons de mourir dans la Toile :
+
+1. **Traitement groupé (modération)** — sur la liste des dossiers, la
+   modération coche plusieurs cartes puis « Marquer morts » (ou « Rétablir
+   vivants ») : `bulkSetLifeStatusAction` écrit, pour chaque dossier vivant et
+   non archivé, la valeur + la ligne d'intel (`KNOWN`/`CONFIRMED`) + une
+   révision, dans une transaction, avec un audit `profile.life_status_bulk`.
+2. **Mission d'élimination accomplie** — à la clôture en `COMPLETED` d'une
+   mission de catégorie `ELIMINATION`, toute cible dont le sort est resté
+   « inconnu » est **présumée éliminée** : son sort passe à `ELIMINATED`, son
+   dossier à `DEAD`, sourcé par la mission (`applyMissionOutcomeToProfiles`).
+   Un sort explicite (en fuite, capturée, épargnée…) n'est jamais écrasé.
+3. **Renseignement** — un groupe propose « Mort » via une contribution ; tant
+   qu'elle est en attente, les relecteurs (groupe créateur, modération) voient
+   « ⚠ Un renseignement propose : Mort » dès l'en-tête du dossier, et la
+   proposition est encadrée de rouge (« Décès proposé ») dans la file de revue.
+
 ## Archivage et suppression (super-modérateurs)
 
 | Action | Effet | Réversible |

@@ -5,7 +5,7 @@ vi.mock("server-only", () => ({}));
 
 import { applyMissionOutcomeToProfiles } from "./target-intel";
 
-function transactionFor(createdByGroupId: string | null) {
+function transactionFor(createdByGroupId: string | null, outcome = "UNKNOWN") {
   const createGrant = vi.fn().mockResolvedValue({ id: "grant" });
   const tx = {
     missionTarget: {
@@ -13,10 +13,11 @@ function transactionFor(createdByGroupId: string | null) {
         {
           id: "target-1",
           profileId: "profile-1",
-          outcome: "UNKNOWN",
+          outcome,
           note: null,
         },
       ]),
+      update: vi.fn().mockResolvedValue({}),
     },
     characterProfile: {
       findUnique: vi.fn().mockResolvedValue({
@@ -91,5 +92,66 @@ describe("accès gagnés sur les cibles d'une mission", () => {
       data: expect.objectContaining({ groupId: "assigned-b" }),
     });
     expect(result.grantsCreated).toBe(1);
+  });
+});
+
+describe("mission d'élimination accomplie : la cible est présumée morte", () => {
+  it("une cible au sort inconnu passe ELIMINATED et son dossier DEAD", async () => {
+    const { tx } = transactionFor("owner-group");
+
+    const result = await applyMissionOutcomeToProfiles(tx, {
+      ...baseInput,
+      groupIds: [],
+      missionCategory: "ELIMINATION",
+      missionSucceeded: true,
+    });
+
+    const mocked = tx as unknown as {
+      missionTarget: { update: ReturnType<typeof vi.fn> };
+      characterProfile: { update: ReturnType<typeof vi.fn> };
+      characterFieldIntel: { upsert: ReturnType<typeof vi.fn> };
+    };
+    // Le sort est consigné sur la cible…
+    expect(mocked.missionTarget.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ outcome: "ELIMINATED" }) }),
+    );
+    // …et l'état vital du dossier suit, avec sa source
+    expect(mocked.characterProfile.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ lifeStatus: "DEAD" }) }),
+    );
+    expect(mocked.characterFieldIntel.upsert).toHaveBeenCalled();
+    expect(result.lifeStatusUpdated).toContain("PRF-000001");
+  });
+
+  it("un sort explicite (en fuite) n'est jamais écrasé par la présomption", async () => {
+    const { tx } = transactionFor("owner-group", "ESCAPED");
+
+    await applyMissionOutcomeToProfiles(tx, {
+      ...baseInput,
+      groupIds: [],
+      missionCategory: "ELIMINATION",
+      missionSucceeded: true,
+    });
+
+    const mocked = tx as unknown as {
+      missionTarget: { update: ReturnType<typeof vi.fn> };
+      characterProfile: { update: ReturnType<typeof vi.fn> };
+    };
+    expect(mocked.missionTarget.update).not.toHaveBeenCalled();
+    expect(mocked.characterProfile.update).not.toHaveBeenCalled();
+  });
+
+  it("une élimination ÉCHOUÉE ne présume rien", async () => {
+    const { tx } = transactionFor("owner-group");
+
+    await applyMissionOutcomeToProfiles(tx, {
+      ...baseInput,
+      groupIds: [],
+      missionCategory: "ELIMINATION",
+      missionSucceeded: false,
+    });
+
+    const mocked = tx as unknown as { characterProfile: { update: ReturnType<typeof vi.fn> } };
+    expect(mocked.characterProfile.update).not.toHaveBeenCalled();
   });
 });

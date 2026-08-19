@@ -78,6 +78,11 @@ Migration `20260819130000_rapport_fin_de_mission_brouillon`.
    équipes) ; doublons signalés une première fois, puis confirmés ;
 5. brouillon effacé.
 
+À la **clôture** (`COMPLETED`) d'une mission de catégorie `ELIMINATION`, les
+cibles dont le sort est resté « inconnu » sont **présumées éliminées** : sort
+`ELIMINATED`, dossier `DEAD`, sourcé par la mission. Un sort explicitement
+consigné (en fuite, capturée…) n'est jamais écrasé par la présomption.
+
 Un dossier du rapport archivé ou fusionné entre-temps fait **échouer** le
 dépôt avec un message explicite — jamais une perte silencieuse d'entrées. Le
 statut de la mission est relu **dans** la transaction : une clôture

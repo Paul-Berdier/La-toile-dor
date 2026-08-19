@@ -141,8 +141,12 @@ export function dayOf(date: Date): string {
   return `${date.toISOString().slice(0, 10)}T00:00:00.000Z`;
 }
 
-/** Champs résumés sur une carte de la liste : grade, classe, faction, yeux. */
-export const PREVIEW_FIELD_KEYS = ["rank", "ninjaClass", "faction", "eyeColor"] as const;
+/**
+ * Champs résumés sur une carte de la liste : grade, classe, faction, yeux —
+ * plus l'état vital, qui ne s'affiche pas en ligne mais marque d'une croix
+ * rouge le portrait d'un ninja MORT (pour qui a le droit de le savoir).
+ */
+export const PREVIEW_FIELD_KEYS = ["rank", "ninjaClass", "faction", "eyeColor", "lifeStatus"] as const;
 export type PreviewFieldKey = (typeof PREVIEW_FIELD_KEYS)[number];
 
 /** Ce que la liste charge pour produire l'aperçu d'une carte. */
@@ -152,6 +156,7 @@ export const previewSelect = {
   faction: { select: { name: true } },
   eyeColor: { select: { label: true, colorHex: true } },
   eyeColorSecondary: { select: { label: true, colorHex: true } },
+  lifeStatus: true,
   fieldIntel: {
     where: { fieldKey: { in: [...PREVIEW_FIELD_KEYS] } },
     select: { fieldKey: true, knowledgeState: true, confidence: true },
@@ -176,6 +181,9 @@ export function serializePreview(
       ? { value: profile.ninjaClass.label, label: profile.ninjaClass.label }
       : null,
     faction: profile.faction ? { value: profile.faction.name, label: profile.faction.name } : null,
+    lifeStatus: profile.lifeStatus
+      ? { value: profile.lifeStatus, label: LIFE_STATUS_LABELS[profile.lifeStatus] ?? profile.lifeStatus }
+      : null,
     eyeColor: profile.eyeColor
       ? {
           value: {

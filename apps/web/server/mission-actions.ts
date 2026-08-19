@@ -362,6 +362,9 @@ export async function moveMissionAction(input: {
           ],
           actorId: current.session.userId,
           clientProfileId: liveMission.clientProfileId,
+          // Élimination accomplie ⇒ cibles au sort inconnu présumées mortes
+          missionCategory: liveMission.category,
+          missionSucceeded: toStatus === "COMPLETED",
         });
       }
     }, { isolationLevel: "Serializable" });

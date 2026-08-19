@@ -2,6 +2,26 @@ import Link from "next/link";
 import { ACCESS_ORIGIN_HINTS, ACCESS_ORIGIN_LABELS, type AccessOrigin } from "@toile/shared";
 import type { ProfileListRow } from "@/server/profiles/queries";
 import { FieldValue } from "@/components/profils/field-value";
+import { BulkSelectCheckbox } from "@/components/profils/bulk-life-status";
+
+/**
+ * Croix rouge en travers d'un portrait : le ninja est MORT. Rendue seulement
+ * quand l'état vital est VISIBLE pour le lecteur — un dossier scellé garde
+ * son secret, même celui-là.
+ */
+export function DeadCross({ label = "Mort" }: { label?: string }) {
+  return (
+    <span
+      role="img"
+      aria-label={`Ninja mort — ${label}`}
+      title={label}
+      className="pointer-events-none absolute inset-0 overflow-hidden"
+    >
+      <span aria-hidden className="absolute left-1/2 top-1/2 h-[140%] w-[3px] -translate-x-1/2 -translate-y-1/2 rotate-45 bg-blood-bright/90" />
+      <span aria-hidden className="absolute left-1/2 top-1/2 h-[140%] w-[3px] -translate-x-1/2 -translate-y-1/2 -rotate-45 bg-blood-bright/90" />
+    </span>
+  );
+}
 
 /**
  * Carte d'un dossier dans la liste.
@@ -29,6 +49,8 @@ export function DossierCard({
   const sealed = !row.canViewValues;
   const fullName = [row.firstName, row.lastName].filter(Boolean).join(" ");
   const p = row.preview;
+  // Croix rouge : seulement quand l'état vital est réellement servi au lecteur
+  const dead = p.lifeStatus.displayState === "VISIBLE" && p.lifeStatus.value === "DEAD";
 
   return (
     <li>
@@ -40,17 +62,20 @@ export function DossierCard({
         }`}
       >
         <Link href={href} className="flex flex-1 gap-3 p-3 hover:bg-hover-bg">
-          {row.hasVisiblePortrait ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={`/api/profils/${row.id}/image`}
-              alt=""
-              loading="lazy"
-              className="h-24 w-[4.25rem] shrink-0 border border-border-gold object-cover"
-            />
-          ) : (
-            <Silhouette sealed={sealed} />
-          )}
+          <span className="relative h-24 w-[4.25rem] shrink-0">
+            {row.hasVisiblePortrait ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={`/api/profils/${row.id}/image`}
+                alt=""
+                loading="lazy"
+                className={`h-24 w-[4.25rem] border border-border-gold object-cover ${dead ? "opacity-70 grayscale" : ""}`}
+              />
+            ) : (
+              <Silhouette sealed={sealed} />
+            )}
+            {dead && <DeadCross />}
+          </span>
 
           <span className="min-w-0 flex-1">
             <span className="block font-mono-toile text-[0.65rem] tracking-wider text-ink-faint">
@@ -59,7 +84,14 @@ export function DossierCard({
             <span className="block truncate font-display text-sm tracking-wide text-gold">
               {row.title}
             </span>
-            <span className="block truncate text-sm text-ink">{fullName}</span>
+            <span className="block truncate text-sm text-ink">
+              {fullName}
+              {dead && (
+                <span className="ml-1.5 border border-blood/60 px-1 align-middle font-mono-toile text-[0.6rem] uppercase tracking-wider text-blood-bright">
+                  ✕ Mort
+                </span>
+              )}
+            </span>
 
             {sealed ? (
               /* Carte scellée : les rubriques clés, en états seulement. On voit
@@ -133,12 +165,16 @@ export function DossierCard({
         {/* Action principale, distincte selon l'état : on n'« ouvre » pas ce
             qu'on ne possède pas, on le « voit » — et on peut le demander. */}
         <div className="flex items-center justify-between gap-2 border-t border-border-default/60 px-3 py-2">
-          <Link
-            href={href}
-            className="text-xs text-gold underline-offset-2 hover:underline"
-          >
-            {sealed ? "Voir" : "Ouvrir le dossier"}
-          </Link>
+          <span className="flex items-center gap-3">
+            <Link
+              href={href}
+              className="text-xs text-gold underline-offset-2 hover:underline"
+            >
+              {sealed ? "Voir" : "Ouvrir le dossier"}
+            </Link>
+            {/* Sélection multiple : ne rend rien hors modération (provider absent) */}
+            <BulkSelectCheckbox profileId={row.id} name={fullName || row.code} />
+          </span>
           {sealed && !isModerator && row.accessBadge !== "pending" && (
             <Link
               href={`${href}#acces`}

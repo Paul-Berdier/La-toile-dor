@@ -260,12 +260,28 @@ export function PendingContributions({ rows }: { rows: ContributionView[] }) {
       {rows.map((c) => {
         const decisions: ContributionDecision[] = ["ACCEPT", "REJECT", "MARK_CONTRADICTORY"];
         if (canMergeField(c.fieldKey as ProfileFieldKey)) decisions.push("MERGE");
+        // Une proposition de DÉCÈS n'est pas un renseignement comme un autre :
+        // elle saute aux yeux du relecteur, cadre rouge et croix.
+        const proposesDeath = c.fieldKey === "lifeStatus" && c.proposedLabel === "Mort";
         return (
-          <article key={c.id} className="border border-border-gold bg-elevated p-3">
+          <article
+            key={c.id}
+            className={`border bg-elevated p-3 ${proposesDeath ? "border-blood" : "border-border-gold"}`}
+          >
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <p className="text-sm text-ink">
-                <span className="text-gold">{c.fieldLabel}</span> → {c.proposedLabel}
+                <span className="text-gold">{c.fieldLabel}</span> →{" "}
+                {proposesDeath ? (
+                  <span className="font-medium text-blood-bright">✕ {c.proposedLabel}</span>
+                ) : (
+                  c.proposedLabel
+                )}
               </p>
+              {proposesDeath && (
+                <span className="border border-blood px-1.5 py-0.5 text-[0.6rem] uppercase tracking-wider text-blood-bright">
+                  Décès proposé
+                </span>
+              )}
               {c.conflictsWithExisting && (
                 <span className="border border-blood/60 px-1.5 py-0.5 text-[0.6rem] uppercase tracking-wider text-blood-bright">
                   Contredit la valeur en place
