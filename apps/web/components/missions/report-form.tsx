@@ -14,7 +14,7 @@ interface PendingImage {
 export function ReportForm({ missionId }: { missionId: string }) {
   const router = useRouter();
   const [content, setContent] = useState("");
-  const [isFinal, setIsFinal] = useState(false);
+  const isFinal = false;
   const [images, setImages] = useState<PendingImage[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -65,7 +65,6 @@ export function ReportForm({ missionId }: { missionId: string }) {
       } else {
         setError(null);
         setContent("");
-        setIsFinal(false);
         images.forEach((image) => URL.revokeObjectURL(image.previewUrl));
         setImages([]);
         router.refresh();
@@ -76,7 +75,7 @@ export function ReportForm({ missionId }: { missionId: string }) {
   return (
     <div className="space-y-2">
       <label htmlFor="report-content" className="block text-xs text-ink-faint uppercase tracking-wider">
-        Nouveau rapport
+        Rapport d&rsquo;étape
       </label>
       <textarea
         id="report-content"
@@ -133,22 +132,15 @@ export function ReportForm({ missionId }: { missionId: string }) {
         </span>
       </div>
 
-      <label className="flex cursor-pointer items-center gap-2 text-xs text-ink-muted">
-        <input
-          type="checkbox"
-          checked={isFinal}
-          onChange={(e) => setIsFinal(e.target.checked)}
-          className="accent-[var(--toile-gold)]"
-        />
-        Rapport final (notifie les tisseurs)
-      </label>
+      {/* Le rapport FINAL passe par le parcours en trois étapes (résultat,
+          renseignements, validation) : ici, seulement un point d'étape. */}
       {error && (
         <p role="alert" className="border border-blood bg-blood/10 px-3 py-2 text-xs text-blood-bright">
           {error}
         </p>
       )}
       <Button variant="outline" onClick={submit} disabled={isPending || content.trim().length < 10}>
-        {isPending ? "Transmission…" : "Transmettre le rapport"}
+        {isPending ? "Transmission…" : "Transmettre le point d'étape"}
       </Button>
     </div>
   );

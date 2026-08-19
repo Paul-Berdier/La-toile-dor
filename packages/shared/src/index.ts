@@ -12,6 +12,7 @@ export * from "./profile-pricing";
 export * from "./profile-access";
 export * from "./profile-images";
 export * from "./profile-contributions";
+export * from "./mission-report";
 export * from "./eligibility";
 export * from "./reward-sharing";
 export * from "./assignment-visibility";

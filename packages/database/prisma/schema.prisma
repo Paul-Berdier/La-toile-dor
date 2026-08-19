@@ -286,6 +286,7 @@ model Group {
   profileGrants   ProfileAccessGrant[]     @relation("GroupProfileGrants")
   createdProfiles CharacterProfile[]       @relation("GroupCreatedProfiles")
   intelContributions ProfileIntelContribution[] @relation("GroupIntelContributions")
+  reportDrafts       MissionReportDraft[]       @relation("GroupReportDrafts")
 
   @@unique([factionId, name])
 }
@@ -476,6 +477,7 @@ model Mission {
   attachments   MissionAttachment[]
   statusHistory MissionStatusHistory[]
   reports       MissionReport[]
+  reportDrafts  MissionReportDraft[]
   scores        MissionScore[]
   notifications NotificationDelivery[]
   intelSources  CharacterFieldIntel[]  @relation("IntelSourceMission")
@@ -679,6 +681,23 @@ model MissionReport {
   images  MissionReportImage[]
 
   @@index([missionId])
+}
+
+// Brouillon du rapport de fin de mission d'un groupe : sauvegardé au fil de
+// la saisie, effacé à la finalisation. Un seul par (mission, groupe) — deux
+// membres du même groupe travaillent sur le même brouillon.
+model MissionReportDraft {
+  id        String   @id @default(cuid())
+  missionId String
+  groupId   String
+  authorId  String
+  payload   Json
+  updatedAt DateTime @default(now()) @updatedAt
+
+  mission Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  group   Group   @relation("GroupReportDrafts", fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([missionId, groupId])
 }
 
 model MissionReportImage {

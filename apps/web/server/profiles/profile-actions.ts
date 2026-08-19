@@ -27,6 +27,7 @@ import { enqueueNotifications, userIdsWithPermission } from "@/server/notificati
 import { getProfileViewer, decideAccess, toAccessTarget, accessTargetSelect } from "./access";
 import { findSimilarProfiles } from "./queries";
 import { uploadProfileGalleryImageAction } from "./image-actions";
+import { createOwnedProfile, createProfileRecord } from "./create";
 
 export interface ProfileActionResult {
   ok: boolean;
@@ -49,20 +50,6 @@ async function guardManage() {
   const current = await requireUser();
   if (!current.permissions.has(PERMISSIONS.PROFILE_MANAGE)) return null;
   return current;
-}
-
-/** Création d'un profil avec code PRF-XXXXXX dérivé du compteur. */
-async function createProfileRecord(
-  tx: Prisma.TransactionClient,
-  data: Omit<Prisma.CharacterProfileUncheckedCreateInput, "code">,
-) {
-  const created = await tx.characterProfile.create({
-    data: { ...data, code: `tmp-${Date.now()}-${Math.floor(Math.random() * 1e6)}` },
-  });
-  return tx.characterProfile.update({
-    where: { id: created.id },
-    data: { code: formatProfileCode(created.codeNumber) },
-  });
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -132,26 +119,15 @@ export async function quickCreateProfileAction(raw: unknown): Promise<ProfileAct
   const title = parsed.data.title?.trim() || formatDossierTitle(firstName, lastName);
 
   const profile = await prisma.$transaction(async (tx) => {
-    const created = await createProfileRecord(tx, {
-      characterFirstName: firstName,
-      firstNameNorm: normalizeRefLabel(firstName),
-      characterLastName: lastName,
+    // Une seule voie de création (dossier + octroi CREATED_BY_GROUP + titre)
+    const created = await createOwnedProfile(tx, {
+      firstName,
+      lastName,
       title,
-      createdById: current.session.userId,
-      createdByGroupId: ownerGroupId,
+      ownerGroupId,
+      actorId: current.session.userId,
+      sourceMissionId: parsed.data.sourceMissionId ?? null,
     });
-    // L'accès du groupe créateur, tracé comme tel : c'est LUI le propriétaire
-    if (ownerGroupId) {
-      await tx.profileAccessGrant.create({
-        data: {
-          profileId: created.id,
-          groupId: ownerGroupId,
-          grantedById: current.session.userId,
-          sourceType: "CREATED_BY_GROUP",
-          priceRyos: null,
-        },
-      });
-    }
     await tx.characterProfileRevision.create({
       data: {
         profileId: created.id,

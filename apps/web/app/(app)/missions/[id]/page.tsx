@@ -17,6 +17,9 @@ import { RankSeal } from "@/components/missions/rank-seal";
 import { ClaimPanel } from "@/components/missions/claim-panel";
 import { ClaimDecide } from "@/components/missions/claim-decide";
 import { ReportForm } from "@/components/missions/report-form";
+import { MissionReportWizard } from "@/components/missions/report-wizard";
+import { loadProfileRefs } from "@/server/profiles/edit-data";
+import { missionReportPayloadSchema } from "@toile/shared";
 import { ManageTeamButton } from "@/components/missions/manage-team";
 import { MissionAdminActions } from "@/components/missions/mission-admin-actions";
 import { MissionTargets } from "@/components/missions/mission-targets";
@@ -91,6 +94,32 @@ export default async function MissionDetailPage({
       })
     : null;
   const minLevelLabel = minLevel?.label ?? mission.minRecommendedLevel?.label ?? null;
+
+  // ── Rapport de fin de mission (parcours en 3 étapes) ──
+  // Qui rapporte : un membre d'un groupe attribué (au nom de CE groupe) — ou
+  // la modération au nom de l'unique groupe attribué. Le brouillon est celui
+  // du groupe : deux membres reprennent le même.
+  const reportOpen = ["ASSIGNED", "IN_PROGRESS"].includes(mission.status);
+  const myAssignedGroupIds = [...assignedGroupIds].filter((gid) => ctx.groupIds.has(gid));
+  const myParticipantGroupId = mission.participants.find((p) => p.userId === current.session.userId)?.groupId ?? null;
+  let reporterGroupId: string | null = null;
+  if (myParticipantGroupId && myAssignedGroupIds.includes(myParticipantGroupId)) reporterGroupId = myParticipantGroupId;
+  else if (myAssignedGroupIds.length === 1) reporterGroupId = myAssignedGroupIds[0]!;
+  else if (myAssignedGroupIds.length === 0 && ctx.isModerator && assignedGroupIds.size === 1) reporterGroupId = [...assignedGroupIds][0]!;
+  const showWizard = reportOpen && confidentialAccess && reporterGroupId !== null;
+  const [reportRefs, reportDraft, reporterGroup] = showWizard
+    ? await Promise.all([
+        loadProfileRefs(),
+        prisma.missionReportDraft.findUnique({
+          where: { missionId_groupId: { missionId: mission.id, groupId: reporterGroupId! } },
+          select: { payload: true, updatedAt: true },
+        }),
+        prisma.group.findUnique({ where: { id: reporterGroupId! }, select: { name: true } }),
+      ])
+    : [null, null, null];
+  const reportDraftPayload = reportDraft
+    ? (missionReportPayloadSchema.safeParse(reportDraft.payload).data ?? null)
+    : null;
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-6 lg:px-6">
@@ -452,8 +481,42 @@ export default async function MissionDetailPage({
                   </li>
                 ))}
               </ul>
-              {["ASSIGNED", "IN_PROGRESS"].includes(mission.status) && (
-                <ReportForm missionId={mission.id} />
+              {reportOpen && (
+                <details className="mb-4">
+                  <summary className="cursor-pointer text-[0.7rem] uppercase tracking-wider text-ink-faint hover:text-gold">
+                    Rapport d&rsquo;étape (facultatif)
+                  </summary>
+                  <div className="mt-2">
+                    <ReportForm missionId={mission.id} />
+                  </div>
+                </details>
+              )}
+              {showWizard && reportRefs && reporterGroupId && (
+                <div className="border-t border-border-gold pt-4">
+                  <h3 className="mb-1 font-display text-sm tracking-widest text-gold uppercase">
+                    Rapport de fin de mission
+                  </h3>
+                  <p className="mb-3 text-[0.7rem] text-ink-faint">
+                    Trois étapes : le résultat, ce que vous avez appris sur chaque dossier, la validation.
+                    Votre brouillon est conservé.
+                  </p>
+                  <MissionReportWizard
+                    missionId={mission.id}
+                    missionCode={mission.code}
+                    groupId={reporterGroupId}
+                    groupName={reporterGroup?.name ?? "votre groupe"}
+                    targets={mission.targets.map((t) => ({
+                      id: t.id,
+                      profileId: t.profileId,
+                      name: t.profile?.characterFirstName ?? t.label ?? "Cible",
+                      code: t.profile?.code ?? null,
+                      outcome: t.outcome,
+                    }))}
+                    refs={reportRefs}
+                    initialDraft={reportDraftPayload}
+                    draftSavedAt={reportDraft?.updatedAt.toISOString() ?? null}
+                  />
+                </div>
               )}
             </section>
           )}
