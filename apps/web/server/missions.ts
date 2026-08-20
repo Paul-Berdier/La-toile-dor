@@ -111,7 +111,9 @@ export async function getAccessContext(current: CurrentUser) {
 
   const [groupMemberships, participations] = await Promise.all([
     prisma.groupMember.findMany({
-      where: { userId },
+      // Une appartenance à une cellule désactivée n'ouvre plus aucun accès et
+      // ne doit surtout pas être proposée comme autorité de revendication.
+      where: { userId, group: { isActive: true } },
       include: {
         group: {
           include: {

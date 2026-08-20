@@ -132,14 +132,18 @@ export default async function MissionsPage({
       tone: "warning",
       hint: "Cibles en texte libre ou titre écrit à la main",
     });
-  } else if (myGroupIds.length > 0) {
+  }
+  // Les rôles sont cumulatifs : un modérateur qui dirige aussi un ou plusieurs
+  // groupes conserve ses raccourcis de chef au lieu d'être enfermé dans la vue
+  // modération.
+  if (myGroupIds.length > 0) {
     tiles.push({
-      label: "Mes contrats en cours",
+      label: isModerator ? "Mes groupes · contrats" : "Mes contrats en cours",
       value: myInProgress,
       href: "/missions?vue=liste",
     });
     tiles.push({
-      label: "Mes candidatures",
+      label: isModerator ? "Mes groupes · candidatures" : "Mes candidatures",
       value: myPendingClaims,
       href: "/missions?claimed=1",
       tone: "warning",
@@ -155,7 +159,9 @@ export default async function MissionsPage({
           </h1>
           <p className="mt-1 text-xs text-ink-faint">
             {isModerator
-              ? "Ce que la Toile propose, et ce qu'elle attend de vous."
+              ? myGroupIds.length > 0
+                ? "Vue de modération — vos responsabilités de chef restent actives."
+                : "Ce que la Toile propose, et ce qu'elle attend de vous."
               : "Les fils disponibles attendent d'être saisis."}
           </p>
         </div>

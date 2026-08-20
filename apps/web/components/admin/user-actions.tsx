@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
+  setUserGroupLeadershipAction,
   setUserGroupMembershipAction,
   setUserRoleAction,
   setUserStatusAction,
@@ -58,6 +59,17 @@ export function UserActions({
   const toggleGroup = (groupId: string, member: boolean) => {
     startTransition(async () => {
       const res = await setUserGroupMembershipAction({ userId, groupId, member });
+      if (!res.ok) setError(res.error ?? "Échec.");
+      else {
+        setError(null);
+        router.refresh();
+      }
+    });
+  };
+
+  const toggleLeadership = (groupId: string, leader: boolean) => {
+    startTransition(async () => {
+      const res = await setUserGroupLeadershipAction({ userId, groupId, leader });
       if (!res.ok) setError(res.error ?? "Échec.");
       else {
         setError(null);
@@ -127,16 +139,20 @@ export function UserActions({
         <div className="mt-1 flex flex-wrap gap-2">
           {allRoles.map((role) => {
             const has = roles.includes(role.slug);
+            const leadershipDerived = role.slug === "group_leader";
             return (
               <label key={role.slug} className="flex items-center gap-1 text-ink-muted">
                 <input
                   type="checkbox"
                   checked={has}
                   onChange={() => toggleRole(role.slug, !has)}
-                  disabled={isPending}
+                  disabled={isPending || leadershipDerived}
                   className="accent-[var(--toile-gold)]"
                 />
                 {role.name}
+                {leadershipDerived && (
+                  <span className="text-ink-faint">(synchronisé par les groupes)</span>
+                )}
               </label>
             );
           })}
@@ -151,19 +167,39 @@ export function UserActions({
           {allGroups.map((group) => {
             const membership = groupMemberships.find((item) => item.groupId === group.id);
             return (
-              <label key={group.id} className="flex items-start gap-1.5 text-ink-muted">
-                <input
-                  type="checkbox"
-                  checked={Boolean(membership)}
-                  onChange={() => toggleGroup(group.id, !membership)}
-                  disabled={isPending || membership?.isLeader === true}
-                  className="mt-0.5 accent-[var(--toile-gold)]"
-                />
-                <span>
-                  {group.name}{group.factionName ? ` · ${group.factionName}` : ""}
-                  {membership?.isLeader && <span className="ml-1 text-gold">(chef)</span>}
-                </span>
-              </label>
+              <div
+                key={group.id}
+                className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-ink-muted"
+              >
+                <label className="flex min-w-0 items-start gap-1.5">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(membership)}
+                    onChange={() => toggleGroup(group.id, !membership)}
+                    disabled={isPending || membership?.isLeader === true}
+                    aria-label={`Membre de ${group.name}`}
+                    className="mt-0.5 accent-[var(--toile-gold)]"
+                  />
+                  <span className="min-w-0">
+                    {group.name}{group.factionName ? ` · ${group.factionName}` : ""}
+                  </span>
+                </label>
+                {membership && (
+                  <label className="flex items-center gap-1 text-[0.68rem] uppercase tracking-wider">
+                    <input
+                      type="checkbox"
+                      checked={membership.isLeader}
+                      onChange={() => toggleLeadership(group.id, !membership.isLeader)}
+                      disabled={isPending}
+                      aria-label={`Chef de ${group.name}`}
+                      className="accent-[var(--toile-gold)]"
+                    />
+                    <span className={membership.isLeader ? "text-gold" : "text-ink-faint"}>
+                      Chef
+                    </span>
+                  </label>
+                )}
+              </div>
             );
           })}
           {allGroups.length === 0 && <p className="text-ink-faint italic">Aucun groupe actif.</p>}

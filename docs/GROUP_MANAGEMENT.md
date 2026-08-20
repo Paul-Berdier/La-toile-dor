@@ -94,8 +94,16 @@ voient afin de pouvoir administrer l'arrivée.
 Un utilisateur peut appartenir à plusieurs groupes : `GroupMember` est
 identifié par le couple `(groupId, userId)`. Depuis `/admin/utilisateurs`, un
 super-administrateur peut ajouter ou retirer un compte actif de plusieurs
-groupes. L'ajout ne crée aucune appartenance de faction. Un chef ne peut pas être retiré par cette case
-générique afin de ne pas laisser un rôle de direction incohérent.
+groupes. L'ajout ne crée aucune appartenance de faction. Un chef ne peut pas
+être retiré par la case générique afin de ne pas laisser un rôle de direction
+incohérent.
+
+Le contrôle « Chef » de chaque appartenance synchronise atomiquement
+`GroupMember.isLeader` et le rôle applicatif `group_leader`. Une rétrogradation
+ne retire ce rôle que si le membre ne dirige plus aucun autre groupe. Le rôle
+ne peut donc pas être coché ou décoché directement dans la liste générique des
+rôles. Les autres rôles sont indépendants : un même compte peut rester
+`moderator` tout en dirigeant un ou plusieurs groupes.
 
 Cette gestion est volontairement protégée par `user.manage` : un modérateur
 peut être membre de plusieurs groupes, mais ne peut pas s'y ajouter lui-même.
@@ -121,6 +129,11 @@ Les permissions sont relues à chaque requête et deviennent donc effectives
 immédiatement. L'événement `group.member_promoted` ne contient que l'identifiant
 et le pseudonyme public de la cible. Une notification `MEMBER_PROMOTED` est
 également créée.
+
+Depuis `/admin/utilisateurs`, la promotion et la rétrogradation produisent
+respectivement `group.member_promoted` et `group.member_demoted`. Les audits ne
+contiennent que les identifiants techniques et l'état de direction, jamais
+l'identité réelle.
 
 La promotion conserve l'historique d'appartenance : le membre n'est ni retiré
 ni recréé.

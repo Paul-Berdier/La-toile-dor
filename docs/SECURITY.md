@@ -115,6 +115,11 @@ confidentialité du RP.
 - Gestion des groupes : un chef agit uniquement sur un groupe où son
   `GroupMember.isLeader` vaut `true`; `group.edit.any` étend cette portée à la
   modération.
+- Les rôles sont additionnés, jamais remplacés par un rôle « dominant ». Pour
+  une revendication, `GroupMember.isLeader` sur un groupe actif reste
+  l'autorité concrète : un modérateur-chef peut représenter ce groupe, tandis
+  qu'un modérateur sans responsabilité locale reste refusé. L'administration
+  synchronise atomiquement ce marqueur avec le rôle `group_leader`.
 - Le grade courant est exclu de la modification libre du compte. Seule une
   action protégée par `user.manage` peut le remplacer après validation de la
   référence `PlayerLevel`; l'événement `user.level_updated` conserve les

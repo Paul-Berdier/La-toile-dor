@@ -17,6 +17,7 @@ import {
 import { requireUser } from "@/lib/session";
 import { isStreamerMode, maskValue } from "@/lib/streamer";
 import { getMissionDetail } from "@/server/missions";
+import { canActiveLeaderClaim } from "@/server/mission-claim-policy";
 import { RankSeal } from "@/components/missions/rank-seal";
 import { ClaimPanel } from "@/components/missions/claim-panel";
 import { ClaimDecide } from "@/components/missions/claim-decide";
@@ -100,10 +101,7 @@ export default async function MissionDetailPage({
   );
   if (assignedGroupIds.size === 0 && mission.assignedGroupId) assignedGroupIds.add(mission.assignedGroupId);
   const claimableLedGroups = ctx.ledGroups.filter((group) => !assignedGroupIds.has(group.id));
-  const canClaim =
-    current.permissions.has(PERMISSIONS.MISSION_CLAIM) &&
-    ["AVAILABLE", "CLAIM_PENDING", "ASSIGNED"].includes(mission.status) &&
-    claimableLedGroups.length > 0;
+  const canClaim = canActiveLeaderClaim(mission.status, claimableLedGroups.length > 0);
   const canEdit = current.permissions.has(PERMISSIONS.MISSION_UPDATE);
   const canDelete = current.permissions.has(PERMISSIONS.MISSION_CANCEL);
 

@@ -87,6 +87,19 @@ export async function setUserRoleAction(input: {
   const actor = await guard(PERMISSIONS.MODERATOR_MANAGE);
   if (!actor) return { ok: false, error: "Permission refusée." };
 
+  // Le rôle de chef est la projection des responsabilités portées par
+  // GroupMember.isLeader. Le modifier directement permettrait de créer les
+  // deux incohérences dangereuses : un faux chef sans groupe, ou un vrai chef
+  // privé de mission.claim. Il passe donc exclusivement par l'action de groupe
+  // atomique ci-dessous.
+  if (input.roleSlug === "group_leader") {
+    return {
+      ok: false,
+      error:
+        "Le rôle Chef de groupe est synchronisé avec les groupes dirigés. Utilisez le contrôle « Chef » dans la section Groupes.",
+    };
+  }
+
   const role = await prisma.role.findUnique({ where: { slug: input.roleSlug } });
   if (!role) return { ok: false, error: "Rôle inconnu." };
 
@@ -179,6 +192,143 @@ export async function setUserGroupMembershipAction(input: {
   });
   revalidatePath("/admin/utilisateurs");
   revalidatePath(`/groupes/${group.id}`);
+  return { ok: true };
+}
+
+/**
+ * Promeut ou rétrograde un membre depuis l'administration des utilisateurs.
+ *
+ * L'appartenance au groupe porte la portée réelle de l'autorité ; le rôle
+ * applicatif apporte les permissions fonctionnelles. Les deux écritures sont
+ * donc indissociables. Un compte peut conserver simultanément moderator (ou
+ * tout autre rôle) : seule l'association group_leader est synchronisée ici.
+ */
+export async function setUserGroupLeadershipAction(input: {
+  userId: string;
+  groupId: string;
+  leader: boolean;
+}): Promise<Result> {
+  const actor = await guard(PERMISSIONS.USER_MANAGE);
+  if (!actor) return { ok: false, error: "Permission refusée." };
+  if (
+    typeof input?.userId !== "string" ||
+    input.userId.length < 1 ||
+    input.userId.length > 64 ||
+    typeof input?.groupId !== "string" ||
+    input.groupId.length < 1 ||
+    input.groupId.length > 64 ||
+    typeof input?.leader !== "boolean"
+  ) {
+    return { ok: false, error: "Paramètres invalides." };
+  }
+
+  let previousLeadership = false;
+  try {
+    const result = await prisma.$transaction(
+      async (tx) => {
+        const [user, group, membership, leaderRole] = await Promise.all([
+          tx.user.findUnique({
+            where: { id: input.userId },
+            select: { status: true },
+          }),
+          tx.group.findUnique({
+            where: { id: input.groupId },
+            select: { id: true, isActive: true },
+          }),
+          tx.groupMember.findUnique({
+            where: {
+              groupId_userId: { groupId: input.groupId, userId: input.userId },
+            },
+            select: { isLeader: true },
+          }),
+          tx.role.findUnique({
+            where: { slug: "group_leader" },
+            select: { id: true },
+          }),
+        ]);
+
+        if (!user) return { ok: false as const, error: "Utilisateur introuvable." };
+        if (!group) return { ok: false as const, error: "Groupe introuvable." };
+        if (!membership) {
+          return {
+            ok: false as const,
+            error: "Ajoutez d'abord cet utilisateur comme membre du groupe.",
+          };
+        }
+        if (!leaderRole) {
+          return {
+            ok: false as const,
+            error: "Le rôle système Chef de groupe est introuvable.",
+          };
+        }
+        if (input.leader && !group.isActive) {
+          return { ok: false as const, error: "Un groupe inactif ne peut pas recevoir de chef." };
+        }
+        if (input.leader && user.status !== "ACTIVE") {
+          return { ok: false as const, error: "Seul un compte actif peut devenir chef." };
+        }
+
+        previousLeadership = membership.isLeader;
+        await tx.groupMember.update({
+          where: {
+            groupId_userId: { groupId: input.groupId, userId: input.userId },
+          },
+          data: { isLeader: input.leader },
+        });
+
+        if (input.leader) {
+          await tx.userRole.upsert({
+            where: {
+              userId_roleId: { userId: input.userId, roleId: leaderRole.id },
+            },
+            update: {},
+            create: {
+              userId: input.userId,
+              roleId: leaderRole.id,
+              assignedById: actor.userId,
+            },
+          });
+        } else {
+          const otherLedGroups = await tx.groupMember.count({
+            where: { userId: input.userId, isLeader: true },
+          });
+          if (otherLedGroups === 0) {
+            await tx.userRole.deleteMany({
+              where: { userId: input.userId, roleId: leaderRole.id },
+            });
+          }
+        }
+
+        return { ok: true as const };
+      },
+      { isolationLevel: "Serializable" },
+    );
+
+    if (!result.ok) return result;
+  } catch (error) {
+    if ((error as { code?: string }).code === "P2034") {
+      return {
+        ok: false,
+        error: "La responsabilité de ce membre vient d'être modifiée ; rechargez puis réessayez.",
+      };
+    }
+    throw error;
+  }
+
+  const meta = await requestMeta();
+  await audit({
+    actorId: actor.userId,
+    action: input.leader ? "group.member_promoted" : "group.member_demoted",
+    resourceType: "group",
+    resourceId: input.groupId,
+    oldValues: { userId: input.userId, isLeader: previousLeadership },
+    newValues: { userId: input.userId, isLeader: input.leader },
+    ...meta,
+  });
+
+  revalidatePath("/admin/utilisateurs");
+  revalidatePath(`/groupes/${input.groupId}`);
+  revalidatePath("/missions");
   return { ok: true };
 }
 

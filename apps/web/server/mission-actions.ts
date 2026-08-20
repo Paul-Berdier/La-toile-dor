@@ -24,6 +24,7 @@ import {
   userIdsWithPermission,
 } from "@/server/notifications";
 import { canMoveMissionManually } from "@/server/mission-lifecycle";
+import { isClaimableMissionStatus } from "./mission-claim-policy";
 import { getAccessContext } from "@/server/missions";
 import {
   applyMissionOutcomeToProfiles,
@@ -497,9 +498,6 @@ export async function claimMissionAction(input: {
   message?: string;
 }): Promise<ActionResult> {
   const current = await requireUser();
-  if (!current.permissions.has(PERMISSIONS.MISSION_CLAIM)) {
-    return { ok: false, error: "Seuls les chefs de groupe peuvent réclamer une mission." };
-  }
   const parsed = missionClaimSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Requête invalide." };
   const { missionId, groupId, message, participantIds, publicRoster } = parsed.data;
@@ -530,7 +528,7 @@ export async function claimMissionAction(input: {
     where: { id: missionId },
     include: { minRecommendedLevel: true },
   });
-  if (!mission || !["AVAILABLE", "CLAIM_PENDING", "ASSIGNED"].includes(mission.status)) {
+  if (!mission || !isClaimableMissionStatus(mission.status)) {
     return { ok: false, error: "Cette mission n'est plus disponible." };
   }
 
@@ -585,7 +583,7 @@ export async function claimMissionAction(input: {
             minRecommendedLevel: { select: { order: true, label: true } },
           },
         });
-        if (!liveMission || !["AVAILABLE", "CLAIM_PENDING", "ASSIGNED"].includes(liveMission.status)) {
+        if (!liveMission || !isClaimableMissionStatus(liveMission.status)) {
           throw new Error("MISSION_CHANGED");
         }
 

@@ -25,6 +25,13 @@ engagés. L'effectif est toujours déduit de cette sélection :
 Une revendication n'accorde aucun accès confidentiel. Seule une attribution
 active le fait.
 
+Les rôles sont cumulatifs. Un même compte peut être `moderator` et diriger un
+ou plusieurs groupes : il conserve alors les outils de création/attribution de
+la modération **et** peut revendiquer au nom de chacun de ses groupes actifs.
+L'autorité de revendication vient de `GroupMember.isLeader`, relu dans la
+transaction ; le simple rôle de modérateur ne permet jamais de représenter un
+groupe que l'utilisateur ne dirige pas.
+
 Une mission reste revendicable lorsqu'elle est `ASSIGNED` : un autre groupe
 peut proposer sa contribution tant que la mission n'a pas commencé. Un groupe
 déjà attribué ne peut pas déposer une seconde revendication, mais un même chef
