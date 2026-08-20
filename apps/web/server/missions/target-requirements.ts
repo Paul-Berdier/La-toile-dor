@@ -58,8 +58,9 @@ export async function checkTargetIntel(missionId: string): Promise<TargetIntelCh
   const rule = await getTargetIntelRule();
   if (rule.mode === "OFF") return { issues: [], blocking: false };
 
+  // Les CIBLES : c'est sur elles que la Toile attend du renseignement.
   const targets = await prisma.missionTarget.findMany({
-    where: { missionId },
+    where: { missionId, role: "TARGET" },
     select: {
       outcome: true,
       label: true,

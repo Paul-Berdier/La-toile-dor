@@ -9,6 +9,10 @@ import {
   ELIGIBILITY_MODE_LABELS,
   canViewAssignmentRoster,
   toPublicRosterAgent,
+  MISSION_TARGET_OUTCOME_LABELS,
+  type MissionProfileRole,
+  type MissionTargetOutcome,
+  type ProfileFieldKey,
 } from "@toile/shared";
 import { requireUser } from "@/lib/session";
 import { isStreamerMode, maskValue } from "@/lib/streamer";
@@ -23,6 +27,9 @@ import { missionReportPayloadSchema } from "@toile/shared";
 import { ManageTeamButton } from "@/components/missions/manage-team";
 import { MissionAdminActions } from "@/components/missions/mission-admin-actions";
 import { MissionTargets } from "@/components/missions/mission-targets";
+import { MissionPeople, type MissionPersonCard } from "@/components/missions/mission-people";
+import { MissionSnapshotNotice } from "@/components/missions/mission-snapshot-notice";
+import { missionSnapshotDiff } from "@/server/missions/editor-actions";
 import { getTargetIntelRule } from "@/server/missions/target-requirements";
 import {
   canViewProfileValues,
@@ -166,12 +173,50 @@ export default async function MissionDetailPage({
         prisma.group.findUnique({ where: { id: reporterGroupId! }, select: { name: true } }),
       ])
     : [null, null, null];
+  // ── Personnes de la mission ──
+  // Les liens portent leur rôle : les CIBLES d'un côté, les COMMANDITAIRES de
+  // l'autre. Ce qui s'affiche vient du SNAPSHOT pris à la publication, pas de
+  // l'état actuel du dossier : une mission close ne se réécrit pas.
+  const missionTargets = mission.targets.filter((link) => link.role === "TARGET");
+  const missionClients = mission.targets.filter((link) => link.role === "CLIENT");
+  const missionOthers = mission.targets.filter(
+    (link) => link.role !== "TARGET" && link.role !== "CLIENT",
+  );
+  const toCard = (link: (typeof mission.targets)[number]): MissionPersonCard => ({
+    linkId: link.id,
+    profileId: link.profileId,
+    label: link.label,
+    role: link.role as MissionProfileRole,
+    isPrimary: link.isPrimary,
+    code: link.profile?.code ?? null,
+    name: link.profile
+      ? [link.profile.characterFirstName, link.profile.characterLastName].filter(Boolean).join(" ")
+      : null,
+    gradeLabel: link.snapshotRank?.label ?? null,
+    classLabel: link.snapshotClass?.label ?? null,
+    originLabel: link.snapshotFaction?.name ?? null,
+    lifeStatus: link.profile?.lifeStatus ?? null,
+    outcomeLabel:
+      link.role === "TARGET" && link.outcome !== "UNKNOWN"
+        ? MISSION_TARGET_OUTCOME_LABELS[link.outcome as MissionTargetOutcome]
+        : null,
+  });
+  const targetCards = missionTargets.map(toCard);
+  const clientCards = missionClients.map(toCard);
+  const otherCards = missionOthers.map(toCard);
+  // Le dossier a-t-il bougé depuis la publication ? La modération le voit et
+  // décide — la mission ne se resynchronise jamais toute seule.
+  const staleSnapshots =
+    level === "moderator" && mission.status !== "DRAFT"
+      ? await missionSnapshotDiff(mission.id)
+      : [];
+
   // §41 : « Valeur actuelle » par dossier cible. Pour un dossier que le groupe
   // rapporteur VOIT, les libellés courants (jamais les structures) ; pour un
   // dossier scellé, RIEN ne part — le client affichera « Confidentielle ».
   const reporterCurrentValues = new Map<string, Record<string, string>>();
   if (showWizard && reporterGroupId) {
-    const targetProfileIds = mission.targets
+    const targetProfileIds = missionTargets
       .map((t) => t.profileId)
       .filter((id): id is string => Boolean(id));
     if (targetProfileIds.length > 0) {
@@ -334,40 +379,19 @@ export default async function MissionDetailPage({
                   </div>
                 )}
                 <div className="grid gap-x-8 sm:grid-cols-2">
+                  {/* Cibles et commanditaires ont leurs propres cartes, plus
+                      bas : on ne redit pas ici ce qu'elles montrent mieux.
+                      Seul le TEXTE LIBRE des missions saisies avant les
+                      dossiers subsiste — jusqu'à sa régularisation. */}
                   {"targetIdentity" in view && view.targetIdentity && (
-                    <Field label="Cible(s)">
+                    <Field label="Cible(s) — saisie historique">
                       {mask("CIBLE", view.targetIdentity)}
-                      {/* Le lien suit exactement la visibilité de la cible :
-                          il n'apparaît que dans les vues qui la révèlent. */}
-                      {view.targetProfileId && (
-                        <Link
-                          href={`/profils/${view.targetProfileId}`}
-                          className="ml-2 font-mono-toile text-[0.65rem] text-gold underline-offset-2 hover:underline"
-                        >
-                          諜 dossier
-                        </Link>
-                      )}
                     </Field>
                   )}
-                  {"targetFactionId" in view &&
-                    view.targetFactionId &&
-                    mission.targetFaction && (
-                      <Field label="Faction de la cible">
-                        {mask("FCT", mission.targetFaction.name)}
-                      </Field>
-                    )}
                   {view.location && <Field label="Lieu">{mask("LIEU", view.location)}</Field>}
                   {"clientName" in view && view.clientName && (
-                    <Field label="Commanditaire">
+                    <Field label="Commanditaire — saisie historique">
                       {mask("CMD", view.clientName)}
-                      {view.clientProfileId && (
-                        <Link
-                          href={`/profils/${view.clientProfileId}`}
-                          className="ml-2 font-mono-toile text-[0.65rem] text-gold underline-offset-2 hover:underline"
-                        >
-                          諜 dossier
-                        </Link>
-                      )}
                     </Field>
                   )}
                   {view.evidence && <Field label="Preuves à rapporter">{mask("PRV", view.evidence)}</Field>}
@@ -404,60 +428,21 @@ export default async function MissionDetailPage({
             </section>
           )}
 
-          {/* Cibles — chef d'un groupe attribué : les dossiers des cibles lui
-              sont ouverts le temps de la mission (règle MISSION_TARGET), puis
-              acquis à la clôture. Lecture seule : rattacher ou retirer une
-              cible reste un acte de modération. */}
-          {level === "leader" && mission.targets.length > 0 && (
-            <section className="border border-border-default bg-raised p-4">
-              <h2 className="mb-1 font-display text-sm tracking-widest text-gold uppercase">
-                Dossiers des cibles
-              </h2>
-              <p className="mb-3 text-xs text-ink-faint">
-                Ouverts à votre groupe tant que la mission est en cours ; ils vous restent acquis si
-                elle est menée à son terme.
-              </p>
-              <ul className="space-y-2">
-                {mission.targets.map((target) => {
-                  const opened = target.profileId ? canViewProfileValues(profileViewer, target.profileId) : false;
-                  const name = target.profile
-                    ? [target.profile.characterFirstName, target.profile.characterLastName].filter(Boolean).join(" ")
-                    : target.label;
-                  return (
-                    <li key={target.id} className="flex flex-wrap items-center justify-between gap-2 border border-border-default bg-elevated px-3 py-2">
-                      <span className="min-w-0">
-                        <span className="text-sm text-ink">{mask(`CIB${target.id}`, name)}</span>
-                        {target.profile && (
-                          <span className="ml-1.5 font-mono-toile text-[0.65rem] text-ink-faint">{target.profile.code}</span>
-                        )}
-                        {target.profile?.title && (
-                          <span className="block truncate font-display text-xs text-gold/80">{target.profile.title}</span>
-                        )}
-                      </span>
-                      {target.profileId ? (
-                        <span className="flex items-center gap-2">
-                          <span
-                            className={`border px-1.5 py-0.5 text-[0.6rem] uppercase tracking-wider ${
-                              opened ? "border-copper/60 text-copper" : "border-border-default text-ink-faint"
-                            }`}
-                          >
-                            {opened ? "⟡ Ouvert à votre groupe" : "封 Dossier scellé"}
-                          </span>
-                          <Link
-                            href={`/profils/${target.profileId}`}
-                            className="font-mono-toile text-[0.7rem] text-gold underline-offset-2 hover:underline"
-                          >
-                            {opened ? "Ouvrir le dossier" : "Voir"}
-                          </Link>
-                        </span>
-                      ) : (
-                        <span className="text-[0.65rem] text-warning">sans dossier</span>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
+          {/* PERSONNES — cartes des cibles et des commanditaires, avec l'état
+              du dossier FIGÉ à la publication. Le chef d'un groupe attribué
+              lit les dossiers des cibles le temps de la mission ; les
+              commanditaires restent, eux, réservés à la modération. */}
+          {(level === "leader" || level === "moderator") && targetCards.length > 0 && (
+            <MissionPeople title="Cibles" people={targetCards} />
+          )}
+          {level === "moderator" && clientCards.length > 0 && (
+            <MissionPeople title="Commanditaires" people={clientCards} />
+          )}
+          {level === "moderator" && otherCards.length > 0 && (
+            <MissionPeople title="Autres personnes" people={otherCards} />
+          )}
+          {level === "moderator" && staleSnapshots.length > 0 && (
+            <MissionSnapshotNotice missionId={mission.id} diffs={staleSnapshots} />
           )}
 
           {/* Cibles et leur sort — modération : c'est ce qui met les dossiers
@@ -466,7 +451,7 @@ export default async function MissionDetailPage({
             <MissionTargets
               missionId={mission.id}
               minFields={targetIntelRule.minFields}
-              targets={mission.targets.map((target) => ({
+              targets={missionTargets.map((target) => ({
                 id: target.id,
                 profileId: target.profileId,
                 profileCode: target.profile?.code ?? null,
@@ -687,7 +672,7 @@ export default async function MissionDetailPage({
                     missionCode={mission.code}
                     groupId={reporterGroupId}
                     groupName={reporterGroup?.name ?? "votre groupe"}
-                    targets={mission.targets.map((t) => ({
+                    targets={missionTargets.map((t) => ({
                       id: t.id,
                       profileId: t.profileId,
                       name: t.profile
@@ -700,6 +685,13 @@ export default async function MissionDetailPage({
                       currentValues: t.profileId ? reporterCurrentValues.get(t.profileId) ?? null : null,
                     }))}
                     refs={reportRefs}
+                    // Prise d'information : ce que le contrat demandait
+                    // d'apprendre, proposé d'un clic dans chaque dossier.
+                    soughtFieldKeys={
+                      Array.isArray(mission.soughtFieldKeys)
+                        ? (mission.soughtFieldKeys as ProfileFieldKey[])
+                        : []
+                    }
                     initialDraft={reportDraftPayload}
                     draftSavedAt={reportDraft?.updatedAt.toISOString() ?? null}
                     canFinalize={mission.status === "IN_PROGRESS"}

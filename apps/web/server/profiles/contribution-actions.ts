@@ -114,7 +114,7 @@ export async function submitIntelContributionAction(raw: unknown): Promise<Contr
         assignedGroupId: true,
         assignments: { where: { active: true }, select: { groupId: true } },
         targets: {
-          where: { profileId: profile.id },
+          where: { profileId: profile.id, role: "TARGET" },
           take: 1,
           select: { id: true },
         },

@@ -238,6 +238,7 @@ model Faction {
   missionsAssigned Mission[] @relation("MissionAssignedFaction")
   targetMissions   Mission[] @relation("MissionTargetFaction")
   characterProfiles CharacterProfile[] @relation("ProfileFaction")
+  missionLinkSnapshots MissionTarget[] @relation("MissionLinkSnapshotFaction")
 }
 
 model FactionMember {
@@ -317,6 +318,7 @@ model PlayerLevel {
 
   missionsTarget Mission[] @relation("MissionTargetLevel")
   missionsMin    Mission[] @relation("MissionMinLevel")
+  missionLinkSnapshots MissionTarget[] @relation("MissionLinkSnapshotRank")
   ranksMin       RankConfig[]
   users          User[]       @relation("UserLevel")
   invitations    Invitation[]
@@ -330,6 +332,23 @@ enum MissionRank {
   A
   S
   SS
+}
+
+// Nuance de rang : « B+ » est un B un peu plus rude, pas un septième rang.
+// Un modificateur plutôt qu'une valeur d'enum — sinon RankConfig, le barème
+// des points, les seuils d'éligibilité et les anciennes missions devraient
+// tous connaître douze rangs au lieu de six.
+enum MissionRankModifier {
+  NONE
+  PLUS
+  MINUS
+}
+
+// Le titre public peut nommer l'origine des cibles (« … · Konoha ») ou la
+// taire. Rien d'autre du dossier n'y entre jamais.
+enum MissionOriginVisibility {
+  SHOW
+  HIDE
 }
 
 model RankConfig {
@@ -396,7 +415,22 @@ model Mission {
   category MissionCategory
 
   // ── Données publiques (visibles avant attribution selon MissionVisibility)
+  // Titre public : GÉNÉRÉ (« Assassinat · B+ · Konin · Konoha ») à partir du
+  // type, du rang et des SNAPSHOTS des cibles. Stocké — pas seulement calculé
+  // — pour que la recherche, le Kanban et Discord lisent la même chaîne, et
+  // pour qu'une mission publiée garde son titre d'origine.
   publicTitle          String
+  // false = titre figé à la main (missions historiques, dérogation motivée)
+  titleAuto            Boolean @default(false)
+  // Dérogation de super-modérateur : pourquoi ce titre a été écrit à la main
+  titleOverrideReason  String?
+  // Nuance de rang affichée dans le titre : B, B+ ou B-
+  rankModifier         MissionRankModifier @default(NONE)
+  // Le village / la faction d'origine des cibles paraît-il dans le titre ?
+  originVisibility     MissionOriginVisibility @default(SHOW)
+  // Prise d'information : champs de dossier recherchés (clés ProfileFieldKey),
+  // proposés d'un clic dans le rapport de fin de mission.
+  soughtFieldKeys      Json?
   publicSummary        String?
   rewardRyoMin         Int
   rewardRyoMax         Int
@@ -594,28 +628,63 @@ enum MissionTargetOutcome {
   MISSING    // disparue
 }
 
-// Cible d'une mission. Une mission peut en viser PLUSIEURS, et chacune a son
-// propre sort : « mission accomplie » ne signifie pas que toutes sont mortes.
-// Le dossier est facultatif — une cible peut n'être qu'un nom sans fiche.
+// Rôle d'un dossier dans une mission. La table porte historiquement le nom
+// « MissionTarget » ; elle est devenue le LIEN mission ↔ dossier, quel que
+// soit le rôle. Renommer la table coûterait une migration destructive pour
+// aucun gain : le rôle suffit à tout distinguer.
+enum MissionProfileRole {
+  TARGET             // la personne visée par le contrat
+  CLIENT             // commanditaire
+  CONTACT            // intermédiaire, informateur
+  SUBJECT            // sujet d'une prise d'information
+  PERSON_OF_INTEREST // personne à surveiller
+  OTHER
+}
+
+// Lien mission ↔ dossier de renseignement. Une mission peut viser PLUSIEURS
+// personnes et être commandée par PLUSIEURS clients ; chaque cible a son
+// propre sort (« mission accomplie » ne signifie pas que toutes sont mortes).
+// Le dossier est facultatif — une cible ancienne peut n'être qu'un nom.
+//
+// SNAPSHOTS : le dossier vit sa vie après la mission (un Chunin devient
+// Jonin). Une mission close ne doit pas se réécrire toute seule : à la
+// publication, on fige le grade, la classe et la faction du dossier. C'est
+// le snapshot — et non la valeur vive — qui alimente le titre public et
+// l'affichage historique.
 model MissionTarget {
   id        String  @id @default(cuid())
   missionId String
   profileId String?
   // Nom libre quand la cible n'a pas (encore) de dossier
   label     String?
+  role      MissionProfileRole @default(TARGET)
+  // Cible (ou commanditaire) principale — au plus une par rôle et par mission
+  isPrimary Boolean @default(false)
   outcome   MissionTargetOutcome @default(UNKNOWN)
   note      String?
   // Qui a constaté le sort de cette cible, et quand
   recordedAt   DateTime?
   recordedById String?
+  // État du dossier figé à la publication (jamais réécrit en silence)
+  snapshotRankId    String?
+  snapshotClassId   String?
+  snapshotFactionId String?
+  snapshotAt        DateTime?
+  createdById String?
   createdAt DateTime @default(now())
 
   mission Mission           @relation(fields: [missionId], references: [id], onDelete: Cascade)
   profile CharacterProfile? @relation("MissionTargets", fields: [profileId], references: [id], onDelete: SetNull)
+  snapshotRank    PlayerLevel?            @relation("MissionLinkSnapshotRank", fields: [snapshotRankId], references: [id], onDelete: SetNull)
+  snapshotClass   ProfileReferenceOption? @relation("MissionLinkSnapshotClass", fields: [snapshotClassId], references: [id], onDelete: SetNull)
+  snapshotFaction Faction?                @relation("MissionLinkSnapshotFaction", fields: [snapshotFactionId], references: [id], onDelete: SetNull)
 
-  // Une même cible n'apparaît qu'une fois par mission
-  @@unique([missionId, profileId])
+  // Un même dossier n'apparaît qu'une fois par mission ET PAR RÔLE : le RP
+  // autorise qu'un commanditaire soit aussi la cible (trahison, contrat sur
+  // soi-même) — on ne l'interdit pas techniquement.
+  @@unique([missionId, profileId, role])
   @@index([missionId])
+  @@index([missionId, role])
   @@index([profileId])
 }
 
@@ -1004,6 +1073,7 @@ model ProfileReferenceOption {
   eyeProfiles          CharacterProfile[] @relation("ProfileEyeColor")
   eyeSecondaryProfiles CharacterProfile[] @relation("ProfileEyeColorSecondary")
   classProfiles        CharacterProfile[] @relation("ProfileNinjaClass")
+  missionLinkSnapshots MissionTarget[] @relation("MissionLinkSnapshotClass")
   techniques       CharacterSignatureTechnique[] @relation("TechniqueJutsuType")
   mergedSuggestions ProfileReferenceSuggestion[] @relation("SuggestionMergedInto")
 

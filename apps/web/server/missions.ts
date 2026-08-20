@@ -222,7 +222,9 @@ const missionInclude = {
   participants: {
     select: { userId: true, groupId: true, user: { select: { displayName: true } } },
   },
-  _count: { select: { claims: { where: { status: "PENDING" } } } },
+  // Le nombre de CIBLES est public : « 2 cibles » mesure l'ampleur du
+  // contrat sans nommer personne.
+  _count: { select: { claims: { where: { status: "PENDING" } }, targets: { where: { role: "TARGET" } } } },
 } satisfies Prisma.MissionInclude;
 
 /** Construit la clause WHERE des filtres — UNIQUEMENT sur des champs publics. */
@@ -290,6 +292,7 @@ export async function getBoard(
     const view = serializeMission(mission, level, {
       timeRemaining,
       claimCount: mission._count.claims,
+      targetCount: mission._count.targets,
     });
 
     // Un groupe est compatible s'il peut fournir au moins un agent conforme.
@@ -478,9 +481,14 @@ export async function getMissionDetail(current: CurrentUser, missionId: string) 
               characterFirstName: true,
               // Le nom est PUBLIC (il figure dans le titre du dossier)
               characterLastName: true,
+              lifeStatus: true,
               fieldIntel: { where: { knowledgeState: "KNOWN" }, select: { fieldKey: true } },
             },
           },
+          // Snapshots : ce que le dossier disait au moment de la mission
+          snapshotRank: { select: { label: true, order: true } },
+          snapshotClass: { select: { label: true } },
+          snapshotFaction: { select: { name: true } },
         },
         orderBy: { createdAt: "asc" },
       },
@@ -494,6 +502,7 @@ export async function getMissionDetail(current: CurrentUser, missionId: string) 
   const view = serializeMission(mission, level, {
     timeRemaining: computeTimeRemaining(mission, new Date(), rpConfig),
     claimCount: mission.claims.filter((c) => c.status === "PENDING").length,
+    targetCount: mission.targets.filter((t) => t.role === "TARGET").length,
   });
 
   // Catalogue des groupes pour la modale d'attribution (modération uniquement)

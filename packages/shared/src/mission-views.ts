@@ -83,6 +83,8 @@ export interface PublicMissionView {
   publishedAt: string | null;
   timeRemaining: TimeRemaining;
   claimCount: number;
+  /** Combien de personnes la mission vise — pas qui */
+  targetCount: number;
   /** La mission comporte un volet confidentiel (indicateur, pas le contenu) */
   hasConfidential: boolean;
 }
@@ -148,6 +150,11 @@ export type MissionView =
 interface SerializeContext {
   timeRemaining: TimeRemaining;
   claimCount: number;
+  /**
+   * Nombre de CIBLES rattachées à un dossier. Public : « 2 cibles » ne dit
+   * ni qui, ni où — c'est une mesure d'ampleur, comme le rang.
+   */
+  targetCount?: number;
 }
 
 function parseSecondaryObjectives(
@@ -181,12 +188,17 @@ export function toPublicView(m: MissionRecord, ctx: SerializeContext): PublicMis
     publishedAt: m.publishedAt?.toISOString() ?? null,
     timeRemaining: ctx.timeRemaining,
     claimCount: ctx.claimCount,
+    targetCount: ctx.targetCount ?? 0,
+    // L'indicateur « volet confidentiel » doit AUSSI compter les cibles
+    // rattachées à un dossier : depuis la refonte, une mission peut n'avoir
+    // aucun texte libre et pourtant viser trois personnes.
     hasConfidential: Boolean(
       m.confidentialDescription ||
         m.targetIdentity ||
         m.targetFactionId ||
         m.location ||
-        m.clientName,
+        m.clientName ||
+        (ctx.targetCount ?? 0) > 0,
     ),
   };
 }

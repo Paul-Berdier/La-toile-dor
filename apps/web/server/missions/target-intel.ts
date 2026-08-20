@@ -63,8 +63,11 @@ export async function applyMissionOutcomeToProfiles(
     missionSucceeded?: boolean;
   },
 ): Promise<TargetIntelResult> {
+  // role: TARGET — la table porte aussi les COMMANDITAIRES et les contacts.
+  // Sans ce filtre, la clôture marquerait un commanditaire « éliminé » et lui
+  // ouvrirait son propre dossier aux groupes engagés.
   const targets = await tx.missionTarget.findMany({
-    where: { missionId: input.missionId },
+    where: { missionId: input.missionId, role: "TARGET" },
     select: { id: true, profileId: true, outcome: true, note: true },
   });
 

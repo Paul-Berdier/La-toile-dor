@@ -1,21 +1,17 @@
 import { prisma } from "@toile/database";
-import { PERMISSIONS } from "@toile/shared";
+import { PERMISSIONS, EMPTY_DEADLINE, type MissionEditorInput } from "@toile/shared";
 import { requireUserWith } from "@/lib/session";
-import { CreateWizard } from "@/components/missions/create-wizard";
+import { MissionEditor } from "@/components/missions/mission-editor";
+import { getRpTimeConfig } from "@/server/rp-config";
 
 export const dynamic = "force-dynamic";
 
 export default async function NouvelleMissionPage() {
-  await requireUserWith(PERMISSIONS.MISSION_CREATE);
-  const [levels, factions, rankConfigs] = await Promise.all([
+  const current = await requireUserWith(PERMISSIONS.MISSION_CREATE);
+  const [levels, rankConfigs, rpConfig] = await Promise.all([
     prisma.playerLevel.findMany({
       orderBy: { order: "asc" },
       select: { slug: true, label: true },
-    }),
-    prisma.faction.findMany({
-      where: { isActive: true },
-      orderBy: { name: "asc" },
-      select: { id: true, name: true, isActive: true },
     }),
     prisma.rankConfig.findMany({
       orderBy: { dangerLevel: "asc" },
@@ -28,23 +24,55 @@ export default async function NouvelleMissionPage() {
         minLevel: { select: { slug: true } },
       },
     }),
+    getRpTimeConfig(),
   ]);
 
+  const configs = rankConfigs.map(({ minLevel, ...config }) => ({
+    ...config,
+    minLevelSlug: minLevel?.slug ?? null,
+  }));
+  const dDefaults = configs.find((c) => c.rank === "D");
+
+  // Un contrat neuf part du rang le plus bas, barème compris : la plupart des
+  // missions sont des D, et le formulaire doit être juste dès l'ouverture.
+  const initialValues: MissionEditorInput = {
+    category: "COLLECTE_INFORMATIONS",
+    rank: "D",
+    rankModifier: "NONE",
+    rewardRyoMin: dDefaults?.rewardRyoMin ?? 5_000,
+    rewardRyoMax: dDefaults?.rewardRyoMax ?? 50_000,
+    basePoints: dDefaults?.defaultPoints ?? 10,
+    deadline: EMPTY_DEADLINE,
+    links: [],
+    secondaryObjectives: [],
+    soughtFieldKeys: [],
+    groupSizeMin: 1,
+    groupSizeMax: dDefaults?.recommendedGroupSize ?? 4,
+    eligibilityMode: "WARNING",
+    requiresEnhancedReview: false,
+    originVisibility: "SHOW",
+    visibility: { showCategory: true, showTargetLevel: true, showSummary: true },
+    notifyLeaders: true,
+    minRecommendedLevelSlug: dDefaults?.minLevelSlug ?? undefined,
+  };
+
   return (
-    <main className="mx-auto max-w-5xl px-4 py-6 lg:px-6">
+    <main className="mx-auto max-w-6xl px-4 py-6 lg:px-6">
       <h1 className="font-display text-xl tracking-[0.15em] text-ink uppercase">
         Tisser un contrat
       </h1>
-      <p className="mt-1 mb-6 text-xs text-ink-faint">
-        Dix étapes, un fil. Vérifiez chaque aperçu avant de publier.
+      <p className="mt-1 mb-5 text-xs text-ink-faint">
+        Le type, le rang, contre qui, pour combien — le reste est facultatif. Le titre public se
+        compose tout seul.
       </p>
-      <CreateWizard
+      <MissionEditor
+        mode="create"
         levels={levels}
-        factions={factions}
-        rankConfigs={rankConfigs.map(({ minLevel, ...config }) => ({
-          ...config,
-          minLevelSlug: minLevel?.slug ?? null,
-        }))}
+        rankConfigs={configs}
+        rpMonthMs={rpConfig.realMsPerRpMonth}
+        initialValues={initialValues}
+        initialPicked={[]}
+        canOverrideTitle={current.permissions.has(PERMISSIONS.SETTINGS_MANAGE)}
       />
     </main>
   );

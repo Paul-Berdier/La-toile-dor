@@ -189,6 +189,11 @@ Cet accès général au briefing ne donne pas les mêmes champs à tous :
   lien vers chaque dossier ;
 - seule la modération reçoit `clientName`, le commanditaire.
 
+Depuis la refonte de l'éditeur, cibles et commanditaires sont des **dossiers**
+(`MISSION_PROFILE_LINKS.md`) : la vue `leader` affiche des cartes portant le
+grade, la classe et l'origine **figés à la publication**, jamais l'état actuel
+du dossier. Le commanditaire reste réservé à la modération.
+
 **Dossiers des cibles pendant la mission** : dès qu'une attribution est active
 (mission `ASSIGNED` / `IN_PROGRESS`), tous les membres du groupe lisent les
 dossiers de renseignement des cibles (`MissionTarget.profileId`) — accès

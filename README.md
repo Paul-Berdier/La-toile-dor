@@ -50,6 +50,12 @@ ne quittent JAMAIS le serveur pour un utilisateur non autorisé.
 ## Documentation
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — structure, décisions, flux
+- [docs/MISSION_EDITOR.md](docs/MISSION_EDITOR.md) — l'éditeur de mission (une page)
+- [docs/MISSION_PUBLIC_TITLE.md](docs/MISSION_PUBLIC_TITLE.md) — titre public généré
+- [docs/MISSION_PROFILE_LINKS.md](docs/MISSION_PROFILE_LINKS.md) — cibles, commanditaires, snapshots
+- [docs/MISSION_ASSIGNMENTS.md](docs/MISSION_ASSIGNMENTS.md) — revendications et attribution
+- [docs/MISSION_REPORTS.md](docs/MISSION_REPORTS.md) — rapport de fin de mission
+- [docs/MISSION_LEGACY_MIGRATION.md](docs/MISSION_LEGACY_MIGRATION.md) — missions antérieures à la refonte
 - [docs/CHARACTER_PROFILES.md](docs/CHARACTER_PROFILES.md) — dossiers de renseignement
 - [docs/PROFILE_VISIBILITY.md](docs/PROFILE_VISIBILITY.md) — « Inconnu » vs « ??? », matrice des droits
 - [docs/PROFILE_REFERENCE_DATA.md](docs/PROFILE_REFERENCE_DATA.md) — référentiels Naruto et provenance

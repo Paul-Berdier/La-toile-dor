@@ -104,7 +104,8 @@ async function assertLiveReporter(
       status: true,
       assignedGroupId: true,
       assignments: { where: { active: true }, select: { groupId: true } },
-      targets: { select: { id: true, profileId: true } },
+      // role TARGET : le rapport porte sur les cibles, pas sur les commanditaires
+      targets: { where: { role: "TARGET" }, select: { id: true, profileId: true } },
     },
   });
   if (!mission || !["ASSIGNED", "IN_PROGRESS"].includes(mission.status)) {
@@ -176,7 +177,7 @@ async function resolveReporter(missionId: string, preferredGroupId?: string) {
       assignedGroupId: true,
       assignments: { where: { active: true }, select: { groupId: true } },
       participants: { where: { userId: current.session.userId }, select: { groupId: true } },
-      targets: { select: { id: true, profileId: true } },
+      targets: { where: { role: "TARGET" }, select: { id: true, profileId: true } },
     },
   });
   if (!mission) return { current, ctx, mission: null, groupId: null, error: "Mission introuvable." };

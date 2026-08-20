@@ -67,6 +67,7 @@ export function MissionReportWizard({
   groupName,
   targets,
   refs,
+  soughtFieldKeys = [],
   initialDraft,
   draftSavedAt,
   canFinalize,
@@ -77,6 +78,12 @@ export function MissionReportWizard({
   groupName: string;
   targets: WizardTarget[];
   refs: IntelRefs;
+  /**
+   * Prise d'information : ce que le contrat demandait d'apprendre. Proposé
+   * d'un clic sous chaque dossier — l'équipe n'a plus à chercher le champ
+   * dans la palette.
+   */
+  soughtFieldKeys?: ProfileFieldKey[];
   initialDraft: MissionReportPayload | null;
   draftSavedAt: string | null;
   /** Le brouillon est possible dès l'attribution ; le dépôt exige IN_PROGRESS. */
@@ -464,6 +471,7 @@ export function MissionReportWizard({
               code={t.code}
               profileId={t.profileId}
               currentValues={t.canViewDossier ? (t.currentValues ?? null) : null}
+              soughtFieldKeys={soughtFieldKeys}
               dossier={dossierOf(t.profileId)}
               onChange={(patch) => setDossier(t.profileId, patch)}
               refs={refs}
@@ -671,6 +679,7 @@ function DossierBlock({
   onChange,
   refs,
   currentValues,
+  soughtFieldKeys = [],
   linked = false,
   onRemove,
 }: {
@@ -686,6 +695,8 @@ function DossierBlock({
    * afficher la ligne (dossier rattaché à la main, état inconnu du client).
    */
   currentValues?: Record<string, string> | null;
+  /** Champs que la mission cherchait à apprendre */
+  soughtFieldKeys?: ProfileFieldKey[];
   /** Dossier existant rattaché par l'équipe (pas une cible officielle) */
   linked?: boolean;
   onRemove?: () => void;
@@ -756,6 +767,7 @@ function DossierBlock({
               onChange={(entries) => onChange({ entries })}
               refs={refs}
               currentValues={currentValues}
+              soughtFieldKeys={soughtFieldKeys}
             />
           </div>
         )}
@@ -770,12 +782,14 @@ function EntriesEditor({
   onChange,
   refs,
   currentValues,
+  soughtFieldKeys = [],
 }: {
   entries: ReportIntelEntry[];
   onChange: (entries: ReportIntelEntry[]) => void;
   refs: IntelRefs;
   /** cf. DossierBlock — null = confidentiel, undefined = ne rien afficher */
   currentValues?: Record<string, string> | null;
+  soughtFieldKeys?: ProfileFieldKey[];
 }) {
   const [picking, setPicking] = useState(false);
   const setEntry = (i: number, patch: Partial<ReportIntelEntry>) =>
@@ -835,6 +849,31 @@ function EntriesEditor({
         </div>
         );
       })}
+      {/* Ce que la mission cherchait : un clic par champ, sans passer par la
+          palette. Les champs déjà renseignés disparaissent d'eux-mêmes. */}
+      {soughtFieldKeys.filter((k) => !usedKeys.has(k) && CONTRIBUTABLE_FIELD_KEYS.includes(k)).length > 0 && (
+        <div className="border border-gold-dim/60 bg-elevated p-2">
+          <p className="mb-1 text-[0.6rem] uppercase tracking-wider text-gold-dim">
+            Informations recherchées par le contrat
+          </p>
+          <div className="flex flex-wrap gap-1">
+            {soughtFieldKeys
+              .filter((k) => !usedKeys.has(k) && CONTRIBUTABLE_FIELD_KEYS.includes(k))
+              .map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() =>
+                    onChange([...entries, { fieldKey: k, knowledgeState: "KNOWN", confidence: "PROBABLE" }])
+                  }
+                  className="min-h-[1.9rem] border border-gold-dim px-2 py-0.5 text-xs text-gold hover:border-gold"
+                >
+                  + {PROFILE_FIELD_LABELS[k]}
+                </button>
+              ))}
+          </div>
+        </div>
+      )}
       {picking ? (
         <div className="border border-border-gold bg-elevated p-2">
           {INTEL_PALETTE.map((section) => (

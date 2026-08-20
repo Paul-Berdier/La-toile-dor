@@ -17,3 +17,5 @@ export * from "./eligibility";
 export * from "./reward-sharing";
 export * from "./assignment-visibility";
 export * from "./mission-access";
+export * from "./mission-title";
+export * from "./mission-editor";

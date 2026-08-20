@@ -62,11 +62,18 @@ export default async function MissionsPage({
               : "Les fils disponibles attendent d'être saisis."}
           </p>
         </div>
-        {current.permissions.has(PERMISSIONS.MISSION_CREATE) && (
-          <Link href="/missions/nouvelle" className={buttonClasses("gold", "md")}>
-            Tisser un contrat
-          </Link>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {current.permissions.has(PERMISSIONS.MISSION_UPDATE) && (
+            <Link href="/missions/regulariser" className={buttonClasses("ghost", "md")}>
+              À régulariser
+            </Link>
+          )}
+          {current.permissions.has(PERMISSIONS.MISSION_CREATE) && (
+            <Link href="/missions/nouvelle" className={buttonClasses("gold", "md")}>
+              Tisser un contrat
+            </Link>
+          )}
+        </div>
       </div>
 
       <BoardFilters levels={levels} />

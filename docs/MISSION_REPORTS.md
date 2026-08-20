@@ -33,6 +33,11 @@ déposé le … » : pas de wizard vierge au rechargement.
    groupe**. « **Ninja croisé qui a déjà un dossier ?** » : la recherche
    publique rattache un dossier existant (`linked`) au rapport — ses
    renseignements partent en revue, sauf si le groupe possède le dossier.
+Quand le contrat était une **prise d'information**, les champs qu'il visait
+(`Mission.soughtFieldKeys`) apparaissent sous chaque dossier en boutons
+« + Grade », « + Classe »… : l'équipe ajoute d'un clic ce qu'on lui demandait,
+sans chercher dans la palette. Un champ déjà renseigné disparaît de la liste.
+
 3. **Validation** — récapitulatif, contrôles en français (résumé, dossiers non
    traités, ninja sans prénom, **champs ajoutés sans valeur** — vérifiés côté
    client par `isReportEntryComplete` avant tout envoi —, dossier rattaché

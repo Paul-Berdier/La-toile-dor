@@ -73,6 +73,10 @@ export const getProfileViewer = cache(async (current: CurrentUser) => {
       prisma.missionTarget.findMany({
         where: {
           profileId: { not: null },
+          // Les CIBLES seulement. Le commanditaire d'un contrat est rattaché
+          // à la même table (role CLIENT) mais reste secret de la modération :
+          // engager un groupe ne lui dit pas qui paie.
+          role: "TARGET",
           mission: {
             status: { in: [...MISSION_TARGET_ACCESS_STATUSES] },
             assignments: { some: { active: true, groupId: { in: groupIds } } },

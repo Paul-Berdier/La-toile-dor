@@ -92,11 +92,11 @@ export function MissionTargets({
   return (
     <section className="border border-border-default bg-raised p-4">
       <h2 className="mb-1 font-display text-sm tracking-widest text-gold uppercase">
-        Cibles de la mission
+        Sort des cibles
       </h2>
       <p className="mb-3 text-xs text-ink-faint">
-        Les groupes attribués lisent les dossiers des cibles pendant la mission. À la clôture,
-        le sort de chaque cible met son dossier à jour et l&rsquo;accès leur reste acquis.
+        Rattacher, retirer, et consigner ce qu&rsquo;il est advenu de chacune. À la clôture, le
+        sort met le dossier à jour et l&rsquo;accès reste acquis aux groupes engagés.
       </p>
 
       <ul className="space-y-2">

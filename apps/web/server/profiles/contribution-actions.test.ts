@@ -168,8 +168,10 @@ describe("provenance mission d'une contribution", () => {
     expect(mocks.findMission).toHaveBeenCalledWith({
       where: { id: missionId },
       select: expect.objectContaining({
+        // role TARGET : un dossier rattaché comme COMMANDITAIRE ne fait pas
+        // de la mission une source valable de renseignement sur lui.
         targets: {
-          where: { profileId },
+          where: { profileId, role: "TARGET" },
           take: 1,
           select: { id: true },
         },

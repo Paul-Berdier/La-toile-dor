@@ -64,6 +64,13 @@ export function MissionCard({ card, dragging = false }: { card: BoardCard; dragg
             <dd className="text-ink-muted">{card.targetLevelLabel}</dd>
           </div>
         )}
+        {/* Combien, jamais qui : l'ampleur du contrat est publique */}
+        {view.targetCount > 0 && (
+          <div className="flex justify-between gap-2">
+            <dt className="text-ink-faint">Cibles</dt>
+            <dd className="text-ink-muted">{view.targetCount}</dd>
+          </div>
+        )}
         {view.claimCount > 0 && (
           <div className="flex justify-between gap-2">
             <dt className="text-ink-faint">Candidatures</dt>
