@@ -50,6 +50,7 @@ ne quittent JAMAIS le serveur pour un utilisateur non autorisé.
 ## Documentation
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — structure, décisions, flux
+- [docs/MISSION_BOARD.md](docs/MISSION_BOARD.md) — le tableau des contrats (kanban et liste)
 - [docs/MISSION_EDITOR.md](docs/MISSION_EDITOR.md) — l'éditeur de mission (une page)
 - [docs/MISSION_PUBLIC_TITLE.md](docs/MISSION_PUBLIC_TITLE.md) — titre public généré
 - [docs/MISSION_PROFILE_LINKS.md](docs/MISSION_PROFILE_LINKS.md) — cibles, commanditaires, snapshots

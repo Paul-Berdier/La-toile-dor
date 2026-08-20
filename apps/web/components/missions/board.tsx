@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useTransition } from "react";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import {
   DndContext,
   DragOverlay,
@@ -17,7 +17,7 @@ import {
 import type { BoardCard, BoardData } from "@/server/missions";
 import type { KanbanColumnKey } from "@toile/shared";
 import { moveMissionAction } from "@/server/mission-actions";
-import { MissionCard } from "./mission-card";
+import { MissionCard, MissionRow } from "./mission-card";
 import { AssignmentModal } from "./assignment-modal";
 import { Button } from "@/components/ui/button";
 
@@ -51,6 +51,43 @@ export function MissionBoard({ board }: { board: BoardData }) {
   const [completionRyo, setCompletionRyo] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+
+  // Vue : tableau (colonnes) ou liste. La liste est bien plus praticable sur
+  // un écran étroit et pour chercher une mission parmi quarante ; le choix
+  // vit dans l'URL, donc il se partage et survit à un rechargement.
+  const pathname = usePathname();
+  const params = useSearchParams();
+  const urlView = params.get("vue");
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 900px)");
+    const apply = () => setNarrow(query.matches);
+    apply();
+    query.addEventListener("change", apply);
+    return () => query.removeEventListener("change", apply);
+  }, []);
+  // Par défaut : liste sur écran étroit, tableau ailleurs — sauf choix explicite
+  const view: "board" | "list" = urlView === "liste" ? "list" : urlView === "tableau" ? "board" : narrow ? "list" : "board";
+  const setView = (next: "board" | "list") => {
+    const p = new URLSearchParams(params.toString());
+    p.set("vue", next === "list" ? "liste" : "tableau");
+    router.replace(`${pathname}?${p.toString()}`, { scroll: false });
+  };
+
+  // Les colonnes d'archive (accomplies, échouées, annulées) sont repliées :
+  // l'action du jour est « à prendre » et « en cours ». MAIS dès qu'un filtre
+  // ou une recherche est actif, tout se déplie : chercher un contrat et ne
+  // pas le voir parce qu'il dort dans une bande fermée serait une trahison.
+  const ARCHIVE_COLUMNS: KanbanColumnKey[] = ["accomplies", "echouees", "annulees"];
+  const filtering = [...params.keys()].some((key) => key !== "vue");
+  const [expanded, setExpanded] = useState<Set<KanbanColumnKey>>(new Set());
+  const toggleColumn = (key: KanbanColumnKey) =>
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -155,9 +192,43 @@ export function MissionBoard({ board }: { board: BoardData }) {
         </section>
       )}
 
+      {/* Bascule tableau / liste */}
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-ink-faint">
+          {board.columns.reduce((total, column) => total + column.cards.length, 0)} contrat
+          {board.columns.reduce((total, column) => total + column.cards.length, 0) > 1 ? "s" : ""}
+          {view === "board" && board.isModerator && " — glissez une carte pour changer son destin"}
+        </p>
+        <div role="group" aria-label="Affichage" className="flex">
+          {([
+            ["board", "Tableau"],
+            ["list", "Liste"],
+          ] as const).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setView(key)}
+              aria-pressed={view === key}
+              className={`border px-3 py-1 text-xs uppercase tracking-wider transition-colors ${
+                view === key
+                  ? "border-gold text-gold"
+                  : "border-border-default text-ink-faint hover:border-border-gold hover:text-ink"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {view === "list" ? (
+        <MissionListView board={board} />
+      ) : (
       <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
-        {/* Dégradés de bord : affordance de défilement horizontal */}
-        <div className="relative">
+        {/* `min-w-0` : sans lui, les colonnes imposent leur largeur au parent
+            et c'est la PAGE ENTIÈRE qui défile de côté — le scroll doit rester
+            dans le tableau. Les dégradés de bord signalent qu'il continue. */}
+        <div className="relative min-w-0">
           <div
             aria-hidden
             className="pointer-events-none absolute inset-y-0 left-0 z-10 w-4 bg-gradient-to-r from-obsidian to-transparent"
@@ -166,7 +237,7 @@ export function MissionBoard({ board }: { board: BoardData }) {
             aria-hidden
             className="pointer-events-none absolute inset-y-0 right-0 z-10 w-10 bg-gradient-to-l from-obsidian to-transparent"
           />
-          <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto pr-8 pb-4">
+          <div className="flex snap-x gap-3 overflow-x-auto pr-8 pb-4">
             {board.columns.map((column) => (
               <BoardColumn
                 key={column.key}
@@ -174,6 +245,13 @@ export function MissionBoard({ board }: { board: BoardData }) {
                 label={column.label}
                 cards={column.cards}
                 draggable={board.isModerator}
+                // Les colonnes d'archive commencent repliées : elles occupent
+                // la moitié du tableau pour des missions déjà réglées.
+                collapsed={
+                  !filtering && ARCHIVE_COLUMNS.includes(column.key) && !expanded.has(column.key)
+                }
+                onToggle={() => toggleColumn(column.key)}
+                collapsible={!filtering && ARCHIVE_COLUMNS.includes(column.key)}
               />
             ))}
           </div>
@@ -186,6 +264,7 @@ export function MissionBoard({ board }: { board: BoardData }) {
           ) : null}
         </DragOverlay>
       </DndContext>
+      )}
 
       {/* Modale d'attribution multi-groupes (passage « en cours ») */}
       {assignCard && (
@@ -331,25 +410,77 @@ function BoardColumn({
   label,
   cards,
   draggable,
+  collapsed = false,
+  collapsible = false,
+  onToggle,
 }: {
   columnKey: KanbanColumnKey;
   label: string;
   cards: BoardCard[];
   draggable: boolean;
+  collapsed?: boolean;
+  collapsible?: boolean;
+  onToggle?: () => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: columnKey, disabled: !draggable });
+
+  // Repliée : une bande étroite qui reste une CIBLE DE DÉPÔT valable — on doit
+  // pouvoir y glisser une mission sans la déplier d'abord.
+  if (collapsed) {
+    return (
+      <section
+        ref={setNodeRef}
+        aria-label={`Colonne ${label}, repliée`}
+        className={`flex w-12 shrink-0 flex-col items-center border bg-raised/60 transition-colors ${
+          isOver ? "border-gold bg-raised" : "border-border-default"
+        }`}
+      >
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={false}
+          className="flex h-full w-full flex-col items-center gap-3 py-3 text-ink-faint hover:text-gold"
+          title={`Déplier « ${label} » (${cards.length})`}
+        >
+          <span className="font-mono-toile text-xs text-ink-muted">{cards.length}</span>
+          <span
+            className="font-display text-xs tracking-[0.2em] uppercase"
+            style={{ writingMode: "vertical-rl" }}
+          >
+            {label}
+          </span>
+        </button>
+      </section>
+    );
+  }
 
   return (
     <section
       ref={setNodeRef}
       aria-label={`Colonne ${label}`}
-      className={`flex w-[17rem] shrink-0 snap-start flex-col border bg-raised transition-colors sm:w-72 ${
+      // `flex-1` + `basis` : les colonnes ouvertes se partagent la largeur
+      // disponible plutôt que de laisser un désert à droite ; au-delà de
+      // quatre, elles retombent à leur largeur minimale et le tableau défile.
+      className={`flex min-w-[16rem] flex-1 shrink-0 basis-[17rem] snap-start flex-col border bg-raised transition-colors ${
         isOver ? "border-gold" : "border-border-default"
       }`}
     >
-      <header className="flex items-center justify-between border-b border-border-gold px-3 py-2.5">
+      <header className="flex items-center justify-between gap-2 border-b border-border-gold px-3 py-2.5">
         <h2 className="font-display text-xs tracking-[0.2em] text-gold uppercase">{label}</h2>
-        <span className="font-mono-toile text-xs text-ink-muted">{cards.length}</span>
+        <span className="flex items-center gap-2">
+          <span className="font-mono-toile text-xs text-ink-muted">{cards.length}</span>
+          {collapsible && (
+            <button
+              type="button"
+              onClick={onToggle}
+              aria-expanded
+              className="text-xs text-ink-faint hover:text-gold"
+              title={`Replier « ${label} »`}
+            >
+              ✕
+            </button>
+          )}
+        </span>
       </header>
       <div className="flex min-h-32 flex-1 flex-col gap-2 p-2">
         {cards.length === 0 && (
@@ -366,6 +497,39 @@ function BoardColumn({
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * Vue LISTE — toutes les missions, groupées par colonne, en lignes denses.
+ * Pas de glisser-déposer ici : on y vient pour lire et chercher, pas pour
+ * déplacer. La colonne d'origine reste indiquée sur chaque ligne.
+ */
+function MissionListView({ board }: { board: BoardData }) {
+  const groups = board.columns.filter((column) => column.cards.length > 0);
+  if (groups.length === 0) {
+    return (
+      <p className="border border-border-default bg-raised p-8 text-center text-sm text-ink-faint italic">
+        Aucun contrat ne correspond. La Toile garde ses fils.
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-5">
+      {groups.map((column) => (
+        <section key={column.key} aria-label={column.label}>
+          <h2 className="mb-2 flex items-baseline gap-2 font-display text-xs tracking-[0.2em] text-gold uppercase">
+            {column.label}
+            <span className="font-mono-toile text-[0.7rem] text-ink-faint">{column.cards.length}</span>
+          </h2>
+          <ul className="space-y-1.5">
+            {column.cards.map((card) => (
+              <MissionRow key={card.view.id} card={card} />
+            ))}
+          </ul>
+        </section>
+      ))}
+    </div>
   );
 }
 

@@ -70,7 +70,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           roleLabel={roleLabel}
         />
         {/* Réserve : barre d'onglets mobile + boutons flottants de confidentialité */}
-        <div className="flex-1 pb-28 md:pb-16">
+        {/* `min-w-0` : un enfant de flex refuse par défaut de descendre sous la
+            largeur de son contenu — sans lui, une page large (le tableau des
+            contrats, une table) pousse TOUTE l'application hors de l'écran au
+            lieu de défiler chez elle. */}
+        <div className="min-w-0 flex-1 pb-28 md:pb-16">
           {streamer && (
             <p className="border-b border-gold-dim bg-gold-faint/40 px-4 py-1.5 text-center font-mono-toile text-[0.65rem] uppercase tracking-[0.25em] text-gold">
               Mode Streamer actif — identités et lieux voilés

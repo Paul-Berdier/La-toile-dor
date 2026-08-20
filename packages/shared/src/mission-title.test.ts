@@ -45,13 +45,13 @@ describe("generateMissionPublicTitle — une cible", () => {
     expect(title).toBe("Collecte d'informations · C · Genin confirmé · Suna");
   });
 
-  it("grade inconnu quand le dossier ne le dit pas", () => {
+  it("grade ignoré : le segment disparaît plutôt que d'encombrer", () => {
     const { title } = generateMissionPublicTitle({
       category: "ENLEVEMENT",
       rank: "A",
       targets: [target(null, null, "Kiri")],
     });
-    expect(title).toBe("Enlèvement · A · grade inconnu · Kiri");
+    expect(title).toBe("Enlèvement · A · Kiri");
   });
 
   it("origine inconnue quand le dossier n'a pas de faction", () => {
@@ -140,6 +140,6 @@ describe("generateMissionPublicTitle — confidentialité et brouillons", () => 
       rank: "S",
       targets: [target(null, null, null), target(null, null, null)],
     });
-    expect(title).toBe("Élimination de cible · S · 2 cibles · grade inconnu · origine inconnue");
+    expect(title).toBe("Élimination de cible · S · 2 cibles · origine inconnue");
   });
 });

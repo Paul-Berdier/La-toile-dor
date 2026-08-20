@@ -292,6 +292,10 @@ export const missionFiltersSchema = z.object({
   compatibleWithMyGroup: z.boolean().optional(),
   claimed: z.boolean().optional(),
   noTimeLimit: z.boolean().optional(),
+  /** Aucun groupe n'y est engagé — les contrats qui attendent une équipe */
+  unassigned: z.boolean().optional(),
+  /** Expire dans moins de 48 h : ce qu'il faut traiter aujourd'hui */
+  expiringSoon: z.boolean().optional(),
 });
 
 export type MissionFilters = z.infer<typeof missionFiltersSchema>;

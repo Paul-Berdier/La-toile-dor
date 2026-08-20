@@ -136,6 +136,36 @@ export function BoardFilters({ levels }: { levels: { slug: string; label: string
         </button>
       </div>
 
+      {/* Filtres RAPIDES : les trois questions qu'on se pose vraiment devant
+          un tableau — qu'est-ce qui presse, qu'est-ce qui attend une équipe,
+          qu'est-ce qui a déjà des candidats. Un clic, pas un panneau. */}
+      <div className="flex flex-wrap gap-1.5 border-t border-border-default px-3 py-2" role="group" aria-label="Filtres rapides">
+        {([
+          ["urgent", "⏳ Expire sous 48 h"],
+          ["sansEquipe", "Sans équipe"],
+          ["claimed", "Avec candidatures"],
+          ["compatible", "Pour mes groupes"],
+          ["noLimit", "Sans limite de temps"],
+        ] as const).map(([key, label]) => {
+          const active = params.get(key) === "1";
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => toggleFlag(key)}
+              aria-pressed={active}
+              className={`border px-2 py-1 text-[0.7rem] transition-colors ${
+                active
+                  ? "border-gold bg-gold-faint/20 text-gold"
+                  : "border-border-default text-ink-muted hover:border-border-gold hover:text-ink"
+              }`}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+
       {open && (
         <div className="grid gap-4 border-t border-border-default p-3 sm:grid-cols-2 lg:grid-cols-3">
           <fieldset>

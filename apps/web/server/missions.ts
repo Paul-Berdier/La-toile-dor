@@ -247,6 +247,12 @@ function filtersToWhere(filters: MissionFilters): Prisma.MissionWhereInput {
   if (filters.ryoMax != null) where.rewardRyoMin = { lte: filters.ryoMax };
   if (filters.noTimeLimit) where.expiresAt = null;
   if (filters.claimed) where.claims = { some: { status: "PENDING" } };
+  // « Sans équipe » : aucune attribution active — le contrat attend preneur
+  if (filters.unassigned) where.assignments = { none: { active: true } };
+  // « Expire bientôt » : moins de 48 h, et pas déjà expiré
+  if (filters.expiringSoon) {
+    where.expiresAt = { gt: new Date(), lte: new Date(Date.now() + 48 * 3600 * 1000) };
+  }
   if (filters.targetLevel?.length) {
     where.targetLevel = { slug: { in: filters.targetLevel } };
   }

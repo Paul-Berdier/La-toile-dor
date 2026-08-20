@@ -69,7 +69,7 @@ export interface MissionTitleInput {
  * Segment « niveau des cibles ».
  *
  * - aucune cible          → null (le titre se réduit au type et au rang)
- * - une cible             → son grade, ou « grade inconnu »
+ * - une cible             → son grade, ou rien si on l'ignore
  * - plusieurs, même grade → « 3 cibles · Chunin »
  * - plusieurs, grades ≠   → « 3 cibles · max Jonin »
  */
@@ -77,12 +77,15 @@ function targetLevelSegment(targets: readonly TitleTargetInput[]): string | null
   if (targets.length === 0) return null;
 
   const known = targets.filter((t) => t.gradeLabel);
+  // Une cible dont on ignore le grade n'apprend rien à personne : mieux vaut
+  // un titre court (« Sabotage · B ») qu'un « grade inconnu » qui encombre
+  // toutes les cartes du tableau.
   if (targets.length === 1) {
-    return known.length === 1 ? known[0]!.gradeLabel! : "grade inconnu";
+    return known.length === 1 ? known[0]!.gradeLabel! : null;
   }
 
   const plural = `${targets.length} cibles`;
-  if (known.length === 0) return `${plural} · grade inconnu`;
+  if (known.length === 0) return plural;
 
   const labels = new Set(known.map((t) => t.gradeLabel!));
   // Tous connus et identiques : le grade se dit sans « max »
