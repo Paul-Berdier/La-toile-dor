@@ -20,6 +20,12 @@ describe("permissions de gestion des missions", () => {
     expect(DEFAULT_ROLE_PERMISSIONS.moderator).not.toContain(PERMISSIONS.USER_MANAGE);
   });
 
+  it("permet aux modérateurs de trancher les grades sans ouvrir toute la gestion utilisateur", () => {
+    expect(DEFAULT_ROLE_PERMISSIONS.moderator).toContain(PERMISSIONS.USER_LEVEL_MANAGE);
+    expect(DEFAULT_ROLE_PERMISSIONS.super_admin).toContain(PERMISSIONS.USER_LEVEL_MANAGE);
+    expect(DEFAULT_ROLE_PERMISSIONS.group_leader).not.toContain(PERMISSIONS.USER_LEVEL_MANAGE);
+  });
+
   it("utilise uniquement les rôles de groupe, sans rôle de faction", () => {
     expect(Object.keys(DEFAULT_ROLE_PERMISSIONS).sort()).toEqual(
       ["group_leader", "group_member", "moderator", "super_admin"],

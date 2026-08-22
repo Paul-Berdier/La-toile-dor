@@ -49,6 +49,9 @@ export const PERMISSIONS = {
   INVITE_MANAGE: "invite.manage",
   FACTION_MANAGE: "faction.manage",
   USER_MANAGE: "user.manage",
+  // Examiner les demandes d'évolution/correction du grade RP. Cette
+  // permission reste distincte de user.manage, beaucoup plus large.
+  USER_LEVEL_MANAGE: "user.level.manage",
   MODERATOR_MANAGE: "moderator.manage",
   SETTINGS_MANAGE: "settings.manage",
   AUDIT_READ: "audit.read",
@@ -87,6 +90,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleSlug, PermissionKey[]> = {
     P.MISSION_VIEW_ALL,
     P.MISSION_VIEW_CONFIDENTIAL,
     P.CLAIM_REVIEW,
+    P.USER_LEVEL_MANAGE,
     P.POINTS_ADJUST,
     P.LEADERBOARD_VIEW,
     P.AUDIT_READ, // journaux liés aux missions

@@ -163,6 +163,7 @@ export default async function ClassementPage({
     const currentRow = agentsById.get(participant.userId) ?? {
       id: participant.userId,
       name: streamer ? maskValue("OPR", participant.userId) : participant.user.displayName,
+      href: streamer ? undefined : `/membres/${participant.userId}`,
       subtitle: null,
       points: 0,
       ryos: 0,

@@ -41,6 +41,7 @@ const PERMISSION_DEFS: [string, string][] = [
   ["invite.manage", "Gérer les invitations"],
   ["faction.manage", "Gérer les factions"],
   ["user.manage", "Gérer les utilisateurs"],
+  ["user.level.manage", "Examiner les demandes de changement de grade"],
   ["moderator.manage", "Gérer les modérateurs"],
   ["settings.manage", "Modifier les paramètres"],
   ["audit.read", "Consulter les journaux d'audit"],
@@ -56,7 +57,7 @@ const ROLE_PERMS: Record<string, { name: string; perms: string[] | "all" }> = {
       "profile.manage", "profile.intel.view", "profile.purchase.review",
       "mission.create", "mission.update", "mission.cancel", "mission.move",
       "mission.assign", "mission.view.all", "mission.view.confidential",
-      "claim.review", "points.adjust", "leaderboard.view", "audit.read",
+      "claim.review", "user.level.manage", "points.adjust", "leaderboard.view", "audit.read",
     ],
   },
   group_leader: {

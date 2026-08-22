@@ -1,5 +1,6 @@
 import { prisma } from "@toile/database";
 import { requireUser } from "@/lib/session";
+import { isStreamerMode } from "@/lib/streamer";
 import { IdentityEditForm } from "@/components/compte/identity-edit-form";
 
 export const dynamic = "force-dynamic";
@@ -10,23 +11,54 @@ export const dynamic = "force-dynamic";
  */
 export default async function ComptePage() {
   const current = await requireUser();
+  const streamer = await isStreamerMode();
+
+  // Barrière placée AVANT la requête de fiche : en mode Streamer, les noms,
+  // la bio et les métadonnées du portrait ne sont ni relus ici ni transmis
+  // au composant client d'édition.
+  if (streamer) {
+    return (
+      <main className="mx-auto max-w-2xl px-4 py-6 lg:px-6">
+        <h1 className="font-display text-xl tracking-[0.15em] text-ink uppercase">
+          Mes informations
+        </h1>
+        <section role="status" className="mt-6 border border-border-gold bg-raised p-5">
+          <h2 className="font-display text-sm tracking-widest text-gold uppercase">
+            Édition protégée
+          </h2>
+          <p className="mt-3 text-sm leading-relaxed text-ink-muted">
+            Le mode Streamer est actif : vos informations personnelles et les outils
+            d&rsquo;édition ne sont pas chargés sur cette page.
+          </p>
+          <p className="mt-2 text-xs text-ink-faint">
+            Désactivez le mode Streamer avec le bouton « 隠 » ou le raccourci
+            Ctrl+Maj+S, puis revenez ici pour modifier votre fiche.
+          </p>
+        </section>
+      </main>
+    );
+  }
 
   const user = await prisma.user.findUniqueOrThrow({
-      where: { id: current.session.userId },
-      select: {
-        firstName: true,
-        lastName: true,
-        displayName: true,
-        playerLevelId: true,
-        identityVisibility: true,
-        playerLevel: { select: { label: true } },
-        roles: { select: { role: { select: { name: true } } } },
-        groupMemberships: {
-          where: { group: { isActive: true } },
-          select: { isLeader: true, group: { select: { id: true, name: true } } },
-        },
+    where: { id: current.session.userId },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      displayName: true,
+      publicBio: true,
+      specialties: true,
+      portraitMime: true,
+      playerLevelId: true,
+      identityVisibility: true,
+      playerLevel: { select: { label: true } },
+      roles: { select: { role: { select: { name: true } } } },
+      groupMemberships: {
+        where: { group: { isActive: true } },
+        select: { isLeader: true, group: { select: { id: true, name: true } } },
       },
-    });
+    },
+  });
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-6 lg:px-6">
@@ -43,9 +75,13 @@ export default async function ComptePage() {
             firstName: user.firstName ?? "",
             lastName: user.lastName ?? "",
             displayName: user.displayName,
+            publicBio: user.publicBio ?? "",
+            specialties: user.specialties,
+            hasPortrait: user.portraitMime !== null,
             playerLevelLabel: user.playerLevel?.label ?? "Non déclaré",
             identityVisibility: user.identityVisibility,
           }}
+          userId={user.id}
         />
       </section>
 

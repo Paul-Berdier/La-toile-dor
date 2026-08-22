@@ -429,7 +429,7 @@ export async function createInvitationAction(raw: unknown): Promise<Result> {
     select: { id: true, label: true },
   });
   if (!playerLevel) {
-    return { ok: false, error: "Niveau de personnage inconnu." };
+    return { ok: false, error: "Grade de personnage inconnu." };
   }
   if (!isModOrAbove) {
     const initialLevel = await prisma.playerLevel.findFirst({
@@ -474,42 +474,6 @@ export async function createInvitationAction(raw: unknown): Promise<Result> {
   revalidatePath("/invitations");
   // Le jeton clair n'est montré qu'UNE fois, ici, au créateur.
   return { ok: true, inviteUrl: `${process.env.APP_URL ?? ""}/invitation/${token}` };
-}
-
-export async function setUserLevelAction(input: {
-  userId: string;
-  playerLevelId: string;
-}): Promise<Result> {
-  const actor = await guard(PERMISSIONS.USER_MANAGE);
-  if (!actor) return { ok: false, error: "Permission refusée." };
-
-  const level = await prisma.playerLevel.findUnique({
-    where: { id: input.playerLevelId },
-    select: { id: true, label: true },
-  });
-  if (!level) return { ok: false, error: "Niveau inconnu." };
-  const before = await prisma.user.findUnique({
-    where: { id: input.userId },
-    select: { playerLevelId: true },
-  });
-  if (!before) return { ok: false, error: "Utilisateur introuvable." };
-
-  await prisma.user.update({
-    where: { id: input.userId },
-    data: { playerLevelId: level.id },
-  });
-  const meta = await requestMeta();
-  await audit({
-    actorId: actor.userId,
-    action: "user.level_updated",
-    resourceType: "user",
-    resourceId: input.userId,
-    oldValues: { playerLevelId: before.playerLevelId },
-    newValues: { playerLevelId: level.id, label: level.label },
-    ...meta,
-  });
-  revalidatePath("/admin/utilisateurs");
-  return { ok: true };
 }
 
 export async function revokeInvitationAction(invitationId: string): Promise<Result> {

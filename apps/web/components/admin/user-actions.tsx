@@ -7,7 +7,6 @@ import {
   setUserGroupMembershipAction,
   setUserRoleAction,
   setUserStatusAction,
-  setUserLevelAction,
 } from "@/server/admin-actions";
 import { Button } from "@/components/ui/button";
 
@@ -18,8 +17,6 @@ export function UserActions({
   allRoles,
   groupMemberships,
   allGroups,
-  playerLevelId,
-  allLevels,
 }: {
   userId: string;
   status: string;
@@ -27,8 +24,6 @@ export function UserActions({
   allRoles: { slug: string; name: string }[];
   groupMemberships: { groupId: string; isLeader: boolean }[];
   allGroups: { id: string; name: string; factionName: string | null }[];
-  playerLevelId: string | null;
-  allLevels: { id: string; label: string }[];
 }) {
   const router = useRouter();
   const [reason, setReason] = useState("");
@@ -70,17 +65,6 @@ export function UserActions({
   const toggleLeadership = (groupId: string, leader: boolean) => {
     startTransition(async () => {
       const res = await setUserGroupLeadershipAction({ userId, groupId, leader });
-      if (!res.ok) setError(res.error ?? "Échec.");
-      else {
-        setError(null);
-        router.refresh();
-      }
-    });
-  };
-
-  const setLevel = (nextPlayerLevelId: string) => {
-    startTransition(async () => {
-      const res = await setUserLevelAction({ userId, playerLevelId: nextPlayerLevelId });
       if (!res.ok) setError(res.error ?? "Échec.");
       else {
         setError(null);
@@ -205,21 +189,6 @@ export function UserActions({
           {allGroups.length === 0 && <p className="text-ink-faint italic">Aucun groupe actif.</p>}
         </div>
       </details>
-
-      <label className="block text-xs text-ink-faint">
-        Niveau
-        <select
-          value={playerLevelId ?? ""}
-          onChange={(event) => setLevel(event.target.value)}
-          disabled={isPending}
-          className="mt-1 w-full border border-border-default bg-elevated px-2 py-1 text-xs text-ink"
-        >
-          <option value="" disabled>Choisir…</option>
-          {allLevels.map((level) => (
-            <option key={level.id} value={level.id}>{level.label}</option>
-          ))}
-        </select>
-      </label>
 
       {error && <p className="text-xs text-blood-bright">{error}</p>}
     </div>

@@ -53,6 +53,13 @@ model User {
   // Fiche RP héritée (ancien onboarding) : titre (pseudo RP) et village/pays
   rpTitle       String?
   village       String?
+  // Fiche publique de membre — distincte des dossiers de renseignement.
+  // Le portrait reste servi par une route authentifiée : les octets ne sont
+  // jamais sérialisés dans une page ou une action serveur.
+  publicBio     String?
+  specialties  MissionCategory[] @default([])
+  portraitData Bytes?
+  portraitMime String?
   status        UserStatus @default(PENDING)
   createdAt     DateTime   @default(now())
   lastLoginAt   DateTime?
@@ -81,6 +88,9 @@ model User {
   notificationPrefs  NotificationPreference[]
   notifications      NotificationDelivery[]
   auditLogs          AuditLog[]
+  levelChangeRequests UserLevelChangeRequest[] @relation("LevelChangeTarget")
+  levelChangeRequestsCreated UserLevelChangeRequest[] @relation("LevelChangeRequester")
+  levelChangeRequestsReviewed UserLevelChangeRequest[] @relation("LevelChangeReviewer")
 
   @@index([status])
 }
@@ -289,6 +299,7 @@ model Group {
   intelContributions ProfileIntelContribution[] @relation("GroupIntelContributions")
   reportDrafts       MissionReportDraft[]       @relation("GroupReportDrafts")
   missionReports     MissionReport[]            @relation("GroupMissionReports")
+  levelChangeRequests UserLevelChangeRequest[]
 
   @@unique([factionId, name])
 }
@@ -323,6 +334,45 @@ model PlayerLevel {
   users          User[]       @relation("UserLevel")
   invitations    Invitation[]
   characterProfiles CharacterProfile[] @relation("ProfileRank")
+  levelChangeRequestsFrom UserLevelChangeRequest[] @relation("LevelChangeCurrentLevel")
+  levelChangeRequestsTo   UserLevelChangeRequest[] @relation("LevelChangeRequestedLevel")
+}
+
+enum UserLevelChangeRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+// Un membre peut demander son évolution de grade ; un chef peut aussi la
+// proposer pour un membre de l'un de ses groupes. Le grade effectif n'est
+// modifié qu'après décision d'une autorité `user.level.manage`.
+model UserLevelChangeRequest {
+  id               String                       @id @default(cuid())
+  targetUserId     String
+  requestedById    String?
+  currentLevelId   String?
+  requestedLevelId String
+  groupId          String?
+  reason           String
+  status           UserLevelChangeRequestStatus @default(PENDING)
+  reviewedById     String?
+  reviewNote       String?
+  requestedAt      DateTime                     @default(now())
+  reviewedAt       DateTime?
+
+  targetUser     User         @relation("LevelChangeTarget", fields: [targetUserId], references: [id], onDelete: Cascade)
+  requestedBy    User?        @relation("LevelChangeRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+  reviewedBy     User?        @relation("LevelChangeReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  currentLevel   PlayerLevel? @relation("LevelChangeCurrentLevel", fields: [currentLevelId], references: [id], onDelete: SetNull)
+  requestedLevel PlayerLevel  @relation("LevelChangeRequestedLevel", fields: [requestedLevelId], references: [id], onDelete: Restrict)
+  group          Group?       @relation(fields: [groupId], references: [id], onDelete: SetNull)
+
+  @@index([status, requestedAt])
+  @@index([targetUserId, status])
+  @@index([requestedById, requestedAt])
+  @@index([groupId])
 }
 
 enum MissionRank {
@@ -858,6 +908,9 @@ enum NotificationEvent {
   PROFILE_CONTRIBUTION_RECEIVED
   PROFILE_CONTRIBUTION_REVIEWED
   MEMBER_PROMOTED
+  USER_LEVEL_CHANGE_REQUESTED
+  USER_LEVEL_CHANGE_APPROVED
+  USER_LEVEL_CHANGE_REJECTED
   MISSION_AVAILABLE
   CLAIM_ACCEPTED
   CLAIM_REJECTED

@@ -33,7 +33,9 @@ export default async function NotificationsPage() {
     label: EVENT_LABELS[event]?.text ?? event,
     enabled: prefByEvent.get(event)?.enabled ?? true,
   });
-  const isModerator = current.permissions.has(PERMISSIONS.CLAIM_REVIEW);
+  const isModerator =
+    current.permissions.has(PERMISSIONS.CLAIM_REVIEW) ||
+    current.permissions.has(PERMISSIONS.USER_LEVEL_MANAGE);
   const baseEvents = BASE_CONFIGURABLE_EVENTS.map(toSetting);
   const moderationEvents = isModerator ? MODERATION_CONFIGURABLE_EVENTS.map(toSetting) : [];
   const quietRow = preferences.find((p) => p.quietHourStart !== null);

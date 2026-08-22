@@ -519,7 +519,14 @@ export default async function MissionDetailPage({
                         {claim.group.name}
                         {claim.group.faction ? ` · ${claim.group.faction.name}` : ""}
                         <span className="ml-2 text-xs text-ink-faint">
-                          chef : {claim.leader.displayName}
+                          chef :{" "}
+                          {streamer ? (
+                            maskValue("OPR", claim.leaderId)
+                          ) : (
+                            <Link href={`/membres/${claim.leaderId}`} className="hover:text-gold hover:underline">
+                              {claim.leader.displayName}
+                            </Link>
+                          )}
                         </span>
                       </p>
                       <span className="font-mono-toile text-[0.65rem] uppercase text-ink-faint">
@@ -537,12 +544,19 @@ export default async function MissionDetailPage({
                     {claim.participants.length > 0 && (
                       <p className="mt-2 text-xs text-ink-muted">
                         Agents engagés :{" "}
-                        {claim.participants
-                          .map(
-                            (participant) =>
-                              `${participant.user.displayName}${participant.user.playerLevel ? ` (${participant.user.playerLevel.label})` : ""}`,
-                          )
-                          .join(", ")}
+                        {claim.participants.map((participant, index) => (
+                          <span key={participant.userId}>
+                            {index > 0 && ", "}
+                            {streamer ? (
+                              maskValue("OPR", participant.userId)
+                            ) : (
+                              <Link href={`/membres/${participant.userId}`} className="hover:text-gold hover:underline">
+                                {participant.user.displayName}
+                              </Link>
+                            )}
+                            {participant.user.playerLevel ? ` (${participant.user.playerLevel.label})` : ""}
+                          </span>
+                        ))}
                       </p>
                     )}
                     {Array.isArray(claim.warnings) && claim.warnings.length > 0 && (
@@ -812,11 +826,15 @@ export default async function MissionDetailPage({
                       <ul className="mt-2 space-y-1 border-t border-border-default pt-2 text-xs text-ink-muted">
                         {roster.map((participant) => (
                           <li key={participant.userId}>
-                            {streamer
-                              ? maskValue("OPR", participant.userId)
-                              : fullRosterAccess
-                                ? participant.user.displayName
-                                : toPublicRosterAgent(participant.user).displayName}
+                            {streamer ? (
+                              maskValue("OPR", participant.userId)
+                            ) : (
+                              <Link href={`/membres/${participant.userId}`} className="hover:text-gold hover:underline">
+                                {fullRosterAccess
+                                  ? participant.user.displayName
+                                  : toPublicRosterAgent(participant.user).displayName}
+                              </Link>
+                            )}
                             {fullRosterAccess && !streamer && participant.user.playerLevel && (
                               <span className="text-ink-faint">
                                 {" "}· {participant.user.playerLevel.label}

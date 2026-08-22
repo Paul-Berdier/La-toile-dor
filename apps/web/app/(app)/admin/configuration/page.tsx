@@ -75,7 +75,7 @@ export default async function AdminConfigurationPage() {
 
       <section className="border border-border-default bg-raised p-4">
         <h2 className="mb-3 font-display text-sm tracking-widest text-gold uppercase">
-          Niveaux des joueurs
+          Grades des personnages
         </h2>
         <ul className="max-w-md space-y-2">
           {levels.map((level) => (

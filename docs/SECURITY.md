@@ -120,11 +120,13 @@ confidentialité du RP.
   l'autorité concrète : un modérateur-chef peut représenter ce groupe, tandis
   qu'un modérateur sans responsabilité locale reste refusé. L'administration
   synchronise atomiquement ce marqueur avec le rôle `group_leader`.
-- Le grade courant est exclu de la modification libre du compte. Seule une
-  action protégée par `user.manage` peut le remplacer après validation de la
-  référence `PlayerLevel`; l'événement `user.level_updated` conserve les
-  identifiants avant/après et le libellé, jamais une valeur arbitraire fournie
-  par une revendication.
+- Le grade courant est exclu de la modification libre du compte. Une demande
+  motivée peut venir du membre ou d'un chef réel pour un membre actif de son
+  groupe. Seule une décision motivée protégée par `user.level.manage` peut
+  appliquer la référence `PlayerLevel`; un détenteur de cette permission ne
+  peut pas trancher son propre grade. La décision compare encore le grade de
+  départ, revendique atomiquement l'état `PENDING` et audite les identifiants
+  avant/après.
 - Un chef de groupe qui tend une invitation ne peut attribuer que le grade
   initial le plus bas ; la liste est filtrée dans l'interface et la borne est
   revérifiée côté serveur. La modération conserve la possibilité d'attribuer
@@ -203,6 +205,10 @@ confirmation de l'encart de confidentialité est horodatée dans
 - Images de groupe : 500 Ko maximum et validation de la signature binaire PNG,
   JPEG ou WEBP avant stockage en base ; le type déclaré par le client n'est pas
   considéré comme une preuve.
+- Portraits de membres : 500 Ko maximum, signature vérifiée puis décodage borné
+  en pixels, redimensionnement et réencodage WebP sans EXIF/GPS. Les décodages
+  sont limités par compte ; le service exige une session et utilise `nosniff`,
+  un cache privé court, `Vary: Cookie` et un `ETag`.
 
 ## 7. Discrétion
 

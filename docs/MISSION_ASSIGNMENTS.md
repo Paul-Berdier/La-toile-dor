@@ -159,12 +159,13 @@ Le grade qui intervient dans l'éligibilité est toujours
 chef ne transmet jamais lui-même un ordre de grade dans sa revendication et ne
 peut pas modifier le grade d'un agent pour rendre son équipe conforme.
 
-Après l'activation du compte, le formulaire personnel exclut le grade. Seule
-la gestion des utilisateurs protégée par `user.manage` peut le modifier ; le
-nouveau grade doit exister dans `PlayerLevel` et le changement est audité sous
-`user.level_updated`. Une correction par la modération peut donc modifier le
-bilan d'une revendication encore en attente, ce qui explique la revalidation à
-l'acceptation.
+Après l'activation du compte, le formulaire personnel exclut le grade. Le
+membre ou son chef dépose une demande motivée sur `/grades`; une autorité
+`user.level.manage` la tranche avec un second motif. Le nouveau grade doit
+exister dans `PlayerLevel`, l'approbation utilise un verrou CAS sur la demande
+`PENDING`, et l'ancien comme le nouvel identifiant sont audités. Une correction
+approuvée peut donc modifier le bilan d'une revendication encore en attente,
+ce qui explique la revalidation à l'acceptation.
 
 ## Retour vers « À prendre »
 

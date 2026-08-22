@@ -1,4 +1,5 @@
 import "server-only";
+import sharp from "sharp";
 
 /**
  * Validation d'images par signature binaire — le type MIME déclaré par le
@@ -16,6 +17,48 @@ const IMAGE_SIGNATURES: { mime: string; check: (b: Buffer) => boolean }[] = [
 /** MIME réel détecté dans les octets, ou null si le format est refusé. */
 export function sniffImageMime(bytes: Buffer): string | null {
   return IMAGE_SIGNATURES.find((s) => s.check(bytes))?.mime ?? null;
+}
+
+const PORTRAIT_MAX_DIMENSION = 1024;
+const PORTRAIT_MAX_INPUT_PIXELS = 16 * 1024 * 1024;
+
+/**
+ * Décode puis réencode un portrait en WebP sûr.
+ *
+ * Cette étape est distincte du simple sniff MIME utilisé ailleurs : elle
+ * refuse les préfixes forgés et images tronquées, borne les pixels décodés,
+ * applique l'orientation EXIF, limite les dimensions et supprime toutes les
+ * métadonnées (EXIF/GPS/XMP, miniature et profil embarqué) avant stockage.
+ */
+export async function sanitizePortraitImage(
+  bytes: Buffer,
+): Promise<{ bytes: Buffer; mime: "image/webp" }> {
+  if (!sniffImageMime(bytes)) throw new Error("INVALID_IMAGE");
+
+  try {
+    const output = await sharp(bytes, {
+      animated: false,
+      failOn: "warning",
+      limitInputPixels: PORTRAIT_MAX_INPUT_PIXELS,
+      sequentialRead: true,
+    })
+      .rotate()
+      .resize({
+        width: PORTRAIT_MAX_DIMENSION,
+        height: PORTRAIT_MAX_DIMENSION,
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      // Sharp ne conserve aucune métadonnée sans appel explicite à
+      // keepMetadata/withMetadata. Un format unique simplifie aussi la route.
+      .webp({ quality: 86, effort: 4 })
+      .toBuffer();
+
+    if (output.length === 0) throw new Error("INVALID_IMAGE");
+    return { bytes: output, mime: "image/webp" };
+  } catch {
+    throw new Error("INVALID_IMAGE");
+  }
 }
 
 /**

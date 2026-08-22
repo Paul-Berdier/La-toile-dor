@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { ELIGIBILITY_MODE_LABELS } from "@toile/shared";
 import { claimMissionAction } from "@/server/mission-actions";
 import { Button } from "@/components/ui/button";
@@ -221,7 +222,16 @@ export function ClaimPanel({
                   }}
                   className="accent-[var(--toile-gold)]"
                 />
-                <span className="min-w-0 flex-1 truncate">{member.displayName}</span>
+                <Link
+                  href={`/membres/${member.id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(event) => event.stopPropagation()}
+                  className="min-w-0 flex-1 truncate hover:text-gold hover:underline"
+                  aria-label={`Voir la fiche de ${member.displayName}`}
+                >
+                  {member.displayName}
+                </Link>
                 <span
                   className={`text-right text-xs ${
                     levelMissing || belowMinimum

@@ -122,9 +122,10 @@ suivent volontairement ce parcours à leur prochaine connexion.
 
 Le grade (`User.playerLevelId`) est une donnée métier autoritative parce qu'il
 conditionne l'éligibilité. Une fois le compte activé, le membre peut modifier
-son Titre et son identité, mais pas son grade. Une correction passe par la
-gestion modérée protégée par `user.manage`, vérifie le référentiel
-`PlayerLevel` et produit l'audit `user.level_updated`.
+son Titre et son identité, mais pas son grade. Une correction passe par une
+demande motivée sur `/grades`, puis une décision distincte protégée par
+`user.level.manage`. Le référentiel `PlayerLevel`, le grade de départ et l'état
+`PENDING` sont revérifiés avant l'écriture auditée.
 
 ## Notifications et automatisations — mode « sans bot » (configuration retenue)
 

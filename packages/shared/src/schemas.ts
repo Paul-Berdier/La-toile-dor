@@ -206,7 +206,8 @@ export const onboardingIdentitySchema = z.object({
     .min(2, "Le pseudonyme doit compter au moins 2 caractères.")
     .max(60)
     .refine((v) => v.replace(/\s+/g, "").length > 0, "Le pseudonyme ne peut pas être vide."),
-  // Grade RP déclaré par le joueur lui-même à sa première connexion
+  // Grade fixé par l'invitation. Le champ reste présent pour l'exception
+  // transactionnelle des anciens comptes qui n'en possèdent encore aucun.
   playerLevelId: z.string().cuid("Sélectionnez votre grade."),
   privacyAcknowledged: z
     .boolean()
@@ -225,9 +226,57 @@ export const selfIdentityUpdateSchema = onboardingIdentitySchema
   .extend({
     // Portée de son prénom et de son nom : c'est à l'intéressé de la fixer.
     identityVisibility: z.enum(IDENTITY_VISIBILITIES).default(DEFAULT_IDENTITY_VISIBILITY),
+    // Partie volontairement publique de la fiche membre. Ces champs restent
+    // optionnels pour qu'un ancien onglet ouvert avant le déploiement puisse
+    // encore enregistrer l'identité sans effacer la nouvelle fiche.
+    publicBio: z
+      .string()
+      .trim()
+      .max(1000, "La biographie ne peut pas dépasser 1 000 caractères.")
+      .optional(),
+    specialties: z
+      .array(missionCategorySchema)
+      .max(14)
+      .refine(
+        (values) => new Set(values).size === values.length,
+        "Une spécialité ne peut être sélectionnée qu'une fois.",
+      )
+      .optional(),
   });
 
 export type SelfIdentityUpdateInput = z.infer<typeof selfIdentityUpdateSchema>;
+
+// ── Évolution du grade d'un membre ──
+
+export const userLevelChangeRequestCreateSchema = z.object({
+  // Les comptes/groupes d'amorçage ont des identifiants lisibles ; leur
+  // existence et leur appartenance sont validées en base dans l'action.
+  targetUserId: z.string().min(1, "Membre invalide.").max(64, "Membre invalide."),
+  requestedLevelId: z.string().cuid("Sélectionnez le grade demandé."),
+  // Obligatoire côté serveur lorsqu'un chef agit pour un autre membre ; une
+  // demande personnelle n'a pas besoin de se rattacher à un groupe.
+  groupId: z.string().min(1, "Groupe invalide.").max(64, "Groupe invalide.").optional(),
+  reason: z
+    .string()
+    .trim()
+    .min(3, "Expliquez brièvement cette demande.")
+    .max(2000, "Le motif ne peut pas dépasser 2 000 caractères."),
+});
+
+export const userLevelChangeDecisionSchema = z.object({
+  requestId: z.string().cuid("Demande invalide."),
+  decision: z.enum(["APPROVED", "REJECTED"]),
+  reviewNote: z
+    .string()
+    .trim()
+    .min(3, "La décision doit être motivée.")
+    .max(2000, "Le motif ne peut pas dépasser 2 000 caractères."),
+});
+
+export type UserLevelChangeRequestCreateInput = z.infer<
+  typeof userLevelChangeRequestCreateSchema
+>;
+export type UserLevelChangeDecisionInput = z.infer<typeof userLevelChangeDecisionSchema>;
 
 // ── Groupes ──
 

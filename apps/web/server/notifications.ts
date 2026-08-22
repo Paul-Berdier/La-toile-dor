@@ -2,22 +2,34 @@ import "server-only";
 import { prisma } from "@toile/database";
 import type { NotificationEvent, Prisma } from "@toile/database";
 
-/**
- * File de notifications : le web ÉCRIT, le bot Discord CONSOMME.
- * Le payload ne doit contenir AUCUNE donnée confidentielle de mission —
- * uniquement code, rang, libellés publics et liens vers l'application.
- */
-export async function enqueueNotifications(input: {
+export interface EnqueueNotificationsInput {
   userIds: string[];
   event: NotificationEvent;
   payload: Record<string, string | number | null>;
   missionId?: string;
   batchKey?: string;
-}): Promise<number> {
+}
+
+type NotificationDb = Pick<
+  Prisma.TransactionClient,
+  "notificationPreference" | "notificationDelivery"
+>;
+
+type PermissionDb = Pick<Prisma.TransactionClient, "userRole">;
+
+/**
+ * File de notifications : le web ÉCRIT, le bot Discord CONSOMME.
+ * Le payload ne doit contenir AUCUNE donnée confidentielle de mission —
+ * uniquement code, rang, libellés publics et liens vers l'application.
+ */
+async function enqueueNotificationsWith(
+  db: NotificationDb,
+  input: EnqueueNotificationsInput,
+): Promise<number> {
   if (input.userIds.length === 0) return 0;
 
   // Respect des préférences : désactivation, sourdine, filtres rang/catégorie
-  const prefs = await prisma.notificationPreference.findMany({
+  const prefs = await db.notificationPreference.findMany({
     where: { userId: { in: input.userIds }, event: input.event },
   });
   const prefByUser = new Map(prefs.map((p) => [p.userId, p]));
@@ -49,13 +61,31 @@ export async function enqueueNotifications(input: {
   }
 
   if (rows.length === 0) return 0;
-  const result = await prisma.notificationDelivery.createMany({ data: rows });
+  const result = await db.notificationDelivery.createMany({ data: rows });
   return result.count;
 }
 
-/** Tous les utilisateurs détenant une permission donnée (ex. les modérateurs). */
-export async function userIdsWithPermission(permissionKey: string): Promise<string[]> {
-  const users = await prisma.userRole.findMany({
+export async function enqueueNotifications(input: EnqueueNotificationsInput): Promise<number> {
+  return enqueueNotificationsWith(prisma, input);
+}
+
+/**
+ * Variante atomique à appeler depuis une transaction métier. Une erreur de
+ * lecture des préférences ou de mise en file est volontairement propagée afin
+ * que l'écriture métier et son écho soient annulés ensemble.
+ */
+export async function enqueueNotificationsTx(
+  tx: Prisma.TransactionClient,
+  input: EnqueueNotificationsInput,
+): Promise<number> {
+  return enqueueNotificationsWith(tx, input);
+}
+
+async function userIdsWithPermissionUsing(
+  db: PermissionDb,
+  permissionKey: string,
+): Promise<string[]> {
+  const users = await db.userRole.findMany({
     where: {
       role: { permissions: { some: { permission: { key: permissionKey } } } },
       user: { status: "ACTIVE" },
@@ -63,6 +93,19 @@ export async function userIdsWithPermission(permissionKey: string): Promise<stri
     select: { userId: true },
   });
   return [...new Set(users.map((u) => u.userId))];
+}
+
+/** Tous les utilisateurs détenant une permission donnée (ex. les modérateurs). */
+export async function userIdsWithPermission(permissionKey: string): Promise<string[]> {
+  return userIdsWithPermissionUsing(prisma, permissionKey);
+}
+
+/** Résout les destinataires dans le même instantané que l'action métier. */
+export async function userIdsWithPermissionTx(
+  tx: Prisma.TransactionClient,
+  permissionKey: string,
+): Promise<string[]> {
+  return userIdsWithPermissionUsing(tx, permissionKey);
 }
 
 /** Chefs de groupe actifs (destinataires des annonces de missions). */

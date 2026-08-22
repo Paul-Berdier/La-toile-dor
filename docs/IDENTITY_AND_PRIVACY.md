@@ -78,13 +78,14 @@ en lecture seule. `updateOwnIdentityAction` n'accepte aucun `playerLevelId` et
 n'écrit **jamais** sur un autre compte : l'identifiant vient de la session, pas
 de l'entrée, et aucune permission n'est requise puisqu'il s'agit de soi.
 
-Après l'onboarding, seule la gestion des utilisateurs protégée par
-`user.manage` peut modifier le grade. `setUserLevelAction` valide la référence
-`PlayerLevel`, conserve l'ancien et le nouvel identifiant dans l'audit
-`user.level_updated`, puis rafraîchit l'administration. Le joueur doit donc
-s'adresser à la modération pour toute correction ou évolution de grade.
+Après l'onboarding, toute correction ou évolution passe par `/grades`. Le
+membre peut déposer une demande motivée pour lui-même ; un chef peut en
+déposer une pour un membre actif d'un groupe qu'il dirige. La décision exige
+`user.level.manage` et un motif. Elle conserve l'ancien et le nouvel
+identifiant dans l'audit. Un modérateur ne peut jamais trancher sa propre
+demande : un autre modérateur est requis.
 Un chef qui invite un agent utilise obligatoirement le grade initial le plus
-bas ; la modération peut ensuite attribuer un grade supérieur. Le formulaire
+bas ; la modération peut ensuite approuver un grade supérieur. Le formulaire
 filtre la liste et l'action serveur revérifie cette borne.
 
 La case de confidentialité n'est pas rejouée et `privacyAcknowledgedAt` n'est
@@ -151,6 +152,12 @@ elle ne confère pas cette permission globale.
 Le mode Streamer masque également les valeurs visibles pour un utilisateur
 autorisé. Il limite les fuites accidentelles à l'écran, mais ne remplace pas le
 filtrage serveur décrit ci-dessus.
+
+Sur les fiches membres, il supprime aussi le portrait et la présentation du
+rendu serveur. Sur `/compte`, la barrière Streamer intervient avant la lecture
+de la fiche et aucun formulaire contenant les informations personnelles n'est
+envoyé au navigateur. La page `/grades` applique la même barrière avant de
+charger les Titres, groupes et motifs de la file de validation.
 
 ## Migration des comptes existants
 

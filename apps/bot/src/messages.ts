@@ -24,6 +24,7 @@ function missionLine(payload: NotificationPayload): string {
 
 export function formatNotification(event: string, payload: NotificationPayload): string {
   const lines: string[] = [];
+  let destination = "/missions";
   switch (event) {
     case "MISSION_AVAILABLE":
       lines.push("🕸️ **Un nouveau fil vient d'être tendu sur la Toile.**", missionLine(payload));
@@ -74,10 +75,30 @@ export function formatNotification(event: string, payload: NotificationPayload):
     case "ACCESS_DENIED_ALERT":
       lines.push("🚨 **Tentatives d'accès refusées répétées sur la Toile.**");
       break;
+    case "USER_LEVEL_CHANGE_REQUESTED":
+      destination = "/grades";
+      lines.push(
+        "📜 **Une demande de changement de grade est à examiner.**",
+        payload.title ? `Membre : ${payload.title}` : "",
+      );
+      if (payload.note) lines.push(`Évolution : ${payload.note}`);
+      break;
+    case "USER_LEVEL_CHANGE_APPROVED":
+      destination = "/grades";
+      lines.push("✅ **Votre changement de grade a été approuvé.**");
+      if (payload.title) lines.push(String(payload.title));
+      if (payload.note) lines.push(`Décision : ${payload.note}`);
+      break;
+    case "USER_LEVEL_CHANGE_REJECTED":
+      destination = "/grades";
+      lines.push("❌ **Votre demande de changement de grade a été refusée.**");
+      if (payload.title) lines.push(String(payload.title));
+      if (payload.note) lines.push(`Décision : ${payload.note}`);
+      break;
     default:
       lines.push("🕸️ **La Toile frémit.**", missionLine(payload));
   }
-  if (appUrl()) lines.push(`→ ${appUrl()}/missions`);
+  if (appUrl()) lines.push(`→ ${appUrl()}${destination}`);
   return lines.filter(Boolean).join("\n");
 }
 

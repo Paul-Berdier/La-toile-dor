@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { prisma } from "@toile/database";
 import { PERMISSIONS } from "@toile/shared";
 import { requireUserWith } from "@/lib/session";
@@ -22,7 +23,7 @@ const STATUS_LABELS_FR: Record<string, string> = {
 export default async function AdminUtilisateursPage() {
   await requireUserWith(PERMISSIONS.USER_MANAGE);
 
-  const [users, allRoles, allGroups, allLevels] = await Promise.all([
+  const [users, allRoles, allGroups] = await Promise.all([
     prisma.user.findMany({
       orderBy: [{ status: "asc" }, { createdAt: "desc" }],
       include: {
@@ -44,7 +45,6 @@ export default async function AdminUtilisateursPage() {
       orderBy: [{ faction: { name: "asc" } }, { name: "asc" }],
       select: { id: true, name: true, faction: { select: { name: true } } },
     }),
-    prisma.playerLevel.findMany({ orderBy: { order: "asc" }, select: { id: true, label: true } }),
   ]);
 
   const groupOptions = allGroups.map((group) => ({
@@ -54,7 +54,14 @@ export default async function AdminUtilisateursPage() {
   }));
 
   return (
-    <div className="overflow-x-auto border border-border-default bg-raised">
+    <>
+      <p className="mb-4 border border-border-default bg-raised px-4 py-3 text-xs text-ink-muted">
+        Toute évolution de grade passe désormais par une demande motivée. {" "}
+        <Link href="/grades" className="text-gold underline-offset-4 hover:underline">
+          Examiner les demandes de grade
+        </Link>
+      </p>
+      <div className="overflow-x-auto border border-border-default bg-raised">
       <table className="w-full min-w-[52rem] text-left text-sm">
         <caption className="sr-only">Utilisateurs de la Toile</caption>
         <thead>
@@ -62,7 +69,7 @@ export default async function AdminUtilisateursPage() {
             <th scope="col" className="px-4 py-3">Membre</th>
             <th scope="col" className="px-4 py-3">Discord</th>
             <th scope="col" className="px-4 py-3">Groupes</th>
-            <th scope="col" className="px-4 py-3">Niveau</th>
+            <th scope="col" className="px-4 py-3">Grade</th>
             <th scope="col" className="px-4 py-3">Statut</th>
             <th scope="col" className="px-4 py-3">Actions</th>
           </tr>
@@ -107,8 +114,6 @@ export default async function AdminUtilisateursPage() {
                     allRoles={allRoles}
                     groupMemberships={user.groupMemberships}
                     allGroups={groupOptions}
-                    playerLevelId={user.playerLevel?.id ?? null}
-                    allLevels={allLevels}
                   />
                 )}
               </td>
@@ -116,6 +121,7 @@ export default async function AdminUtilisateursPage() {
           ))}
         </tbody>
       </table>
-    </div>
+      </div>
+    </>
   );
 }

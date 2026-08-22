@@ -16,7 +16,9 @@ import type { CurrentUser } from "@/lib/session";
  */
 export const getIdentityViewer = cache(async (current: CurrentUser): Promise<IdentityViewer> => {
   const memberships = await prisma.groupMember.findMany({
-    where: { userId: current.session.userId },
+    // Une appartenance historique à un groupe désactivé ne doit jamais
+    // continuer à ouvrir le prénom/nom réel d'anciens coéquipiers.
+    where: { userId: current.session.userId, group: { isActive: true } },
     select: { groupId: true },
   });
   return {
@@ -46,7 +48,10 @@ export async function serializeUsersForViewer(
       // Portée choisie par l'intéressé — sans elle, on retomberait en silence
       // sur la règle par défaut et le choix ne servirait à rien.
       identityVisibility: true,
-      groupMemberships: { select: { groupId: true } },
+      groupMemberships: {
+        where: { group: { isActive: true } },
+        select: { groupId: true },
+      },
     },
   });
   return new Map(

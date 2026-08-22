@@ -3,6 +3,8 @@ import {
   invitationCreateSchema,
   onboardingIdentitySchema,
   selfIdentityUpdateSchema,
+  userLevelChangeDecisionSchema,
+  userLevelChangeRequestCreateSchema,
 } from "./schemas";
 import { referenceOptionCreateSchema } from "./profile-schemas";
 
@@ -53,6 +55,46 @@ describe("le grade est une donnée contrôlée", () => {
     expect(parsed.success && "privacyAcknowledged" in parsed.data).toBe(false);
     // Un client altéré ne peut pas faire entrer un nouveau grade dans l'action.
     expect(parsed.success && "playerLevelId" in parsed.data).toBe(false);
+  });
+});
+
+describe("workflow motivé d'évolution du grade", () => {
+  it("accepte les identifiants lisibles des comptes et groupes de démonstration", () => {
+    expect(
+      userLevelChangeRequestCreateSchema.safeParse({
+        targetUserId: "demo-member-1",
+        requestedLevelId: CUID,
+        groupId: "demo-group-1",
+        reason: "Évolution validée en RP.",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("exige un motif pour la demande et pour la décision", () => {
+    expect(
+      userLevelChangeRequestCreateSchema.safeParse({
+        targetUserId: "demo-member-1",
+        requestedLevelId: CUID,
+        reason: "",
+      }).success,
+    ).toBe(false);
+    expect(
+      userLevelChangeDecisionSchema.safeParse({
+        requestId: CUID,
+        decision: "APPROVED",
+        reviewNote: "",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("limite la décision à approuver ou refuser", () => {
+    expect(
+      userLevelChangeDecisionSchema.safeParse({
+        requestId: CUID,
+        decision: "CANCELLED",
+        reviewNote: "Décision motivée.",
+      }).success,
+    ).toBe(false);
   });
 });
 
