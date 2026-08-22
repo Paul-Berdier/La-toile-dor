@@ -53,8 +53,8 @@ model User {
   // Fiche RP héritée (ancien onboarding) : titre (pseudo RP) et village/pays
   rpTitle       String?
   village       String?
-  // Fiche publique de membre — distincte des dossiers de renseignement.
-  // Le portrait reste servi par une route authentifiée : les octets ne sont
+  // Présentation personnelle — distincte des dossiers de renseignement.
+  // Le portrait est servi au seul compte authentifié : les octets ne sont
   // jamais sérialisés dans une page ou une action serveur.
   publicBio     String?
   specialties  MissionCategory[] @default([])
@@ -345,9 +345,8 @@ enum UserLevelChangeRequestStatus {
   CANCELLED
 }
 
-// Un membre peut demander son évolution de grade ; un chef peut aussi la
-// proposer pour un membre de l'un de ses groupes. Le grade effectif n'est
-// modifié qu'après décision d'une autorité `user.level.manage`.
+// Structure historique conservée pour qu'un déploiement ayant déjà appliqué la
+// migration reste compatible. Aucun écran ni action n'alimente plus cette table.
 model UserLevelChangeRequest {
   id               String                       @id @default(cuid())
   targetUserId     String

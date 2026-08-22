@@ -76,7 +76,7 @@ export function formatNotification(event: string, payload: NotificationPayload):
       lines.push("🚨 **Tentatives d'accès refusées répétées sur la Toile.**");
       break;
     case "USER_LEVEL_CHANGE_REQUESTED":
-      destination = "/grades";
+      destination = "/compte";
       lines.push(
         "📜 **Une demande de changement de grade est à examiner.**",
         payload.title ? `Membre : ${payload.title}` : "",
@@ -84,13 +84,13 @@ export function formatNotification(event: string, payload: NotificationPayload):
       if (payload.note) lines.push(`Évolution : ${payload.note}`);
       break;
     case "USER_LEVEL_CHANGE_APPROVED":
-      destination = "/grades";
+      destination = "/compte";
       lines.push("✅ **Votre changement de grade a été approuvé.**");
       if (payload.title) lines.push(String(payload.title));
       if (payload.note) lines.push(`Décision : ${payload.note}`);
       break;
     case "USER_LEVEL_CHANGE_REJECTED":
-      destination = "/grades";
+      destination = "/compte";
       lines.push("❌ **Votre demande de changement de grade a été refusée.**");
       if (payload.title) lines.push(String(payload.title));
       if (payload.note) lines.push(`Décision : ${payload.note}`);

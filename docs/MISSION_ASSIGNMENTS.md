@@ -157,15 +157,12 @@ Les revendications en attente des groupes retenus passent à `ACCEPTED`.
 Le grade qui intervient dans l'éligibilité est toujours
 `User.playerLevelId` tel qu'il existe en base au moment de la transaction. Un
 chef ne transmet jamais lui-même un ordre de grade dans sa revendication et ne
-peut pas modifier le grade d'un agent pour rendre son équipe conforme.
+peut pas modifier le grade d'un autre agent pour rendre son équipe conforme.
 
-Après l'activation du compte, le formulaire personnel exclut le grade. Le
-membre ou son chef dépose une demande motivée sur `/grades`; une autorité
-`user.level.manage` la tranche avec un second motif. Le nouveau grade doit
-exister dans `PlayerLevel`, l'approbation utilise un verrou CAS sur la demande
-`PENDING`, et l'ancien comme le nouvel identifiant sont audités. Une correction
-approuvée peut donc modifier le bilan d'une revendication encore en attente,
-ce qui explique la revalidation à l'acceptation.
+Chaque membre choisit son propre grade depuis `/compte`, dans le référentiel
+`PlayerLevel`; le changement est audité. Une modification peut changer le
+bilan d'une revendication encore en attente, ce qui explique la revalidation
+des niveaux à l'acceptation puis au démarrage de la mission.
 
 ## Retour vers « À prendre »
 

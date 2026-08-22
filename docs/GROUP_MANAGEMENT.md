@@ -110,12 +110,10 @@ peut être membre de plusieurs groupes, mais ne peut pas s'y ajouter lui-même.
 Les événements `group.member_added` et `group.member_removed` sont audités.
 
 Le niveau RP (`PlayerLevel`) est choisi dès la création de l'invitation et
-appliqué au compte dans la transaction OAuth. La gestion des utilisateurs
-permet de corriger le niveau des comptes historiques ; la migration attribue
+appliqué au compte dans la transaction OAuth. La migration attribue
 provisoirement le niveau le plus bas aux anciennes fiches qui n'en avaient pas.
-Un chef peut inviter un agent au grade initial le plus bas ; il peut ensuite
-proposer une évolution motivée sur `/grades`. Seule une autorité
-`user.level.manage` peut l'approuver, et jamais pour son propre personnage.
+Un chef invite un agent avec ce grade initial ; après l'onboarding, chaque
+membre peut ajuster son propre grade depuis `/compte`.
 
 ## Promotion d'un agent
 

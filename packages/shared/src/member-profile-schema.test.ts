@@ -1,14 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { selfIdentityUpdateSchema } from "./schemas";
 
+const PLAYER_LEVEL_ID = "cm12345678901234567890123";
+
 const identity = {
   firstName: "Akira",
   lastName: "",
   displayName: "La Vipère de Kiri",
+  playerLevelId: PLAYER_LEVEL_ID,
   identityVisibility: "MY_GROUPS" as const,
 };
 
-describe("fiche publique personnelle", () => {
+describe("informations personnelles", () => {
   it("accepte une bio et des spécialités du référentiel mission", () => {
     const parsed = selfIdentityUpdateSchema.parse({
       ...identity,
@@ -38,7 +41,7 @@ describe("fiche publique personnelle", () => {
     ).toBe(false);
   });
 
-  it("reste compatible avec un ancien formulaire sans fiche publique", () => {
+  it("reste compatible avec un ancien formulaire sans présentation", () => {
     const parsed = selfIdentityUpdateSchema.parse(identity);
 
     expect(parsed.publicBio).toBeUndefined();

@@ -2,19 +2,27 @@ import { expect, test } from "@playwright/test";
 import { loginAs, prisma, setStreamerCookie } from "./helpers";
 
 /**
- * « Mes informations » : chacun modifie son propre Titre, son nom et sa fiche
- * publique, tandis que le grade contrôlé reste en lecture seule. Le test utilise un compte qui
- * lui est propre pour n'interférer
- * avec aucune autre spec.
+ * « Mes informations » : chacun modifie son propre Titre, son nom, sa fiche et
+ * son grade. Le test utilise un compte qui lui est propre pour
+ * n'interférer avec aucune autre spec.
  */
 const runId = Date.now().toString(36).toUpperCase();
 const USER_ID = `e2e-compte-${runId}`;
 const TITLE = `[FICTIF] Ombre ${runId}`;
+let initialLevelId = "";
+let nextLevelId = "";
 
 test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async () => {
-  const level = await prisma.playerLevel.findFirstOrThrow({ orderBy: { order: "asc" } });
+  const levels = await prisma.playerLevel.findMany({
+    orderBy: { order: "asc" },
+    take: 2,
+    select: { id: true },
+  });
+  if (levels.length < 2) throw new Error("Le test compte exige au moins deux grades configurés.");
+  initialLevelId = levels[0]!.id;
+  nextLevelId = levels[1]!.id;
   await prisma.user.create({
     data: {
       id: USER_ID,
@@ -25,7 +33,7 @@ test.beforeAll(async () => {
       status: "ACTIVE",
       profileCompleted: true,
       privacyAcknowledgedAt: new Date(),
-      playerLevelId: level.id,
+      playerLevelId: initialLevelId,
     },
   });
 });
@@ -36,7 +44,7 @@ test.afterAll(async () => {
   await prisma.$disconnect();
 });
 
-test("un membre modifie son Titre et son nom, mais pas son grade", async ({ context, page }) => {
+test("un membre modifie son Titre, son nom et son grade", async ({ context, page }) => {
   await loginAs(context, USER_ID);
   await page.goto("/compte");
 
@@ -44,13 +52,14 @@ test("un membre modifie son Titre et son nom, mais pas son grade", async ({ cont
   // Les valeurs actuelles sont pré-remplies
   await expect(page.getByLabel("Votre Titre *")).toHaveValue(TITLE);
   await expect(page.getByLabel("Prénom du personnage *")).toHaveValue("Kaede");
-  await expect(page.locator("#ac-level")).toHaveCount(0);
+  await expect(page.getByLabel("Grade du personnage *")).toHaveValue(initialLevelId);
   await expect(page.getByText(/le grade intervient dans l’éligibilité/i)).toBeVisible();
 
   const newTitle = `[FICTIF] Vipère ${runId}`;
   await page.getByLabel("Votre Titre *").fill(newTitle);
   await page.getByLabel("Nom de famille — facultatif").fill("Kurosawa");
-  await page.getByLabel("Biographie publique").fill("Messagère et pisteuse de la Toile.");
+  await page.getByLabel("Grade du personnage *").selectOption(nextLevelId);
+  await page.getByLabel("Présentation du personnage").fill("Messagère et pisteuse de la Toile.");
   await page.getByRole("button", { name: "Traque", exact: true }).click();
   await page.getByRole("button", { name: "Infiltration", exact: true }).click();
   await page.getByRole("button", { name: /enregistrer mes informations/i }).click();
@@ -62,10 +71,22 @@ test("un membre modifie son Titre et son nom, mais pas son grade", async ({ cont
   expect(user.lastName).toBe("Kurosawa");
   expect(user.publicBio).toBe("Messagère et pisteuse de la Toile.");
   expect(user.specialties).toEqual(expect.arrayContaining(["TRAQUE", "INFILTRATION"]));
-  expect(user.playerLevelId).not.toBeNull();
+  expect(user.playerLevelId).toBe(nextLevelId);
+
+  const gradeAudit = await prisma.auditLog.findFirst({
+    where: {
+      actorId: USER_ID,
+      action: "user.level_updated",
+      resourceId: USER_ID,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  expect(gradeAudit).not.toBeNull();
+  expect(gradeAudit?.oldValues).toMatchObject({ playerLevelId: initialLevelId });
+  expect(gradeAudit?.newValues).toMatchObject({ playerLevelId: nextLevelId });
 });
 
-test("le portrait est validé, servi aux membres puis supprimé", async ({ context, page }) => {
+test("le portrait personnel est validé, servi au compte puis supprimé", async ({ context, page }) => {
   await loginAs(context, USER_ID);
   await page.goto("/compte");
 
@@ -75,15 +96,15 @@ test("le portrait est validé, servi aux membres puis supprimé", async ({ conte
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
     "base64",
   );
-  await page.getByLabel("Portrait public").setInputFiles({
+  await page.getByLabel("Portrait du personnage").setInputFiles({
     name: "portrait.png",
     mimeType: "image/png",
     buffer: portrait,
   });
   await page.getByRole("button", { name: "Enregistrer le portrait" }).click();
-  await expect(page.getByText("Portrait public enregistré.")).toBeVisible();
+  await expect(page.getByText("Portrait enregistré.")).toBeVisible();
 
-  const served = await context.request.get(`/api/membres/${USER_ID}/portrait`);
+  const served = await context.request.get("/api/compte/portrait");
   expect(served.status()).toBe(200);
   expect(served.headers()["content-type"]).toContain("image/webp");
   expect(served.headers()["cache-control"]).toBe("private, max-age=60, must-revalidate");
@@ -94,7 +115,7 @@ test("le portrait est validé, servi aux membres puis supprimé", async ({ conte
   expect(sanitized.length).toBeGreaterThan(0);
   expect(sanitized).not.toEqual(portrait);
 
-  const revalidated = await context.request.get(`/api/membres/${USER_ID}/portrait`, {
+  const revalidated = await context.request.get("/api/compte/portrait", {
     headers: { "If-None-Match": served.headers()["etag"]! },
   });
   expect(revalidated.status()).toBe(304);
@@ -104,7 +125,7 @@ test("le portrait est validé, servi aux membres puis supprimé", async ({ conte
   await page.getByRole("button", { name: "Supprimer le portrait" }).click();
   await page.getByRole("button", { name: "Confirmer la suppression" }).click();
   await expect(page.getByText("Portrait supprimé.")).toBeVisible();
-  expect((await context.request.get(`/api/membres/${USER_ID}/portrait`)).status()).toBe(404);
+  expect((await context.request.get("/api/compte/portrait")).status()).toBe(404);
 
   const user = await prisma.user.findUniqueOrThrow({ where: { id: USER_ID } });
   expect(user.portraitData).toBeNull();
@@ -115,7 +136,7 @@ test("un faux PNG est refusé par sa signature", async ({ context, page }) => {
   await loginAs(context, USER_ID);
   await page.goto("/compte");
 
-  await page.getByLabel("Portrait public").setInputFiles({
+  await page.getByLabel("Portrait du personnage").setInputFiles({
     name: "mensonge.png",
     mimeType: "image/png",
     buffer: Buffer.from("ceci n'est pas une image"),
@@ -157,7 +178,7 @@ test("le mode Streamer n'envoie aucune donnée personnelle au formulaire", async
 
   await expect(page.getByRole("heading", { name: "Édition protégée" })).toBeVisible();
   await expect(page.getByLabel("Prénom du personnage *")).toHaveCount(0);
-  await expect(page.getByLabel("Biographie publique")).toHaveCount(0);
+  await expect(page.getByLabel("Présentation du personnage")).toHaveCount(0);
 
   const html = await page.content();
   const responses = await Promise.all(bodies);

@@ -49,8 +49,8 @@ export const PERMISSIONS = {
   INVITE_MANAGE: "invite.manage",
   FACTION_MANAGE: "faction.manage",
   USER_MANAGE: "user.manage",
-  // Examiner les demandes d'évolution/correction du grade RP. Cette
-  // permission reste distincte de user.manage, beaucoup plus large.
+  // Compatibilité avec l'ancien workflow de demandes de grade. Aucun écran
+  // actif ne s'appuie désormais sur cette permission.
   USER_LEVEL_MANAGE: "user.level.manage",
   MODERATOR_MANAGE: "moderator.manage",
   SETTINGS_MANAGE: "settings.manage",

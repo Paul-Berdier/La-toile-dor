@@ -10,7 +10,7 @@ import { referenceOptionCreateSchema } from "./profile-schemas";
 
 const CUID = "cm12345678901234567890123";
 
-describe("le grade est une donnée contrôlée", () => {
+describe("le grade du personnage", () => {
   const invitation = { roleSlug: "group_member", expiresInHours: 72 };
 
   it("une invitation exige un niveau de personnage", () => {
@@ -44,7 +44,7 @@ describe("le grade est une donnée contrôlée", () => {
     ).toBe(true);
   });
 
-  it("la modification de sa propre fiche ne rejoue pas la confidentialité", () => {
+  it("la modification de sa propre fiche accepte le grade sans rejouer la confidentialité", () => {
     const parsed = selfIdentityUpdateSchema.safeParse({
       firstName: "Akira",
       displayName: "La Vipère de Kiri",
@@ -53,8 +53,7 @@ describe("le grade est une donnée contrôlée", () => {
     expect(parsed.success).toBe(true);
     // privacyAcknowledged est absent du schéma : l'accord initial garde sa date
     expect(parsed.success && "privacyAcknowledged" in parsed.data).toBe(false);
-    // Un client altéré ne peut pas faire entrer un nouveau grade dans l'action.
-    expect(parsed.success && "playerLevelId" in parsed.data).toBe(false);
+    expect(parsed.success && parsed.data.playerLevelId).toBe(CUID);
   });
 });
 

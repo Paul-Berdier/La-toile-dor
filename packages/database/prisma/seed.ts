@@ -41,7 +41,7 @@ const PERMISSION_DEFS: [string, string][] = [
   ["invite.manage", "Gérer les invitations"],
   ["faction.manage", "Gérer les factions"],
   ["user.manage", "Gérer les utilisateurs"],
-  ["user.level.manage", "Examiner les demandes de changement de grade"],
+  ["user.level.manage", "Compatibilité historique des anciennes demandes de grade"],
   ["moderator.manage", "Gérer les modérateurs"],
   ["settings.manage", "Modifier les paramètres"],
   ["audit.read", "Consulter les journaux d'audit"],

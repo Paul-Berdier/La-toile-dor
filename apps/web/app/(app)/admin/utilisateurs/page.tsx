@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { prisma } from "@toile/database";
 import { PERMISSIONS } from "@toile/shared";
 import { requireUserWith } from "@/lib/session";
@@ -54,14 +53,7 @@ export default async function AdminUtilisateursPage() {
   }));
 
   return (
-    <>
-      <p className="mb-4 border border-border-default bg-raised px-4 py-3 text-xs text-ink-muted">
-        Toute évolution de grade passe désormais par une demande motivée. {" "}
-        <Link href="/grades" className="text-gold underline-offset-4 hover:underline">
-          Examiner les demandes de grade
-        </Link>
-      </p>
-      <div className="overflow-x-auto border border-border-default bg-raised">
+    <div className="overflow-x-auto border border-border-default bg-raised">
       <table className="w-full min-w-[52rem] text-left text-sm">
         <caption className="sr-only">Utilisateurs de la Toile</caption>
         <thead>
@@ -121,7 +113,6 @@ export default async function AdminUtilisateursPage() {
           ))}
         </tbody>
       </table>
-      </div>
-    </>
+    </div>
   );
 }

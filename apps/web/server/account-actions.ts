@@ -15,21 +15,21 @@ interface Result {
 
 const PORTRAIT_MAX_BYTES = 500 * 1024;
 
-function revalidateOwnProfile(userId: string) {
+function revalidateOwnProfile() {
   revalidatePath("/compte");
-  revalidatePath("/membres");
-  revalidatePath(`/membres/${userId}`);
+  revalidatePath("/missions");
 }
 
 /**
- * Mise à jour par un membre de SA propre fiche : identité, bio publique et
- * spécialités.
+ * Mise à jour par un membre de ses propres informations : identité,
+ * présentation, spécialités et grade RP.
  *
  * Chacun est maître de sa fiche — aucune permission particulière n'est requise,
  * mais l'action ne touche jamais qu'à l'utilisateur de la session : l'`userId`
  * ne vient pas de l'entrée. Les règles de la première connexion s'appliquent
- * telles quelles (unicité du Titre insensible à la casse). Le grade est exclu
- * de ce schéma : il conditionne l'éligibilité et relève de la modération.
+ * telles quelles (unicité du Titre insensible à la casse). Le grade choisi est
+ * toujours résolu côté serveur avant d'être enregistré : un identifiant forgé
+ * ne permet jamais de créer une valeur hors référentiel.
  */
 export async function updateOwnIdentityAction(raw: unknown): Promise<Result> {
   const current = await requireUser();
@@ -58,6 +58,18 @@ export async function updateOwnIdentityAction(raw: unknown): Promise<Result> {
     };
   }
 
+  const selectedLevel = await prisma.playerLevel.findUnique({
+    where: { id: data.playerLevelId },
+    select: { id: true, label: true },
+  });
+  if (!selectedLevel) {
+    return {
+      ok: false,
+      fieldErrors: { playerLevelId: ["Ce grade n'existe pas."] },
+      error: "Ce grade n'existe pas.",
+    };
+  }
+
   const before = await prisma.user.findUniqueOrThrow({
     where: { id: current.session.userId },
     select: {
@@ -65,6 +77,8 @@ export async function updateOwnIdentityAction(raw: unknown): Promise<Result> {
       identityVisibility: true,
       publicBio: true,
       specialties: true,
+      playerLevelId: true,
+      playerLevel: { select: { label: true } },
     },
   });
   const publicBio =
@@ -82,6 +96,7 @@ export async function updateOwnIdentityAction(raw: unknown): Promise<Result> {
         displayName,
         displayNameNorm: norm,
         identityVisibility: data.identityVisibility,
+        playerLevelId: selectedLevel.id,
         ...(data.publicBio === undefined ? {} : { publicBio }),
         ...(data.specialties === undefined ? {} : { specialties }),
       },
@@ -104,7 +119,8 @@ export async function updateOwnIdentityAction(raw: unknown): Promise<Result> {
     action: "profile.identity_updated",
     resourceType: "user",
     resourceId: current.session.userId,
-    // Jamais le prénom/nom dans l'audit — uniquement ce qui est public.
+    // Jamais le prénom/nom dans l'audit — uniquement des métadonnées non
+    // confidentielles utiles à la traçabilité.
     // La portée choisie y figure : c'est une décision de confidentialité, et
     // savoir quand elle a changé peut compter.
     oldValues: {
@@ -117,8 +133,8 @@ export async function updateOwnIdentityAction(raw: unknown): Promise<Result> {
     newValues: {
       displayName,
       identityVisibility: data.identityVisibility,
-      // La bio est publique dans l'application, mais son contenu n'a aucune
-      // raison d'être dupliqué durablement dans les journaux d'audit.
+      // Le contenu de la présentation n'a aucune raison d'être dupliqué
+      // durablement dans les journaux d'audit.
       hasPublicBio: Boolean(publicBio),
       publicBioLength: publicBio?.length ?? 0,
       specialties,
@@ -126,12 +142,31 @@ export async function updateOwnIdentityAction(raw: unknown): Promise<Result> {
     ...meta,
   });
 
-  revalidateOwnProfile(current.session.userId);
+  if (before.playerLevelId !== selectedLevel.id) {
+    await audit({
+      actorId: current.session.userId,
+      action: "user.level_updated",
+      resourceType: "user",
+      resourceId: current.session.userId,
+      oldValues: {
+        playerLevelId: before.playerLevelId,
+        label: before.playerLevel?.label ?? null,
+      },
+      newValues: {
+        playerLevelId: selectedLevel.id,
+        label: selectedLevel.label,
+      },
+      reason: "Modification personnelle depuis Mes informations.",
+      ...meta,
+    });
+  }
+
+  revalidateOwnProfile();
   return { ok: true };
 }
 
 /**
- * Remplace le portrait PUBLIC du compte courant. L'identifiant utilisateur ne
+ * Remplace le portrait du compte courant. L'identifiant utilisateur ne
  * vient jamais du client : un membre ne peut écrire que ses propres octets.
  */
 export async function uploadOwnPortraitAction(formData: FormData): Promise<Result> {
@@ -217,7 +252,7 @@ export async function uploadOwnPortraitAction(formData: FormData): Promise<Resul
     ...meta,
   });
 
-  revalidateOwnProfile(current.session.userId);
+  revalidateOwnProfile();
   return { ok: true };
 }
 
@@ -247,6 +282,6 @@ export async function removeOwnPortraitAction(): Promise<Result> {
     ...meta,
   });
 
-  revalidateOwnProfile(current.session.userId);
+  revalidateOwnProfile();
   return { ok: true };
 }

@@ -165,8 +165,8 @@ export const invitationCreateSchema = z.object({
   roleSlug: z.enum(["super_admin", "moderator", "group_leader", "group_member"]),
   factionId: z.string().cuid().optional(),
   groupId: z.string().cuid().optional(),
-  // Le grade intervient dans l'éligibilité aux missions : il est fixé par
-  // l'inviteur et ne peut pas être élevé par le joueur lui-même ensuite.
+  // Grade initial affiché pendant l'onboarding. Le membre pourra ensuite le
+  // corriger lui-même depuis « Mes informations ».
   playerLevelId: z.string().cuid("Sélectionnez le grade du personnage."),
   // Parcours de groupe d'un chef invité :
   // EXISTING_GROUP → rejoint groupId ; CREATE_NEW_GROUP → fondera son groupe
@@ -206,8 +206,8 @@ export const onboardingIdentitySchema = z.object({
     .min(2, "Le pseudonyme doit compter au moins 2 caractères.")
     .max(60)
     .refine((v) => v.replace(/\s+/g, "").length > 0, "Le pseudonyme ne peut pas être vide."),
-  // Grade fixé par l'invitation. Le champ reste présent pour l'exception
-  // transactionnelle des anciens comptes qui n'en possèdent encore aucun.
+  // Grade initial pendant l'onboarding, puis choix personnel depuis /compte.
+  // Le serveur résout toujours l'identifiant dans PlayerLevel.
   playerLevelId: z.string().cuid("Sélectionnez votre grade."),
   privacyAcknowledged: z
     .boolean()
@@ -222,13 +222,13 @@ export type OnboardingIdentityInput = z.infer<typeof onboardingIdentitySchema>;
  * acceptée et son horodatage ne doit pas être réécrit.
  */
 export const selfIdentityUpdateSchema = onboardingIdentitySchema
-  .omit({ privacyAcknowledged: true, playerLevelId: true })
+  .omit({ privacyAcknowledged: true })
   .extend({
     // Portée de son prénom et de son nom : c'est à l'intéressé de la fixer.
     identityVisibility: z.enum(IDENTITY_VISIBILITIES).default(DEFAULT_IDENTITY_VISIBILITY),
-    // Partie volontairement publique de la fiche membre. Ces champs restent
-    // optionnels pour qu'un ancien onglet ouvert avant le déploiement puisse
-    // encore enregistrer l'identité sans effacer la nouvelle fiche.
+    // Présentation facultative du personnage. Ces champs restent optionnels
+    // pour qu'un ancien onglet ouvert avant le déploiement puisse encore
+    // enregistrer l'identité sans effacer ces nouvelles informations.
     publicBio: z
       .string()
       .trim()
@@ -248,6 +248,7 @@ export type SelfIdentityUpdateInput = z.infer<typeof selfIdentityUpdateSchema>;
 
 // ── Évolution du grade d'un membre ──
 
+/** @deprecated Compatibilité de données uniquement ; aucun écran ne crée plus ces demandes. */
 export const userLevelChangeRequestCreateSchema = z.object({
   // Les comptes/groupes d'amorçage ont des identifiants lisibles ; leur
   // existence et leur appartenance sont validées en base dans l'action.
@@ -263,6 +264,7 @@ export const userLevelChangeRequestCreateSchema = z.object({
     .max(2000, "Le motif ne peut pas dépasser 2 000 caractères."),
 });
 
+/** @deprecated Compatibilité de données uniquement ; aucun écran ne traite plus ces demandes. */
 export const userLevelChangeDecisionSchema = z.object({
   requestId: z.string().cuid("Demande invalide."),
   decision: z.enum(["APPROVED", "REJECTED"]),

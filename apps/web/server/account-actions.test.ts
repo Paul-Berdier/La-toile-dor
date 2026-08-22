@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   requestMeta: vi.fn(),
   findFirst: vi.fn(),
   findUniqueOrThrow: vi.fn(),
+  findLevel: vi.fn(),
   update: vi.fn(),
   audit: vi.fn(),
   rateLimit: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock("@toile/database", () => ({
       findUniqueOrThrow: mocks.findUniqueOrThrow,
       update: mocks.update,
     },
+    playerLevel: { findUnique: mocks.findLevel },
   },
 }));
 vi.mock("@toile/auth", () => ({ audit: mocks.audit, rateLimit: mocks.rateLimit }));
@@ -40,6 +42,8 @@ import {
 } from "./account-actions";
 
 const userId = "member-current";
+const currentLevelId = "cm12345678901234567890123";
+const nextLevelId = "cm22345678901234567890123";
 
 function portraitForm(bytes: Buffer, declaredSize = bytes.length) {
   const file = {
@@ -62,9 +66,12 @@ beforeEach(() => {
     identityVisibility: "MY_GROUPS",
     publicBio: null,
     specialties: [],
+    playerLevelId: currentLevelId,
+    playerLevel: { label: "Genin" },
     portraitData: null,
     portraitMime: null,
   });
+  mocks.findLevel.mockResolvedValue({ id: currentLevelId, label: "Genin" });
   mocks.update.mockResolvedValue({ id: userId });
   mocks.rateLimit.mockReturnValue({ allowed: true, remaining: 11, retryAfterSeconds: 0 });
   mocks.isFileLike.mockReturnValue(true);
@@ -74,13 +81,14 @@ beforeEach(() => {
   }));
 });
 
-describe("fiche publique du compte courant", () => {
+describe("informations du compte courant", () => {
   it("enregistre la bio et les spécialités sans copier la bio dans l'audit", async () => {
     const secretMarker = "Bio publique non dupliquée dans l'audit";
     const result = await updateOwnIdentityAction({
       firstName: "Akira",
       lastName: "",
       displayName: "La Vipère",
+      playerLevelId: currentLevelId,
       identityVisibility: "MY_GROUPS",
       publicBio: secretMarker,
       specialties: ["TRAQUE", "INFILTRATION"],
@@ -107,6 +115,56 @@ describe("fiche publique du compte courant", () => {
         }),
       }),
     );
+  });
+
+  it("permet de modifier directement son grade et journalise le changement", async () => {
+    mocks.findLevel.mockResolvedValueOnce({ id: nextLevelId, label: "Chunin" });
+
+    const result = await updateOwnIdentityAction({
+      firstName: "Akira",
+      lastName: "",
+      displayName: "La Vipère",
+      playerLevelId: nextLevelId,
+      identityVisibility: "MY_GROUPS",
+      publicBio: "",
+      specialties: [],
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(mocks.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: userId },
+        data: expect.objectContaining({ playerLevelId: nextLevelId }),
+      }),
+    );
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorId: userId,
+        action: "user.level_updated",
+        oldValues: { playerLevelId: currentLevelId, label: "Genin" },
+        newValues: { playerLevelId: nextLevelId, label: "Chunin" },
+      }),
+    );
+  });
+
+  it("refuse un identifiant de grade absent du référentiel", async () => {
+    mocks.findLevel.mockResolvedValueOnce(null);
+
+    const result = await updateOwnIdentityAction({
+      firstName: "Akira",
+      lastName: "",
+      displayName: "La Vipère",
+      playerLevelId: nextLevelId,
+      identityVisibility: "MY_GROUPS",
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      fieldErrors: { playerLevelId: ["Ce grade n'existe pas."] },
+      error: "Ce grade n'existe pas.",
+    });
+    expect(mocks.update).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
   });
 
   it("stocke uniquement sur le compte authentifié le portrait réencodé", async () => {

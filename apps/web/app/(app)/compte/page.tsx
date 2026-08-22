@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { prisma } from "@toile/database";
 import { requireUser } from "@/lib/session";
 import { isStreamerMode } from "@/lib/streamer";
@@ -6,8 +7,8 @@ import { IdentityEditForm } from "@/components/compte/identity-edit-form";
 export const dynamic = "force-dynamic";
 
 /**
- * « Mes informations » : chacun modifie lui-même son Titre et son nom. Le
- * grade, le rôle et les groupes restent en lecture seule.
+ * « Mes informations » : chacun modifie lui-même son Titre, son identité et son
+ * grade. Un chef rejoint ici la fiche de son groupe pour le renommer.
  */
 export default async function ComptePage() {
   const current = await requireUser();
@@ -39,26 +40,32 @@ export default async function ComptePage() {
     );
   }
 
-  const user = await prisma.user.findUniqueOrThrow({
-    where: { id: current.session.userId },
-    select: {
-      id: true,
-      firstName: true,
-      lastName: true,
-      displayName: true,
-      publicBio: true,
-      specialties: true,
-      portraitMime: true,
-      playerLevelId: true,
-      identityVisibility: true,
-      playerLevel: { select: { label: true } },
-      roles: { select: { role: { select: { name: true } } } },
-      groupMemberships: {
-        where: { group: { isActive: true } },
-        select: { isLeader: true, group: { select: { id: true, name: true } } },
+  const [user, playerLevels] = await Promise.all([
+    prisma.user.findUniqueOrThrow({
+      where: { id: current.session.userId },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        displayName: true,
+        publicBio: true,
+        specialties: true,
+        portraitMime: true,
+        playerLevelId: true,
+        identityVisibility: true,
+        playerLevel: { select: { label: true } },
+        roles: { select: { role: { select: { name: true } } } },
+        groupMemberships: {
+          where: { group: { isActive: true } },
+          select: { isLeader: true, group: { select: { id: true, name: true } } },
+        },
       },
-    },
-  });
+    }),
+    prisma.playerLevel.findMany({
+      orderBy: { order: "asc" },
+      select: { id: true, label: true },
+    }),
+  ]);
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-6 lg:px-6">
@@ -78,10 +85,10 @@ export default async function ComptePage() {
             publicBio: user.publicBio ?? "",
             specialties: user.specialties,
             hasPortrait: user.portraitMime !== null,
-            playerLevelLabel: user.playerLevel?.label ?? "Non déclaré",
+            playerLevelId: user.playerLevelId ?? "",
             identityVisibility: user.identityVisibility,
           }}
-          userId={user.id}
+          playerLevels={playerLevels}
         />
       </section>
 
@@ -101,20 +108,32 @@ export default async function ComptePage() {
             <dt className="text-xs uppercase tracking-wider text-ink-faint">Grade actuel</dt>
             <dd className="text-ink-muted">{user.playerLevel?.label ?? "Non déclaré"}</dd>
           </div>
-          <div className="flex justify-between gap-3">
+          <div className="flex items-start justify-between gap-3">
             <dt className="text-xs uppercase tracking-wider text-ink-faint">Groupes</dt>
             <dd className="text-right text-ink-muted">
-              {user.groupMemberships.length === 0
-                ? "Aucun"
-                : user.groupMemberships
-                    .map((m) => `${m.group.name}${m.isLeader ? " (chef)" : ""}`)
-                    .join(", ")}
+              {user.groupMemberships.length === 0 ? (
+                "Aucun"
+              ) : (
+                <ul className="space-y-1">
+                  {user.groupMemberships.map((membership) => (
+                    <li key={membership.group.id}>
+                      <Link
+                        href={`/groupes/${membership.group.id}`}
+                        className="text-gold hover:underline"
+                      >
+                        {membership.group.name}
+                        {membership.isLeader ? " — gérer le groupe" : ""}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </dd>
           </div>
         </dl>
         <p className="mt-3 text-[0.65rem] text-ink-faint">
-          Rôle et groupes relèvent de la hiérarchie d&rsquo;invitation : adressez-vous à
-          un modérateur pour les faire évoluer.
+          Votre rôle et vos appartenances relèvent de la hiérarchie d&rsquo;invitation.
+          Si vous êtes chef, ouvrez votre groupe ci-dessus pour modifier son nom.
         </p>
       </section>
     </main>

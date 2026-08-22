@@ -163,8 +163,8 @@ export function InvitationForm({
               ))}
             </select>
             <p className="mt-1 text-[0.65rem] text-ink-faint">
-              Ce grade sera affiché à l&rsquo;invité et ne pourra être modifié que par la modération.
-              {leaderGroups && " Les invitations de chef utilisent le grade initial ; la modération peut ensuite le faire évoluer."}
+              Ce grade initial sera affiché à l&rsquo;invité pendant l&rsquo;onboarding ; il pourra ensuite l&rsquo;ajuster dans « Mes informations ».
+              {leaderGroups && " Les invitations créées par un chef utilisent obligatoirement le grade initial."}
             </p>
           </div>
 

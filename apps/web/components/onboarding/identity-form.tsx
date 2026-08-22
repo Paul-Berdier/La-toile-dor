@@ -16,9 +16,9 @@ const label = "mb-1 block text-xs uppercase tracking-wider text-ink-faint";
  * - le pseudonyme demandé est un TITRE de jeu de rôle, pas le pseudo Discord.
  *   Le champ démarre donc VIDE, jamais pré-rempli avec le nom Discord, qui
  *   ferait croire qu'il suffit de le valider ;
- * - le grade fixé dans l'invitation est affiché sans pouvoir être élevé par le
- *   joueur. Le choix reste disponible uniquement pour les anciens comptes qui
- *   n'ont encore aucun grade.
+ * - le grade initial fixé dans l'invitation est verrouillé pendant cette étape.
+ *   Le choix reste disponible uniquement pour les anciens comptes qui n'ont
+ *   encore aucun grade ; tous pourront ensuite le modifier dans leur compte.
  */
 export function IdentityForm({
   levels,
@@ -105,7 +105,7 @@ export function IdentityForm({
               {assignedLevel.label}
             </div>
             <p className="mt-1 text-[0.65rem] text-ink-faint">
-              Grade fixé dans votre invitation. Seule la modération peut le modifier.
+              Grade fixé dans votre invitation pour cet onboarding. Vous pourrez ensuite le modifier dans « Mes informations ».
             </p>
           </>
         ) : (

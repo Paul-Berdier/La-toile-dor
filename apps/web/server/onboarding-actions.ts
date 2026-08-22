@@ -77,7 +77,7 @@ export async function completeIdentityAction(raw: unknown): Promise<Result> {
     return {
       ok: false,
       fieldErrors: { playerLevelId: ["Ce grade a été fixé par votre invitation."] },
-      error: "Seule la modération peut modifier ce grade.",
+      error: "Ce grade initial est verrouillé pendant l'onboarding ; vous pourrez le modifier ensuite dans Mes informations.",
     };
   }
   const effectiveLevelId = before.playerLevelId ?? data.playerLevelId;

@@ -1,13 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
 
 export interface LeaderRow {
   id: string;
   name: string;
-  /** Destination facultative : les agents mènent à leur fiche membre. */
-  href?: string;
   /** Rattachement ou précision affichée sous le nom */
   subtitle?: string | null;
   points: number;
@@ -153,13 +150,7 @@ export function Leaderboard({
                     {ROMAN[index] ?? index + 1}
                   </span>
                   <span className="min-w-0 flex-1">
-                    {row.href ? (
-                      <Link href={row.href} className="block truncate text-sm text-ink hover:text-gold hover:underline">
-                        {row.name}
-                      </Link>
-                    ) : (
-                      <span className="block truncate text-sm text-ink">{row.name}</span>
-                    )}
+                    <span className="block truncate text-sm text-ink">{row.name}</span>
                     <span className="block truncate text-[0.65rem] text-ink-faint">
                       {[
                         row.subtitle,

@@ -174,13 +174,7 @@ export default async function GroupePage({ params }: { params: Promise<{ id: str
               >
                 <div className="min-w-0">
                   <p className="text-sm text-ink">
-                    {member.user.status === "ACTIVE" && member.user.profileCompleted ? (
-                      <Link href={`/membres/${member.userId}`} className="hover:text-gold hover:underline">
-                        {streamer ? maskValue("OPR", member.userId) : member.user.displayName}
-                      </Link>
-                    ) : (
-                      streamer ? maskValue("OPR", member.userId) : member.user.displayName
-                    )}
+                    {streamer ? maskValue("OPR", member.userId) : member.user.displayName}
                     {member.user.status !== "ACTIVE" && (
                       <span className="ml-2 text-[0.65rem] text-blood-bright uppercase">
                         {member.user.status === "SUSPENDED" ? "suspendu" : "inactif"}

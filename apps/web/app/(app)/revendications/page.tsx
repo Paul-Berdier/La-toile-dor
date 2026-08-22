@@ -107,10 +107,7 @@ export default async function RevendicationsPage() {
                     {claim.group.faction ? ` · ${claim.group.faction.name}` : ""}
                   </p>
                   <p className="text-xs text-ink-muted">
-                    Chef :{" "}
-                    <Link href={`/membres/${claim.leaderId}`} className="hover:text-gold hover:underline">
-                      {claim.leader.displayName}
-                    </Link>
+                    Chef : {claim.leader.displayName}
                     {claim.leader.playerLevel ? ` (${claim.leader.playerLevel.label})` : ""}
                   </p>
                   <p className="mt-1 font-mono-toile text-[0.65rem] text-ink-faint">
@@ -131,10 +128,7 @@ export default async function RevendicationsPage() {
                         playerLevel.order >= requiredLevel.order;
                       return (
                         <li key={participant.userId}>
-                          ·{" "}
-                          <Link href={`/membres/${participant.userId}`} className="hover:text-gold hover:underline">
-                            {participant.user.displayName}
-                          </Link>{" "}
+                          · {participant.user.displayName}{" "}
                           {!playerLevel ? (
                             <span className="text-warning">
                               — niveau manquant{requiredLevel ? " · non conforme" : ""}

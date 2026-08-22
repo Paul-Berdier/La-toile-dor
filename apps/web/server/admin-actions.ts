@@ -422,8 +422,8 @@ export async function createInvitationAction(raw: unknown): Promise<Result> {
 
   const role = await prisma.role.findUnique({ where: { slug: data.roleSlug } });
   if (!role) return { ok: false, error: "Rôle inconnu." };
-  // Le grade est une donnée contrôlée : il conditionne l'éligibilité aux
-  // missions et doit donc être fixé par l'inviteur.
+  // L'inviteur fixe le grade initial affiché pendant l'onboarding. Le membre
+  // pourra ensuite le corriger lui-même depuis « Mes informations ».
   const playerLevel = await prisma.playerLevel.findUnique({
     where: { id: data.playerLevelId },
     select: { id: true, label: true },
@@ -440,7 +440,7 @@ export async function createInvitationAction(raw: unknown): Promise<Result> {
       return {
         ok: false,
         error:
-          "Un chef peut inviter au grade initial uniquement ; la modération attribuera tout grade supérieur.",
+          "Un chef peut inviter au grade initial uniquement ; l'invité pourra ensuite ajuster son grade dans Mes informations.",
       };
     }
   }

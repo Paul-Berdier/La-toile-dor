@@ -9,8 +9,8 @@ confidentialité applicable au prénom et au nom de famille.
 
 - le **Titre** public (`displayName`), visible dans l'application ;
 - l'identité réelle (`firstName`, `lastName`), confidentielle ;
-- le **grade** (`playerLevelId`), public et contrôlé, car il intervient dans
-  l'éligibilité aux missions.
+- le **grade** (`playerLevelId`), choisi dans le référentiel configuré et visible
+  dans les contextes de groupe et de mission où il est utile.
 
 `firstName` est obligatoire après l'onboarding. `lastName` est facultatif :
 l'interface emploie exactement le libellé « Nom de famille — facultatif, votre
@@ -72,21 +72,16 @@ automatiquement et aucune autorité n'en découle.
 
 ## Modifier ses informations — `/compte`
 
-Chacun reste maître de son Titre, de son prénom, de son nom et de la portée de
-son identité réelle. `/compte` affiche aussi le grade actuel, mais uniquement
-en lecture seule. `updateOwnIdentityAction` n'accepte aucun `playerLevelId` et
-n'écrit **jamais** sur un autre compte : l'identifiant vient de la session, pas
-de l'entrée, et aucune permission n'est requise puisqu'il s'agit de soi.
+Chacun reste maître, depuis l'unique page `/compte`, de son Titre, de son
+prénom, de son nom, de sa présentation, de ses spécialités, de son portrait,
+de son grade et de la portée de son identité réelle. L'action n'écrit
+**jamais** sur un autre compte : l'identifiant vient de la session, pas de
+l'entrée. Le grade soumis doit exister dans `PlayerLevel`; son ancien et son
+nouvel identifiant sont consignés dans l'audit `user.level_updated`.
 
-Après l'onboarding, toute correction ou évolution passe par `/grades`. Le
-membre peut déposer une demande motivée pour lui-même ; un chef peut en
-déposer une pour un membre actif d'un groupe qu'il dirige. La décision exige
-`user.level.manage` et un motif. Elle conserve l'ancien et le nouvel
-identifiant dans l'audit. Un modérateur ne peut jamais trancher sa propre
-demande : un autre modérateur est requis.
 Un chef qui invite un agent utilise obligatoirement le grade initial le plus
-bas ; la modération peut ensuite approuver un grade supérieur. Le formulaire
-filtre la liste et l'action serveur revérifie cette borne.
+bas. Ce verrou protège uniquement le parcours d'invitation : après son
+onboarding, l'agent ajuste lui-même son grade dans `/compte`.
 
 La case de confidentialité n'est pas rejouée et `privacyAcknowledgedAt` n'est
 pas réécrit : l'accord initial reste horodaté à sa date d'origine.
@@ -96,10 +91,10 @@ ci-dessous). Chaque option affiche sa conséquence en clair plutôt qu'un
 libellé technique : quelqu'un doit pouvoir décider sans connaître le modèle de
 données.
 
-Grade, rôle et groupes figurent sur la page en **lecture seule** : ils relèvent
-de la hiérarchie et de la modération. L'audit `profile.identity_updated` ne
-consigne que le Titre et la portée choisie — jamais le grade, le prénom ni le
-nom. Les changements de grade suivent leur événement séparé
+Le rôle et les appartenances figurent en **lecture seule**. Chaque groupe est
+un lien vers sa fiche ; un chef peut y modifier le nom du groupe qu'il dirige.
+L'audit `profile.identity_updated` ne consigne que le Titre et la portée choisie
+— jamais le prénom ni le nom. Le grade suit son événement séparé
 `user.level_updated`. La portée figure dans l'audit d'identité parce que c'est
 une décision de confidentialité, et que savoir quand elle a changé peut compter.
 
@@ -153,11 +148,8 @@ Le mode Streamer masque également les valeurs visibles pour un utilisateur
 autorisé. Il limite les fuites accidentelles à l'écran, mais ne remplace pas le
 filtrage serveur décrit ci-dessus.
 
-Sur les fiches membres, il supprime aussi le portrait et la présentation du
-rendu serveur. Sur `/compte`, la barrière Streamer intervient avant la lecture
-de la fiche et aucun formulaire contenant les informations personnelles n'est
-envoyé au navigateur. La page `/grades` applique la même barrière avant de
-charger les Titres, groupes et motifs de la file de validation.
+Sur `/compte`, la barrière Streamer intervient avant la lecture de la fiche :
+aucun formulaire, portrait ou contenu personnel n'est envoyé au navigateur.
 
 ## Migration des comptes existants
 

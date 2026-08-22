@@ -120,12 +120,10 @@ Invitation (rôle + niveau + groupe) → OAuth Discord → /bienvenue (identité
 Les comptes historiques ont `profileCompleted = false` après la migration et
 suivent volontairement ce parcours à leur prochaine connexion.
 
-Le grade (`User.playerLevelId`) est une donnée métier autoritative parce qu'il
-conditionne l'éligibilité. Une fois le compte activé, le membre peut modifier
-son Titre et son identité, mais pas son grade. Une correction passe par une
-demande motivée sur `/grades`, puis une décision distincte protégée par
-`user.level.manage`. Le référentiel `PlayerLevel`, le grade de départ et l'état
-`PENDING` sont revérifiés avant l'écriture auditée.
+Le grade (`User.playerLevelId`) conditionne l'éligibilité. Une fois le compte
+activé, le membre modifie directement son Titre, son identité et son grade dans
+`/compte`. L'action ne cible que l'identifiant de la session, vérifie la
+référence `PlayerLevel` et audite séparément tout changement de grade.
 
 ## Notifications et automatisations — mode « sans bot » (configuration retenue)
 

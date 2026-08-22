@@ -2,7 +2,6 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { assignMissionAction } from "@/server/assignment-actions";
 import type {
   AgentOption,
@@ -358,16 +357,7 @@ export function AssignmentModal({
                             onChange={() => toggleParticipant(entry.groupId, agent.id)}
                             className="accent-[var(--toile-gold)]"
                           />
-                          <Link
-                            href={`/membres/${agent.id}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            onClick={(event) => event.stopPropagation()}
-                            className="min-w-0 flex-1 truncate hover:text-gold hover:underline"
-                            aria-label={`Voir la fiche de ${agent.displayName}`}
-                          >
-                            {agent.displayName}
-                          </Link>
+                          <span className="min-w-0 flex-1 truncate">{agent.displayName}</span>
                           <span className={shouldSignal ? "text-warning" : "text-ink-faint"}>
                             {agent.levelLabel ?? "niveau manquant"}
                             {selectedAgent && eligibility.minRecommendedLevel && (

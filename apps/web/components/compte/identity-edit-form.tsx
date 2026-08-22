@@ -21,14 +21,14 @@ const input =
 const label = "mb-1 block text-xs uppercase tracking-wider text-ink-faint";
 
 /**
- * Édition par le membre de sa propre identité. Le grade reste affiché mais
- * n'est modifiable que par la modération, car il conditionne les missions.
+ * Édition par le membre de ses propres informations et de son grade RP. Le
+ * serveur contrôle toujours que le grade vient du référentiel.
  */
 export function IdentityEditForm({
   initial,
-  userId,
+  playerLevels,
 }: {
-  userId: string;
+  playerLevels: { id: string; label: string }[];
   initial: {
     firstName: string;
     lastName: string;
@@ -36,7 +36,7 @@ export function IdentityEditForm({
     publicBio: string;
     specialties: string[];
     hasPortrait: boolean;
-    playerLevelLabel: string;
+    playerLevelId: string;
     identityVisibility: IdentityVisibility;
   };
 }) {
@@ -46,6 +46,7 @@ export function IdentityEditForm({
   const [displayName, setDisplayName] = useState(initial.displayName);
   const [publicBio, setPublicBio] = useState(initial.publicBio);
   const [specialties, setSpecialties] = useState(initial.specialties);
+  const [playerLevelId, setPlayerLevelId] = useState(initial.playerLevelId);
   const [identityVisibility, setIdentityVisibility] = useState<IdentityVisibility>(
     initial.identityVisibility,
   );
@@ -75,6 +76,7 @@ export function IdentityEditForm({
     lastName !== initial.lastName ||
     displayName !== initial.displayName ||
     publicBio !== initial.publicBio ||
+    playerLevelId !== initial.playerLevelId ||
     specialties.length !== initial.specialties.length ||
     specialties.some((specialty) => !initial.specialties.includes(specialty)) ||
     identityVisibility !== initial.identityVisibility;
@@ -121,7 +123,7 @@ export function IdentityEditForm({
         return;
       }
       setPortraitError(null);
-      setPortraitMessage("Portrait public enregistré.");
+      setPortraitMessage("Portrait enregistré.");
       setHasPortrait(true);
       setPortraitVersion(Date.now());
       setPortraitFile(null);
@@ -161,6 +163,7 @@ export function IdentityEditForm({
         firstName: normalizedFirstName,
         lastName: normalizedLastName,
         displayName: normalizedDisplayName,
+        playerLevelId,
         publicBio: normalizedPublicBio,
         specialties,
         identityVisibility,
@@ -199,11 +202,8 @@ export function IdentityEditForm({
             {portraitPreview || hasPortrait ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={
-                  portraitPreview ??
-                  `/api/membres/${encodeURIComponent(userId)}/portrait?v=${portraitVersion}`
-                }
-                alt={portraitPreview ? "Aperçu du nouveau portrait" : "Votre portrait public"}
+                src={portraitPreview ?? `/api/compte/portrait?v=${portraitVersion}`}
+                alt={portraitPreview ? "Aperçu du nouveau portrait" : "Votre portrait"}
                 className="h-full w-full object-cover"
               />
             ) : (
@@ -216,10 +216,10 @@ export function IdentityEditForm({
           <div className="min-w-0 flex-1 space-y-2">
             <div>
               <label htmlFor="ac-portrait" className={label}>
-                Portrait public
+                Portrait du personnage
               </label>
               <p className="mb-2 text-xs leading-relaxed text-ink-muted">
-                Visible par tous les membres connectés. PNG, JPG ou WEBP, 500 Ko maximum.
+                Associé uniquement à votre compte. PNG, JPG ou WEBP, 500 Ko maximum.
               </p>
               <input
                 id="ac-portrait"
@@ -319,11 +319,11 @@ export function IdentityEditForm({
 
       <div>
         <label htmlFor="ac-public-bio" className={label}>
-          Biographie publique
+          Présentation du personnage
         </label>
         <p className="mb-1.5 text-xs leading-relaxed text-ink-muted">
-          Présentez brièvement votre personnage. Ce texte sera visible par tous les membres
-          connectés ; n&rsquo;y inscrivez aucune information personnelle réelle.
+          Présentez brièvement votre personnage. N&rsquo;y inscrivez aucune information
+          personnelle réelle.
         </p>
         <textarea
           id="ac-public-bio"
@@ -344,7 +344,7 @@ export function IdentityEditForm({
       </div>
 
       <fieldset>
-        <legend className={label}>Spécialités publiques</legend>
+        <legend className={label}>Spécialités du personnage</legend>
         <p className="mb-2 text-xs leading-relaxed text-ink-muted">
           Choisissez les domaines dans lesquels votre personnage est reconnu. Le référentiel
           est le même que celui des missions.
@@ -377,13 +377,34 @@ export function IdentityEditForm({
       </fieldset>
 
       <div>
-        <span className={label}>Grade de votre personnage</span>
-        <div className="border border-border-default bg-elevated px-3 py-2 text-sm text-ink-muted">
-          {initial.playerLevelLabel}
-        </div>
+        <label htmlFor="ac-level" className={label}>
+          Grade du personnage *
+        </label>
+        <select
+          id="ac-level"
+          value={playerLevelId}
+          onChange={(event) => {
+            setPlayerLevelId(event.target.value);
+            setSaved(false);
+          }}
+          required
+          className={input}
+        >
+          <option value="">— choisir votre grade —</option>
+          {playerLevels.map((level) => (
+            <option key={level.id} value={level.id}>
+              {level.label}
+            </option>
+          ))}
+        </select>
         <p className="mt-1 text-[0.65rem] text-ink-faint">
-          Le grade intervient dans l&rsquo;éligibilité aux missions. Demandez sa modification à la modération.
+          Le grade intervient dans l&rsquo;éligibilité aux missions. Choisissez celui de votre personnage ; chaque changement est journalisé.
         </p>
+        {fieldError("playerLevelId") && (
+          <p role="alert" className="mt-1 text-xs text-blood-bright">
+            {fieldError("playerLevelId")}
+          </p>
+        )}
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -481,7 +502,7 @@ export function IdentityEditForm({
         </p>
       )}
 
-      <Button type="submit" variant="gold" disabled={isPending || !dirty}>
+      <Button type="submit" variant="gold" disabled={isPending || !dirty || !playerLevelId}>
         {isPending ? "Enregistrement…" : "Enregistrer mes informations"}
       </Button>
     </form>
